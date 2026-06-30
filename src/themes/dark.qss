@@ -1,0 +1,178 @@
+/*
+ * Dark theme for Universal Death Counter.
+ * Inspired by Steam / Discord / Windows 11: rounded corners, flat surfaces,
+ * a single red accent color (#ff4d4d) used sparingly for emphasis.
+ */
+
+QWidget {
+    background-color: #1e1f22;
+    color: #e8e8e8;
+    font-family: "Segoe UI", "Inter", sans-serif;
+    font-size: 13px;
+}
+
+QMainWindow, QDialog {
+    background-color: #1e1f22;
+}
+
+QLabel#TitleLabel {
+    font-size: 20px;
+    font-weight: 600;
+    color: #ffffff;
+}
+
+QLabel#CounterLabel {
+    font-size: 42px;
+    font-weight: 700;
+    color: #ff4d4d;
+}
+
+QLabel#SubCounterLabel {
+    font-size: 16px;
+    color: #b5b5b5;
+}
+
+QFrame#Card {
+    background-color: #27292d;
+    border-radius: 12px;
+    border: 1px solid #34363b;
+}
+
+QPushButton {
+    background-color: #2f3136;
+    color: #e8e8e8;
+    border: 1px solid #3a3c42;
+    border-radius: 8px;
+    padding: 8px 16px;
+    font-weight: 600;
+}
+
+QPushButton:hover {
+    background-color: #3a3c42;
+    border: 1px solid #ff4d4d;
+}
+
+QPushButton:pressed {
+    background-color: #24262a;
+}
+
+QPushButton#AccentButton {
+    background-color: #ff4d4d;
+    color: #ffffff;
+    border: none;
+}
+
+QPushButton#AccentButton:hover {
+    background-color: #ff6666;
+}
+
+QPushButton#AccentButton:pressed {
+    background-color: #e63e3e;
+}
+
+QPushButton#DangerButton {
+    background-color: transparent;
+    color: #ff4d4d;
+    border: 1px solid #ff4d4d;
+}
+
+QPushButton#DangerButton:hover {
+    background-color: rgba(255, 77, 77, 0.15);
+}
+
+QComboBox {
+    background-color: #2f3136;
+    border: 1px solid #3a3c42;
+    border-radius: 8px;
+    padding: 6px 10px;
+    color: #e8e8e8;
+}
+
+QComboBox:hover {
+    border: 1px solid #ff4d4d;
+}
+
+QComboBox QAbstractItemView {
+    background-color: #2f3136;
+    selection-background-color: #ff4d4d;
+    border: 1px solid #3a3c42;
+    outline: none;
+}
+
+QLineEdit, QSpinBox, QDoubleSpinBox {
+    background-color: #2f3136;
+    border: 1px solid #3a3c42;
+    border-radius: 8px;
+    padding: 6px 10px;
+    color: #e8e8e8;
+}
+
+QLineEdit:focus, QSpinBox:focus, QDoubleSpinBox:focus {
+    border: 1px solid #ff4d4d;
+}
+
+QCheckBox {
+    spacing: 8px;
+}
+
+QSlider::groove:horizontal {
+    height: 4px;
+    background: #3a3c42;
+    border-radius: 2px;
+}
+
+QSlider::handle:horizontal {
+    background: #ff4d4d;
+    width: 14px;
+    height: 14px;
+    margin: -5px 0;
+    border-radius: 7px;
+}
+
+QListWidget {
+    background-color: #27292d;
+    border: 1px solid #34363b;
+    border-radius: 8px;
+}
+
+QListWidget::item {
+    padding: 6px;
+}
+
+QListWidget::item:selected {
+    background-color: #ff4d4d;
+    color: #ffffff;
+    border-radius: 6px;
+}
+
+QMenuBar {
+    background-color: #1e1f22;
+}
+
+QMenuBar::item:selected {
+    background-color: #3a3c42;
+}
+
+QMenu {
+    background-color: #27292d;
+    border: 1px solid #34363b;
+}
+
+QMenu::item:selected {
+    background-color: #ff4d4d;
+}
+
+QScrollBar:vertical {
+    background: transparent;
+    width: 10px;
+}
+
+QScrollBar::handle:vertical {
+    background: #3a3c42;
+    border-radius: 5px;
+    min-height: 24px;
+}
+
+QScrollBar::handle:vertical:hover {
+    background: #ff4d4d;
+}

@@ -1,0 +1,180 @@
+/*
+ * Light theme for Universal Death Counter.
+ * Mirrors dark.qss structurally so widget object names stay consistent;
+ * only the palette changes.
+ */
+
+QWidget {
+    background-color: #f5f5f7;
+    color: #1c1c1e;
+    font-family: "Segoe UI", "Inter", sans-serif;
+    font-size: 13px;
+}
+
+QMainWindow, QDialog {
+    background-color: #f5f5f7;
+}
+
+QLabel#TitleLabel {
+    font-size: 20px;
+    font-weight: 600;
+    color: #1c1c1e;
+}
+
+QLabel#CounterLabel {
+    font-size: 42px;
+    font-weight: 700;
+    color: #e0383f;
+}
+
+QLabel#SubCounterLabel {
+    font-size: 16px;
+    color: #5a5a5e;
+}
+
+QFrame#Card {
+    background-color: #ffffff;
+    border-radius: 12px;
+    border: 1px solid #e2e2e5;
+}
+
+QPushButton {
+    background-color: #ffffff;
+    color: #1c1c1e;
+    border: 1px solid #d8d8db;
+    border-radius: 8px;
+    padding: 8px 16px;
+    font-weight: 600;
+}
+
+QPushButton:hover {
+    background-color: #f0f0f2;
+    border: 1px solid #e0383f;
+}
+
+QPushButton:pressed {
+    background-color: #e6e6e9;
+}
+
+QPushButton#AccentButton {
+    background-color: #ff4d4d;
+    color: #ffffff;
+    border: none;
+}
+
+QPushButton#AccentButton:hover {
+    background-color: #ff6666;
+}
+
+QPushButton#AccentButton:pressed {
+    background-color: #e63e3e;
+}
+
+QPushButton#DangerButton {
+    background-color: transparent;
+    color: #e0383f;
+    border: 1px solid #e0383f;
+}
+
+QPushButton#DangerButton:hover {
+    background-color: rgba(224, 56, 63, 0.10);
+}
+
+QComboBox {
+    background-color: #ffffff;
+    border: 1px solid #d8d8db;
+    border-radius: 8px;
+    padding: 6px 10px;
+    color: #1c1c1e;
+}
+
+QComboBox:hover {
+    border: 1px solid #e0383f;
+}
+
+QComboBox QAbstractItemView {
+    background-color: #ffffff;
+    selection-background-color: #ff4d4d;
+    selection-color: #ffffff;
+    border: 1px solid #d8d8db;
+    outline: none;
+}
+
+QLineEdit, QSpinBox, QDoubleSpinBox {
+    background-color: #ffffff;
+    border: 1px solid #d8d8db;
+    border-radius: 8px;
+    padding: 6px 10px;
+    color: #1c1c1e;
+}
+
+QLineEdit:focus, QSpinBox:focus, QDoubleSpinBox:focus {
+    border: 1px solid #e0383f;
+}
+
+QCheckBox {
+    spacing: 8px;
+}
+
+QSlider::groove:horizontal {
+    height: 4px;
+    background: #d8d8db;
+    border-radius: 2px;
+}
+
+QSlider::handle:horizontal {
+    background: #e0383f;
+    width: 14px;
+    height: 14px;
+    margin: -5px 0;
+    border-radius: 7px;
+}
+
+QListWidget {
+    background-color: #ffffff;
+    border: 1px solid #e2e2e5;
+    border-radius: 8px;
+}
+
+QListWidget::item {
+    padding: 6px;
+}
+
+QListWidget::item:selected {
+    background-color: #ff4d4d;
+    color: #ffffff;
+    border-radius: 6px;
+}
+
+QMenuBar {
+    background-color: #f5f5f7;
+}
+
+QMenuBar::item:selected {
+    background-color: #e6e6e9;
+}
+
+QMenu {
+    background-color: #ffffff;
+    border: 1px solid #e2e2e5;
+}
+
+QMenu::item:selected {
+    background-color: #ff4d4d;
+    color: #ffffff;
+}
+
+QScrollBar:vertical {
+    background: transparent;
+    width: 10px;
+}
+
+QScrollBar::handle:vertical {
+    background: #d8d8db;
+    border-radius: 5px;
+    min-height: 24px;
+}
+
+QScrollBar::handle:vertical:hover {
+    background: #e0383f;
+}
