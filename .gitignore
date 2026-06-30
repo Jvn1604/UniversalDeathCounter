@@ -1,0 +1,33 @@
+# --- Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+build/
+dist/
+*.spec
+
+# --- Virtual environments ---
+.venv/
+venv/
+env/
+
+# --- Application data (user-specific, should not be committed) ---
+saves/*.db
+saves/*.db-journal
+saves/logs/
+
+# --- Testing / tooling ---
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+htmlcov/
+.coverage
+
+# --- Editors / OS ---
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
