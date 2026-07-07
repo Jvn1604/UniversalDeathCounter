@@ -1,20 +1,29 @@
 """
 Main application window.
 
+<<<<<<< HEAD
 Wires together the database (per active profile), core managers, hotkeys,
 overlay, system tray, deaths.txt stream output, update checker, and theme
 system into the primary user-facing UI.
+=======
+Wires together the database, core managers (counter/session/statistics),
+hotkeys, overlay, and theme system into the primary user-facing UI.
+>>>>>>> 87d3c43bd4a8cfe2e09f744eb9c535cdd5c0fb02
 """
 
 from __future__ import annotations
 
+<<<<<<< HEAD
 import json
 from pathlib import Path
 
+=======
+>>>>>>> 87d3c43bd4a8cfe2e09f744eb9c535cdd5c0fb02
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (
     QComboBox,
+<<<<<<< HEAD
     QFileDialog,
     QFrame,
     QGridLayout,
@@ -27,6 +36,16 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QSystemTrayIcon,
+=======
+    QFrame,
+    QGridLayout,
+    QHBoxLayout,
+    QLabel,
+    QMainWindow,
+    QMenuBar,
+    QMessageBox,
+    QPushButton,
+>>>>>>> 87d3c43bd4a8cfe2e09f744eb9c535cdd5c0fb02
     QVBoxLayout,
     QWidget,
 )
@@ -40,6 +59,7 @@ from src.overlay.overlay_window import OverlayWindow
 from src.themes.theme_manager import apply_theme
 from src.ui.about_window import AboutWindow
 from src.ui.boss_window import BossWindow
+<<<<<<< HEAD
 from src.ui.death_log_window import DeathLogWindow
 from src.ui.settings_window import SettingsWindow
 from src.ui.statistics_window import StatisticsWindow
@@ -51,10 +71,17 @@ from src.utils.constants import (
     SETTING_DEATHS_TXT_ENABLED,
     SETTING_DEATHS_TXT_PATH,
     SETTING_DEATHS_TXT_TEMPLATE,
+=======
+from src.ui.settings_window import SettingsWindow
+from src.utils.constants import (
+    APP_NAME,
+    ICONS_DIR,
+>>>>>>> 87d3c43bd4a8cfe2e09f744eb9c535cdd5c0fb02
     SETTING_HOTKEY_DECREMENT,
     SETTING_HOTKEY_INCREMENT,
     SETTING_HOTKEY_TOGGLE_OVERLAY,
     SETTING_HOTKEY_UNDO,
+<<<<<<< HEAD
     SETTING_MINIMIZE_TO_TRAY,
     SETTING_OVERLAY_ALWAYS_ON_TOP,
     SETTING_OVERLAY_COUNTER_SOURCE,
@@ -66,6 +93,15 @@ from src.utils.logger import get_logger
 from src.utils.profiles import DEFAULT_PROFILE_NAME, ProfileManager
 from src.utils.stream_writer import render_template, write_deaths_file
 from src.utils.update_checker import UpdateChecker
+=======
+    SETTING_OVERLAY_ALWAYS_ON_TOP,
+    SETTING_OVERLAY_FONT_SIZE,
+    SETTING_OVERLAY_GEOMETRY,
+    SETTING_OVERLAY_OPACITY,
+    SETTING_THEME,
+)
+from src.utils.logger import get_logger
+>>>>>>> 87d3c43bd4a8cfe2e09f744eb9c535cdd5c0fb02
 
 logger = get_logger(__name__)
 
@@ -75,6 +111,7 @@ class MainWindow(QMainWindow):
 
     def __init__(self) -> None:
         super().__init__()
+<<<<<<< HEAD
         self.setMinimumSize(480, 460)
 
         icon_path = ICONS_DIR / "app_icon.png"
@@ -84,10 +121,22 @@ class MainWindow(QMainWindow):
         # --- Profile + core wiring ---
         self._profile_manager = ProfileManager()
         self._database = Database(self._profile_manager.active_db_path())
+=======
+        self.setWindowTitle(APP_NAME)
+        self.setMinimumSize(480, 420)
+
+        icon_path = ICONS_DIR / "app_icon.png"
+        if icon_path.exists():
+            self.setWindowIcon(QIcon(str(icon_path)))
+
+        # --- Core wiring ---
+        self._database = Database()
+>>>>>>> 87d3c43bd4a8cfe2e09f744eb9c535cdd5c0fb02
         self._session_manager = SessionManager(self._database)
         self._counter_manager = CounterManager(self._database, self._session_manager)
         self._statistics_service = StatisticsService(self._database)
         self._overlay = OverlayWindow()
+<<<<<<< HEAD
         self._quitting = False
 
         self._update_window_title()
@@ -127,18 +176,40 @@ class MainWindow(QMainWindow):
 
         self._profile_menu = menu_bar.addMenu("&Profile")
         self._rebuild_profile_menu()
+=======
+
+        self._build_menu()
+        self._build_ui()
+        self._setup_hotkeys()
+        self._apply_saved_settings()
+        self._reload_games()
+
+    # ----------------------------------------------------------------
+    # UI construction
+    # ----------------------------------------------------------------
+    def _build_menu(self) -> None:
+        menu_bar: QMenuBar = self.menuBar()
+>>>>>>> 87d3c43bd4a8cfe2e09f744eb9c535cdd5c0fb02
 
         manage_menu = menu_bar.addMenu("&Manage")
         manage_action = manage_menu.addAction("Games && Bosses…")
         manage_action.triggered.connect(self._open_boss_window)
 
         view_menu = menu_bar.addMenu("&View")
+<<<<<<< HEAD
         overlay_action = view_menu.addAction("Toggle Overlay")
         overlay_action.triggered.connect(self._toggle_overlay)
         stats_action = view_menu.addAction("Statistics && Graphs…")
         stats_action.triggered.connect(self._show_statistics)
         log_action = view_menu.addAction("Death Log…")
         log_action.triggered.connect(self._open_death_log)
+=======
+        self._overlay_action = view_menu.addAction("Toggle Overlay")
+        self._overlay_action.triggered.connect(self._toggle_overlay)
+
+        stats_action = view_menu.addAction("Show Statistics")
+        stats_action.triggered.connect(self._show_statistics)
+>>>>>>> 87d3c43bd4a8cfe2e09f744eb9c535cdd5c0fb02
 
         settings_menu = menu_bar.addMenu("&Settings")
         settings_action = settings_menu.addAction("Preferences…")
@@ -148,6 +219,7 @@ class MainWindow(QMainWindow):
         about_action = help_menu.addAction("About")
         about_action.triggered.connect(self._open_about_window)
 
+<<<<<<< HEAD
     def _rebuild_profile_menu(self) -> None:
         self._profile_menu.clear()
         active = self._profile_manager.active_profile
@@ -163,6 +235,8 @@ class MainWindow(QMainWindow):
     # ----------------------------------------------------------------
     # Central UI
     # ----------------------------------------------------------------
+=======
+>>>>>>> 87d3c43bd4a8cfe2e09f744eb9c535cdd5c0fb02
     def _build_ui(self) -> None:
         central = QWidget()
         self.setCentralWidget(central)
@@ -174,6 +248,10 @@ class MainWindow(QMainWindow):
         title_label.setObjectName("TitleLabel")
         root_layout.addWidget(title_label)
 
+<<<<<<< HEAD
+=======
+        # --- Selectors ---
+>>>>>>> 87d3c43bd4a8cfe2e09f744eb9c535cdd5c0fb02
         selector_layout = QHBoxLayout()
         self._game_combo = QComboBox()
         self._game_combo.currentIndexChanged.connect(self._on_game_changed)
@@ -183,6 +261,10 @@ class MainWindow(QMainWindow):
         selector_layout.addWidget(self._labeled("Boss", self._boss_combo))
         root_layout.addLayout(selector_layout)
 
+<<<<<<< HEAD
+=======
+        # --- Counter card ---
+>>>>>>> 87d3c43bd4a8cfe2e09f744eb9c535cdd5c0fb02
         card = QFrame()
         card.setObjectName("Card")
         card_layout = QVBoxLayout(card)
@@ -193,6 +275,7 @@ class MainWindow(QMainWindow):
         self._counter_label.setObjectName("CounterLabel")
         self._counter_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
+<<<<<<< HEAD
         self._sub_counter_label = QLabel("Session: 0   |   Boss: 0   |   Total: 0")
         self._sub_counter_label.setObjectName("SubCounterLabel")
         self._sub_counter_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -205,26 +288,59 @@ class MainWindow(QMainWindow):
         card_layout.addWidget(set_count_btn)
         root_layout.addWidget(card)
 
+=======
+        self._sub_counter_label = QLabel("Session: 0   |   Total: 0")
+        self._sub_counter_label.setObjectName("SubCounterLabel")
+        self._sub_counter_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        card_layout.addWidget(self._counter_label)
+        card_layout.addWidget(self._sub_counter_label)
+        root_layout.addWidget(card)
+
+        # --- Primary action buttons ---
+>>>>>>> 87d3c43bd4a8cfe2e09f744eb9c535cdd5c0fb02
         action_layout = QHBoxLayout()
         plus_btn = QPushButton("+1 Death  (F9)")
         plus_btn.setObjectName("AccentButton")
         plus_btn.clicked.connect(self._on_increment)
+<<<<<<< HEAD
         minus_btn = QPushButton("-1 Death  (F10)")
         minus_btn.clicked.connect(self._on_decrement)
         undo_btn = QPushButton("Undo  (F11)")
         undo_btn.clicked.connect(self._on_undo)
+=======
+
+        minus_btn = QPushButton("-1 Death  (F10)")
+        minus_btn.clicked.connect(self._on_decrement)
+
+        undo_btn = QPushButton("Undo  (F11)")
+        undo_btn.clicked.connect(self._on_undo)
+
+>>>>>>> 87d3c43bd4a8cfe2e09f744eb9c535cdd5c0fb02
         action_layout.addWidget(plus_btn)
         action_layout.addWidget(minus_btn)
         action_layout.addWidget(undo_btn)
         root_layout.addLayout(action_layout)
 
+<<<<<<< HEAD
+=======
+        # --- Reset buttons ---
+>>>>>>> 87d3c43bd4a8cfe2e09f744eb9c535cdd5c0fb02
         reset_layout = QGridLayout()
         reset_session_btn = QPushButton("Reset Session")
         reset_session_btn.setObjectName("DangerButton")
         reset_session_btn.clicked.connect(self._on_reset_session)
+<<<<<<< HEAD
         reset_total_btn = QPushButton("Reset Total")
         reset_total_btn.setObjectName("DangerButton")
         reset_total_btn.clicked.connect(self._on_reset_total)
+=======
+
+        reset_total_btn = QPushButton("Reset Total")
+        reset_total_btn.setObjectName("DangerButton")
+        reset_total_btn.clicked.connect(self._on_reset_total)
+
+>>>>>>> 87d3c43bd4a8cfe2e09f744eb9c535cdd5c0fb02
         reset_layout.addWidget(reset_session_btn, 0, 0)
         reset_layout.addWidget(reset_total_btn, 0, 1)
         root_layout.addLayout(reset_layout)
@@ -245,6 +361,7 @@ class MainWindow(QMainWindow):
         return container
 
     # ----------------------------------------------------------------
+<<<<<<< HEAD
     # System tray
     # ----------------------------------------------------------------
     def _build_tray(self) -> None:
@@ -290,6 +407,9 @@ class MainWindow(QMainWindow):
 
     # ----------------------------------------------------------------
     # Hotkeys / settings
+=======
+    # Hotkeys
+>>>>>>> 87d3c43bd4a8cfe2e09f744eb9c535cdd5c0fb02
     # ----------------------------------------------------------------
     def _setup_hotkeys(self) -> None:
         settings = self._database.get_all_settings()
@@ -309,12 +429,18 @@ class MainWindow(QMainWindow):
     def _apply_saved_settings(self) -> None:
         settings = self._database.get_all_settings()
         apply_theme(self, settings.get(SETTING_THEME, "dark"))
+<<<<<<< HEAD
         self._overlay.apply_display_settings(settings)
+=======
+        self._overlay.set_font_size(int(settings.get(SETTING_OVERLAY_FONT_SIZE, "24")))
+        self._overlay.set_opacity_level(float(settings.get(SETTING_OVERLAY_OPACITY, "0.85")))
+>>>>>>> 87d3c43bd4a8cfe2e09f744eb9c535cdd5c0fb02
         self._overlay.set_always_on_top(
             settings.get(SETTING_OVERLAY_ALWAYS_ON_TOP, "true") == "true"
         )
         self._overlay.restore_geometry_string(settings.get(SETTING_OVERLAY_GEOMETRY, ""))
 
+<<<<<<< HEAD
     def _maybe_check_updates(self) -> None:
         if self._database.get_setting(SETTING_CHECK_UPDATES, "true") != "true":
             return
@@ -407,6 +533,8 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Could not delete profile", str(exc))
         self._rebuild_profile_menu()
 
+=======
+>>>>>>> 87d3c43bd4a8cfe2e09f744eb9c535cdd5c0fb02
     # ----------------------------------------------------------------
     # Data loading
     # ----------------------------------------------------------------
@@ -421,8 +549,11 @@ class MainWindow(QMainWindow):
             self._game_combo.setCurrentIndex(0)
             self._on_game_changed(0)
         else:
+<<<<<<< HEAD
             self._counter_manager.set_current_game(None, None)
             self._reload_bosses(None)
+=======
+>>>>>>> 87d3c43bd4a8cfe2e09f744eb9c535cdd5c0fb02
             self._refresh_counters()
 
     def _reload_bosses(self, game_id: int | None) -> None:
@@ -431,8 +562,12 @@ class MainWindow(QMainWindow):
         self._boss_combo.addItem("(No Boss)", userData=None)
         if game_id is not None:
             for boss in self._database.get_bosses(game_id):
+<<<<<<< HEAD
                 prefix = "✓ " if boss["defeated"] else ""
                 self._boss_combo.addItem(f"{prefix}{boss['name']}", userData=boss["id"])
+=======
+                self._boss_combo.addItem(boss["name"], userData=boss["id"])
+>>>>>>> 87d3c43bd4a8cfe2e09f744eb9c535cdd5c0fb02
         self._boss_combo.blockSignals(False)
         self._on_boss_changed(0)
 
@@ -448,11 +583,15 @@ class MainWindow(QMainWindow):
 
     def _on_boss_changed(self, index: int) -> None:
         boss_id = self._boss_combo.itemData(index)
+<<<<<<< HEAD
         if index > 0 and boss_id is not None:
             boss = self._database.get_boss(boss_id)
             boss_name = boss["name"] if boss is not None else None
         else:
             boss_name = None
+=======
+        boss_name = self._boss_combo.itemText(index) if index > 0 else None
+>>>>>>> 87d3c43bd4a8cfe2e09f744eb9c535cdd5c0fb02
         self._counter_manager.set_current_boss(boss_id, boss_name)
         self._refresh_counters()
 
@@ -460,6 +599,7 @@ class MainWindow(QMainWindow):
     # Counter actions
     # ----------------------------------------------------------------
     def _on_increment(self) -> None:
+<<<<<<< HEAD
         self._apply_snapshot(self._counter_manager.increment())
 
     def _on_decrement(self) -> None:
@@ -467,6 +607,18 @@ class MainWindow(QMainWindow):
 
     def _on_undo(self) -> None:
         self._apply_snapshot(self._counter_manager.undo())
+=======
+        snapshot = self._counter_manager.increment()
+        self._apply_snapshot(snapshot)
+
+    def _on_decrement(self) -> None:
+        snapshot = self._counter_manager.decrement()
+        self._apply_snapshot(snapshot)
+
+    def _on_undo(self) -> None:
+        snapshot = self._counter_manager.undo()
+        self._apply_snapshot(snapshot)
+>>>>>>> 87d3c43bd4a8cfe2e09f744eb9c535cdd5c0fb02
 
     def _on_reset_session(self) -> None:
         confirm = QMessageBox.question(self, "Reset Session", "Reset the current session count?")
@@ -480,6 +632,7 @@ class MainWindow(QMainWindow):
         if confirm == QMessageBox.StandardButton.Yes:
             self._apply_snapshot(self._counter_manager.reset_total())
 
+<<<<<<< HEAD
     def _on_set_count(self) -> None:
         if self._counter_manager.current_game_id is None:
             QMessageBox.information(self, "Select a Game", "Select a game first.")
@@ -497,12 +650,15 @@ class MainWindow(QMainWindow):
             return
         self._apply_snapshot(self._counter_manager.set_session_count(target))
 
+=======
+>>>>>>> 87d3c43bd4a8cfe2e09f744eb9c535cdd5c0fb02
     def _refresh_counters(self) -> None:
         self._apply_snapshot(self._counter_manager.get_snapshot())
 
     def _apply_snapshot(self, snapshot: CounterSnapshot) -> None:
         self._counter_label.setText(str(snapshot.session_deaths))
         self._sub_counter_label.setText(
+<<<<<<< HEAD
             f"Session: {snapshot.session_deaths}   |   "
             f"Boss: {snapshot.boss_deaths}   |   Total: {snapshot.total_deaths}"
         )
@@ -580,6 +736,13 @@ class MainWindow(QMainWindow):
             return
         self._database.clear_all_data()
         self._reload_games()
+=======
+            f"Session: {snapshot.session_deaths}   |   Total: {snapshot.total_deaths}"
+        )
+        self._overlay.update_counters(
+            snapshot.game_name, snapshot.boss_name, snapshot.session_deaths
+        )
+>>>>>>> 87d3c43bd4a8cfe2e09f744eb9c535cdd5c0fb02
 
     # ----------------------------------------------------------------
     # Window / dialog actions
@@ -589,6 +752,7 @@ class MainWindow(QMainWindow):
         dialog.exec()
         self._reload_games()
 
+<<<<<<< HEAD
     def _open_death_log(self) -> None:
         game_id = self._counter_manager.current_game_id
         if game_id is None:
@@ -599,6 +763,8 @@ class MainWindow(QMainWindow):
         )
         dialog.exec()
 
+=======
+>>>>>>> 87d3c43bd4a8cfe2e09f744eb9c535cdd5c0fb02
     def _open_settings_window(self) -> None:
         dialog = SettingsWindow(self._database, parent=self)
         dialog.settings_changed.connect(self._on_settings_changed)
@@ -609,10 +775,13 @@ class MainWindow(QMainWindow):
 
     def _on_settings_changed(self) -> None:
         self._apply_saved_settings()
+<<<<<<< HEAD
         self._on_settings_changed_hotkeys()
         self._refresh_counters()
 
     def _on_settings_changed_hotkeys(self) -> None:
+=======
+>>>>>>> 87d3c43bd4a8cfe2e09f744eb9c535cdd5c0fb02
         settings = self._database.get_all_settings()
         self._hotkey_manager.update_bindings(
             increment_key=settings.get(SETTING_HOTKEY_INCREMENT, "f9"),
@@ -625,6 +794,7 @@ class MainWindow(QMainWindow):
         self._overlay.toggle_visibility()
 
     def _show_statistics(self) -> None:
+<<<<<<< HEAD
         dialog = StatisticsWindow(
             self._database,
             self._statistics_service,
@@ -633,10 +803,38 @@ class MainWindow(QMainWindow):
             parent=self,
         )
         dialog.exec()
+=======
+        game_id = self._counter_manager.current_game_id
+        global_stats = self._statistics_service.get_global_statistics()
+
+        lines = [
+            f"Total Deaths (All Games): {global_stats.total_deaths_all_games}",
+            f"Most Played Game: {global_stats.most_played_game or 'N/A'} "
+            f"({global_stats.most_played_game_sessions} sessions)",
+            f"Total Play Sessions: {global_stats.total_play_sessions}",
+        ]
+
+        if game_id is not None:
+            game_stats = self._statistics_service.get_game_statistics(game_id)
+            lines += [
+                "",
+                f"-- {self._game_combo.currentText()} --",
+                f"Total Deaths: {game_stats.total_deaths}",
+                f"Most Deaths On: {game_stats.most_deaths_boss or 'N/A'} "
+                f"({game_stats.most_deaths_count})",
+                f"Least Deaths On: {game_stats.least_deaths_boss or 'N/A'} "
+                f"({game_stats.least_deaths_count})",
+                f"Average Deaths Per Boss: {game_stats.average_deaths_per_boss}",
+                f"Total Runs: {game_stats.total_runs}",
+            ]
+
+        QMessageBox.information(self, "Statistics", "\n".join(lines))
+>>>>>>> 87d3c43bd4a8cfe2e09f744eb9c535cdd5c0fb02
 
     # ----------------------------------------------------------------
     # Lifecycle
     # ----------------------------------------------------------------
+<<<<<<< HEAD
     def _quit_app(self) -> None:
         self._quitting = True
         self.close()
@@ -657,12 +855,19 @@ class MainWindow(QMainWindow):
             )
             return
 
+=======
+    def closeEvent(self, event) -> None:  # noqa: N802
+        """Persist overlay geometry and clean up resources on exit."""
+>>>>>>> 87d3c43bd4a8cfe2e09f744eb9c535cdd5c0fb02
         self._database.set_setting(SETTING_OVERLAY_GEOMETRY, self._overlay.geometry_string())
         self._session_manager.end_current_session()
         self._hotkey_manager.stop()
         self._overlay.close()
+<<<<<<< HEAD
         if self._tray is not None:
             self._tray.hide()
+=======
+>>>>>>> 87d3c43bd4a8cfe2e09f744eb9c535cdd5c0fb02
         self._database.close()
         logger.info("Application closed cleanly")
         super().closeEvent(event)
