@@ -57,7 +57,10 @@ class Database:
         self._connection.row_factory = sqlite3.Row
         self._connection.execute("PRAGMA foreign_keys = ON")
         self._create_schema()
+<<<<<<< HEAD
         self._migrate_schema()
+=======
+>>>>>>> 87d3c43bd4a8cfe2e09f744eb9c535cdd5c0fb02
         self._seed_default_settings()
         logger.info("Database initialized at %s", self._db_path)
 
@@ -80,9 +83,12 @@ class Database:
                 game_id INTEGER NOT NULL,
                 name TEXT NOT NULL,
                 created_at TEXT NOT NULL,
+<<<<<<< HEAD
                 defeated INTEGER NOT NULL DEFAULT 0,
                 defeated_at TEXT,
                 deaths_at_defeat INTEGER,
+=======
+>>>>>>> 87d3c43bd4a8cfe2e09f744eb9c535cdd5c0fb02
                 FOREIGN KEY (game_id) REFERENCES games (id) ON DELETE CASCADE,
                 UNIQUE (game_id, name)
             )
@@ -106,7 +112,10 @@ class Database:
                 session_id INTEGER NOT NULL,
                 delta INTEGER NOT NULL,
                 timestamp TEXT NOT NULL,
+<<<<<<< HEAD
                 note TEXT,
+=======
+>>>>>>> 87d3c43bd4a8cfe2e09f744eb9c535cdd5c0fb02
                 FOREIGN KEY (game_id) REFERENCES games (id) ON DELETE CASCADE,
                 FOREIGN KEY (boss_id) REFERENCES bosses (id) ON DELETE CASCADE,
                 FOREIGN KEY (session_id) REFERENCES sessions (id) ON DELETE CASCADE
@@ -123,6 +132,7 @@ class Database:
             for statement in schema_statements:
                 cursor.execute(statement)
 
+<<<<<<< HEAD
     def _migrate_schema(self) -> None:
         """
         Upgrade databases created by older app versions in place.
@@ -148,6 +158,8 @@ class Database:
                 cursor.execute("ALTER TABLE death_events ADD COLUMN note TEXT")
                 logger.info("Migrated schema: added note column to death_events")
 
+=======
+>>>>>>> 87d3c43bd4a8cfe2e09f744eb9c535cdd5c0fb02
     def _seed_default_settings(self) -> None:
         """Insert default settings for any keys not already present."""
         with self._cursor() as cursor:
@@ -222,6 +234,7 @@ class Database:
             cursor.execute("SELECT * FROM games WHERE id = ?", (game_id,))
             return cursor.fetchone()
 
+<<<<<<< HEAD
     def rename_game(self, game_id: int, new_name: str) -> None:
         """
         Rename an existing game.
@@ -239,6 +252,8 @@ class Database:
             )
         logger.info("Renamed game id=%s to '%s'", game_id, new_name)
 
+=======
+>>>>>>> 87d3c43bd4a8cfe2e09f744eb9c535cdd5c0fb02
     # ----------------------------------------------------------------
     # Bosses
     # ----------------------------------------------------------------
@@ -277,6 +292,7 @@ class Database:
             )
             return cursor.fetchall()
 
+<<<<<<< HEAD
     def rename_boss(self, boss_id: int, new_name: str) -> None:
         """
         Rename an existing boss.
@@ -333,6 +349,8 @@ class Database:
                 )
             logger.info("Boss id=%s unmarked as defeated", boss_id)
 
+=======
+>>>>>>> 87d3c43bd4a8cfe2e09f744eb9c535cdd5c0fb02
     # ----------------------------------------------------------------
     # Sessions
     # ----------------------------------------------------------------
@@ -366,6 +384,7 @@ class Database:
             row = cursor.fetchone()
             return int(row["total"])
 
+<<<<<<< HEAD
     def get_sessions_with_counts(self, game_id: int) -> list[sqlite3.Row]:
         """
         Return every session for a game, newest first, with its death count.
@@ -394,16 +413,22 @@ class Database:
             cursor.execute("DELETE FROM sessions WHERE id = ?", (session_id,))
         logger.info("Deleted session id=%s", session_id)
 
+=======
+>>>>>>> 87d3c43bd4a8cfe2e09f744eb9c535cdd5c0fb02
     # ----------------------------------------------------------------
     # Death events (counter actions)
     # ----------------------------------------------------------------
     def add_death_event(
+<<<<<<< HEAD
         self,
         game_id: int,
         boss_id: int | None,
         session_id: int,
         delta: int,
         note: str | None = None,
+=======
+        self, game_id: int, boss_id: int | None, session_id: int, delta: int
+>>>>>>> 87d3c43bd4a8cfe2e09f744eb9c535cdd5c0fb02
     ) -> int:
         """
         Record a death-count change.
@@ -413,7 +438,10 @@ class Database:
             boss_id: The active boss's id, or ``None`` if no boss selected.
             session_id: The active session's id.
             delta: +1 for a death, -1 for a decrement/undo.
+<<<<<<< HEAD
             note: Optional free-text note attached to this event.
+=======
+>>>>>>> 87d3c43bd4a8cfe2e09f744eb9c535cdd5c0fb02
 
         Returns:
             The id of the newly inserted event (used for fine-grained undo).
@@ -421,14 +449,22 @@ class Database:
         with self._cursor() as cursor:
             cursor.execute(
                 """
+<<<<<<< HEAD
                 INSERT INTO death_events (game_id, boss_id, session_id, delta, timestamp, note)
                 VALUES (?, ?, ?, ?, ?, ?)
                 """,
                 (game_id, boss_id, session_id, delta, _utc_now_iso(), note),
+=======
+                INSERT INTO death_events (game_id, boss_id, session_id, delta, timestamp)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (game_id, boss_id, session_id, delta, _utc_now_iso()),
+>>>>>>> 87d3c43bd4a8cfe2e09f744eb9c535cdd5c0fb02
             )
             event_id = cursor.lastrowid
         return int(event_id)
 
+<<<<<<< HEAD
     def set_event_note(self, event_id: int, note: str) -> None:
         """Attach or replace the free-text note on a death event."""
         with self._cursor() as cursor:
@@ -475,6 +511,8 @@ class Database:
             )
             return cursor.fetchall()
 
+=======
+>>>>>>> 87d3c43bd4a8cfe2e09f744eb9c535cdd5c0fb02
     def remove_last_event(self, session_id: int) -> bool:
         """
         Remove the most recent death event for a session (true undo).
@@ -502,6 +540,7 @@ class Database:
         logger.info("Removed last death event (id=%s) for session_id=%s", row["id"], session_id)
         return True
 
+<<<<<<< HEAD
     def set_session_death_count(
         self, game_id: int, boss_id: int | None, session_id: int, target: int
     ) -> None:
@@ -551,6 +590,8 @@ class Database:
             self.add_death_event(game_id, boss_id, session_id, delta)
         logger.info("Set total deaths for game_id=%s to %s (delta=%s)", game_id, target, delta)
 
+=======
+>>>>>>> 87d3c43bd4a8cfe2e09f744eb9c535cdd5c0fb02
     def get_total_deaths(self, game_id: int | None = None) -> int:
         """Return total net deaths, optionally filtered by game."""
         with self._cursor() as cursor:
@@ -655,6 +696,7 @@ class Database:
         with self._cursor() as cursor:
             cursor.execute("SELECT key, value FROM settings")
             return {row["key"]: row["value"] for row in cursor.fetchall()}
+<<<<<<< HEAD
 
     # ----------------------------------------------------------------
     # Full backup / restore (JSON export-import) and reset
@@ -769,3 +811,5 @@ class Database:
         with self._cursor() as cursor:
             cursor.execute("DELETE FROM games")
         logger.warning("All game data cleared (settings preserved)")
+=======
+>>>>>>> 87d3c43bd4a8cfe2e09f744eb9c535cdd5c0fb02
