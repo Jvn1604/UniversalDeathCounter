@@ -1,0 +1,49 @@
+<svg width="512" height="512" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#1e1f22"/>
+      <stop offset="100%" stop-color="#121315"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="50%" cy="52%" r="40%">
+      <stop offset="0%" stop-color="#ff4d4d" stop-opacity="0.55"/>
+      <stop offset="100%" stop-color="#ff4d4d" stop-opacity="0"/>
+    </radialGradient>
+    <clipPath id="tile">
+      <rect x="0" y="0" width="512" height="512" rx="112" ry="112"/>
+    </clipPath>
+  </defs>
+
+  <g clip-path="url(#tile)">
+    <rect x="0" y="0" width="512" height="512" fill="url(#bg)"/>
+    <circle cx="256" cy="266" r="160" fill="url(#glow)"/>
+
+    <!-- HUD reticle arcs -->
+    <path d="M 100 110 A 160 160 0 0 0 65 175" fill="none" stroke="#ff4d4d" stroke-width="3" stroke-linecap="round"/>
+    <path d="M 412 175 A 160 160 0 0 0 377 110" fill="none" stroke="#ff4d4d" stroke-width="3" stroke-linecap="round" transform="rotate(180 256 266)"/>
+
+    <!-- Cranium -->
+    <rect x="98" y="106" width="316" height="270" rx="135" ry="135" fill="#e8e8e8"/>
+    <!-- Jaw -->
+    <polygon points="130,272 382,272 332,408 180,408" fill="#e8e8e8"/>
+    <rect x="130" y="266" width="252" height="12" fill="#aaaaac"/>
+
+    <!-- Eyes -->
+    <circle cx="172" cy="246" r="40" fill="#101113"/>
+    <circle cx="172" cy="246" r="22" fill="#ff4d4d"/>
+    <circle cx="340" cy="246" r="40" fill="#101113"/>
+    <circle cx="340" cy="246" r="22" fill="#ff4d4d"/>
+
+    <!-- Nose -->
+    <polygon points="238,300 274,300 256,332" fill="#101113"/>
+
+    <!-- Teeth (segmented display) -->
+    <g fill="#101113">
+      <rect x="160" y="312" width="22" height="78" rx="6"/>
+      <rect x="194" y="312" width="22" height="78" rx="6"/>
+      <rect x="228" y="312" width="22" height="78" rx="6"/>
+      <rect x="262" y="312" width="22" height="78" rx="6"/>
+      <rect x="296" y="312" width="22" height="78" rx="6"/>
+      <rect x="330" y="312" width="22" height="78" rx="6"/>
+    </g>
+  </g>
+</svg>
