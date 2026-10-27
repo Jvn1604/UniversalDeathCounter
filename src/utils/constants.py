@@ -7,18 +7,14 @@ throughout the codebase and makes future configuration changes trivial.
 
 from __future__ import annotations
 
-<<<<<<< HEAD
 import os
 import sys
-=======
->>>>>>> 87d3c43bd4a8cfe2e09f744eb9c535cdd5c0fb02
 from pathlib import Path
 
 # --------------------------------------------------------------------------
 # Application metadata
 # --------------------------------------------------------------------------
 APP_NAME: str = "Universal Death Counter"
-<<<<<<< HEAD
 APP_VERSION: str = "1.5.0"
 APP_ORG: str = "UniversalDeathCounter"
 
@@ -76,19 +72,6 @@ LOG_FILE: Path = LOG_DIR / "app.log"
 # Bundled read-only resources: safe to resolve relative to PROJECT_ROOT even
 # when frozen, since PyInstaller's datas= preserves this relative layout
 # inside the (temporary but valid-for-this-run) extraction directory.
-=======
-APP_VERSION: str = "1.0.0"
-APP_ORG: str = "UniversalDeathCounter"
-
-# --------------------------------------------------------------------------
-# Filesystem paths
-# --------------------------------------------------------------------------
-PROJECT_ROOT: Path = Path(__file__).resolve().parents[2]
-SAVES_DIR: Path = PROJECT_ROOT / "saves"
-DATABASE_PATH: Path = SAVES_DIR / "death_counter.db"
-LOG_DIR: Path = SAVES_DIR / "logs"
-LOG_FILE: Path = LOG_DIR / "app.log"
->>>>>>> 87d3c43bd4a8cfe2e09f744eb9c535cdd5c0fb02
 THEMES_DIR: Path = PROJECT_ROOT / "src" / "themes"
 ICONS_DIR: Path = PROJECT_ROOT / "assets" / "icons"
 
@@ -117,7 +100,6 @@ SETTING_LAST_GAME_ID: str = "last_game_id"
 SETTING_LAST_BOSS_ID: str = "last_boss_id"
 SETTING_OVERLAY_GEOMETRY: str = "overlay_geometry"
 
-<<<<<<< HEAD
 # --- v1.5 overlay & streaming ---
 SETTING_OVERLAY_BG_MODE: str = "overlay_bg_mode"  # "dark" | "chroma"
 SETTING_OVERLAY_TEXT_COLOR: str = "overlay_text_color"
@@ -133,8 +115,6 @@ SETTING_DEATHS_TXT_TEMPLATE: str = "deaths_txt_template"
 SETTING_MINIMIZE_TO_TRAY: str = "minimize_to_tray"
 SETTING_CHECK_UPDATES: str = "check_updates"
 
-=======
->>>>>>> 87d3c43bd4a8cfe2e09f744eb9c535cdd5c0fb02
 # --------------------------------------------------------------------------
 # Default settings values
 # --------------------------------------------------------------------------
@@ -152,7 +132,6 @@ DEFAULT_SETTINGS: dict[str, str] = {
     SETTING_LAST_GAME_ID: "",
     SETTING_LAST_BOSS_ID: "",
     SETTING_OVERLAY_GEOMETRY: "",
-<<<<<<< HEAD
     SETTING_OVERLAY_BG_MODE: "dark",
     SETTING_OVERLAY_TEXT_COLOR: "#ff4d4d",
     SETTING_OVERLAY_COUNTER_SOURCE: "session",
@@ -164,8 +143,6 @@ DEFAULT_SETTINGS: dict[str, str] = {
     SETTING_DEATHS_TXT_TEMPLATE: "{game} - {boss}: {deaths}",
     SETTING_MINIMIZE_TO_TRAY: "false",
     SETTING_CHECK_UPDATES: "true",
-=======
->>>>>>> 87d3c43bd4a8cfe2e09f744eb9c535cdd5c0fb02
 }
 
 # --------------------------------------------------------------------------
