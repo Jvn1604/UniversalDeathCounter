@@ -82,6 +82,7 @@ DEFAULT_HOTKEY_INCREMENT: str = "f9"
 DEFAULT_HOTKEY_DECREMENT: str = "f10"
 DEFAULT_HOTKEY_UNDO: str = "f11"
 DEFAULT_HOTKEY_TOGGLE_OVERLAY: str = "ctrl+f12"  # plain F12 is often taken (Steam, debuggers)
+DEFAULT_HOTKEY_CALIBRATE: str = "f8"
 
 # --------------------------------------------------------------------------
 # Settings keys (used in the `settings` table)
@@ -113,6 +114,15 @@ SETTING_DEATHS_TXT_TEMPLATE: str = "deaths_txt_template"
 SETTING_MINIMIZE_TO_TRAY: str = "minimize_to_tray"
 SETTING_CHECK_UPDATES: str = "check_updates"
 
+# --- auto death detection ---
+SETTING_HOTKEY_CALIBRATE: str = "hotkey_calibrate"
+SETTING_DETECTION_COOLDOWN: str = "detection_cooldown"  # seconds between deaths
+
+# Per-game detection modes (stored in the game_detection table)
+DETECTION_MODE_OFF: str = "off"
+DETECTION_MODE_TEMPLATE: str = "template"  # calibrated death screen, any game
+DETECTION_MODE_SOULS: str = "souls"  # built-in red "YOU DIED" preset
+
 # --------------------------------------------------------------------------
 # Default settings values
 # --------------------------------------------------------------------------
@@ -139,6 +149,8 @@ DEFAULT_SETTINGS: dict[str, str] = {
     SETTING_DEATHS_TXT_TEMPLATE: "{game} - {boss}: {deaths}",
     SETTING_MINIMIZE_TO_TRAY: "false",
     SETTING_CHECK_UPDATES: "true",
+    SETTING_HOTKEY_CALIBRATE: DEFAULT_HOTKEY_CALIBRATE,
+    SETTING_DETECTION_COOLDOWN: "8",
 }
 
 # --------------------------------------------------------------------------
