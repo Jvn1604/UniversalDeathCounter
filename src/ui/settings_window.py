@@ -1,5 +1,4 @@
 """
-<<<<<<< HEAD
 Settings dialog: theme, overlay appearance & behavior, streaming output,
 hotkeys, tray, and updates.
 
@@ -7,19 +6,11 @@ All changes are persisted immediately to the `settings` table via
 :class:`~src.database.database.Database`, consistent with the app's
 "no manual save button" philosophy (the Save button here commits the
 whole form at once).
-=======
-Settings dialog: theme, overlay appearance, hotkeys, autosave, startup.
-
-All changes are persisted immediately to the `settings` table via
-:class:`~src.database.database.Database`, consistent with the app's
-"no manual save button" philosophy.
->>>>>>> 87d3c43bd4a8cfe2e09f744eb9c535cdd5c0fb02
 """
 
 from __future__ import annotations
 
 from PySide6.QtCore import Signal
-<<<<<<< HEAD
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -33,15 +24,6 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QKeySequenceEdit,
     QLineEdit,
-=======
-from PySide6.QtWidgets import (
-    QCheckBox,
-    QComboBox,
-    QDialog,
-    QDoubleSpinBox,
-    QFormLayout,
-    QKeySequenceEdit,
->>>>>>> 87d3c43bd4a8cfe2e09f744eb9c535cdd5c0fb02
     QPushButton,
     QSpinBox,
     QVBoxLayout,
@@ -50,19 +32,14 @@ from PySide6.QtWidgets import (
 from src.database.database import Database
 from src.utils.constants import (
     AVAILABLE_THEMES,
-<<<<<<< HEAD
     SETTING_CHECK_UPDATES,
     SETTING_DEATHS_TXT_ENABLED,
     SETTING_DEATHS_TXT_PATH,
     SETTING_DEATHS_TXT_TEMPLATE,
-=======
-    SETTING_AUTOSAVE,
->>>>>>> 87d3c43bd4a8cfe2e09f744eb9c535cdd5c0fb02
     SETTING_HOTKEY_DECREMENT,
     SETTING_HOTKEY_INCREMENT,
     SETTING_HOTKEY_TOGGLE_OVERLAY,
     SETTING_HOTKEY_UNDO,
-<<<<<<< HEAD
     SETTING_MINIMIZE_TO_TRAY,
     SETTING_OVERLAY_ALWAYS_ON_TOP,
     SETTING_OVERLAY_BG_MODE,
@@ -73,37 +50,23 @@ from src.utils.constants import (
     SETTING_OVERLAY_SHOW_GAME,
     SETTING_OVERLAY_SHOW_STATS,
     SETTING_OVERLAY_TEXT_COLOR,
-=======
-    SETTING_LAUNCH_ON_STARTUP,
-    SETTING_OVERLAY_ALWAYS_ON_TOP,
-    SETTING_OVERLAY_FONT_SIZE,
-    SETTING_OVERLAY_OPACITY,
->>>>>>> 87d3c43bd4a8cfe2e09f744eb9c535cdd5c0fb02
     SETTING_THEME,
 )
 from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
-<<<<<<< HEAD
 _BG_MODES = ["dark", "chroma"]
 _COUNTER_SOURCES = ["session", "boss", "total"]
 
-=======
->>>>>>> 87d3c43bd4a8cfe2e09f744eb9c535cdd5c0fb02
 
 class SettingsWindow(QDialog):
     """
     Modal dialog exposing all user-configurable settings.
 
     Signals:
-<<<<<<< HEAD
         settings_changed: Emitted whenever settings are saved, so the
             main window can refresh theme/overlay/hotkeys/stream output live.
-=======
-        settings_changed: Emitted whenever any setting is saved, so the
-            main window can refresh theme/overlay/hotkeys live.
->>>>>>> 87d3c43bd4a8cfe2e09f744eb9c535cdd5c0fb02
     """
 
     settings_changed = Signal()
@@ -111,14 +74,9 @@ class SettingsWindow(QDialog):
     def __init__(self, database: Database, parent=None) -> None:
         super().__init__(parent)
         self._database = database
-<<<<<<< HEAD
         self._text_color = "#ff4d4d"
         self.setWindowTitle("Settings")
         self.setMinimumWidth(460)
-=======
-        self.setWindowTitle("Settings")
-        self.setMinimumWidth(380)
->>>>>>> 87d3c43bd4a8cfe2e09f744eb9c535cdd5c0fb02
         self._build_ui()
         self._load_current_values()
 
@@ -127,7 +85,6 @@ class SettingsWindow(QDialog):
     # ----------------------------------------------------------------
     def _build_ui(self) -> None:
         layout = QVBoxLayout(self)
-<<<<<<< HEAD
 
         # --- General ---
         general_group = QGroupBox("General")
@@ -164,22 +121,10 @@ class SettingsWindow(QDialog):
         self._font_size_spin = QSpinBox()
         self._font_size_spin.setRange(10, 96)
         overlay_form.addRow("Font size", self._font_size_spin)
-=======
-        form = QFormLayout()
-
-        self._theme_combo = QComboBox()
-        self._theme_combo.addItems(AVAILABLE_THEMES)
-        form.addRow("Theme", self._theme_combo)
-
-        self._font_size_spin = QSpinBox()
-        self._font_size_spin.setRange(10, 96)
-        form.addRow("Overlay Font Size", self._font_size_spin)
->>>>>>> 87d3c43bd4a8cfe2e09f744eb9c535cdd5c0fb02
 
         self._opacity_spin = QDoubleSpinBox()
         self._opacity_spin.setRange(0.1, 1.0)
         self._opacity_spin.setSingleStep(0.05)
-<<<<<<< HEAD
         overlay_form.addRow("Opacity (dark mode)", self._opacity_spin)
 
         self._show_game_check = QCheckBox("Show game name")
@@ -229,41 +174,12 @@ class SettingsWindow(QDialog):
         self._hotkey_toggle_overlay = QKeySequenceEdit()
         hotkey_form.addRow("Toggle Overlay", self._hotkey_toggle_overlay)
         layout.addWidget(hotkey_group)
-=======
-        form.addRow("Overlay Opacity", self._opacity_spin)
-
-        self._always_on_top_check = QCheckBox("Overlay Always On Top")
-        form.addRow(self._always_on_top_check)
-
-        self._autosave_check = QCheckBox("Autosave (recommended: always on)")
-        self._autosave_check.setEnabled(False)  # Autosave is core behavior, always on.
-        form.addRow(self._autosave_check)
-
-        self._launch_on_startup_check = QCheckBox("Launch on Startup (coming soon)")
-        self._launch_on_startup_check.setEnabled(False)  # Placeholder per spec.
-        form.addRow(self._launch_on_startup_check)
-
-        self._hotkey_increment = QKeySequenceEdit()
-        form.addRow("Hotkey: +1 Death", self._hotkey_increment)
-
-        self._hotkey_decrement = QKeySequenceEdit()
-        form.addRow("Hotkey: -1 Death", self._hotkey_decrement)
-
-        self._hotkey_undo = QKeySequenceEdit()
-        form.addRow("Hotkey: Undo", self._hotkey_undo)
-
-        self._hotkey_toggle_overlay = QKeySequenceEdit()
-        form.addRow("Hotkey: Toggle Overlay", self._hotkey_toggle_overlay)
-
-        layout.addLayout(form)
->>>>>>> 87d3c43bd4a8cfe2e09f744eb9c535cdd5c0fb02
 
         save_button = QPushButton("Save")
         save_button.setObjectName("AccentButton")
         save_button.clicked.connect(self._save)
         layout.addWidget(save_button)
 
-<<<<<<< HEAD
     def _update_color_button(self) -> None:
         self._color_button.setText(self._text_color)
         self._color_button.setStyleSheet(
@@ -283,8 +199,6 @@ class SettingsWindow(QDialog):
         if path:
             self._deaths_txt_path.setText(path)
 
-=======
->>>>>>> 87d3c43bd4a8cfe2e09f744eb9c535cdd5c0fb02
     # ----------------------------------------------------------------
     # Data binding
     # ----------------------------------------------------------------
@@ -292,7 +206,6 @@ class SettingsWindow(QDialog):
         settings = self._database.get_all_settings()
 
         self._theme_combo.setCurrentText(settings.get(SETTING_THEME, "dark"))
-<<<<<<< HEAD
         self._minimize_tray_check.setChecked(
             settings.get(SETTING_MINIMIZE_TO_TRAY, "false") == "true"
         )
@@ -323,16 +236,6 @@ class SettingsWindow(QDialog):
         self._deaths_txt_path.setText(settings.get(SETTING_DEATHS_TXT_PATH, ""))
         self._deaths_txt_template.setText(
             settings.get(SETTING_DEATHS_TXT_TEMPLATE, "{game} - {boss}: {deaths}")
-=======
-        self._font_size_spin.setValue(int(settings.get(SETTING_OVERLAY_FONT_SIZE, "24")))
-        self._opacity_spin.setValue(float(settings.get(SETTING_OVERLAY_OPACITY, "0.85")))
-        self._always_on_top_check.setChecked(
-            settings.get(SETTING_OVERLAY_ALWAYS_ON_TOP, "true") == "true"
-        )
-        self._autosave_check.setChecked(settings.get(SETTING_AUTOSAVE, "true") == "true")
-        self._launch_on_startup_check.setChecked(
-            settings.get(SETTING_LAUNCH_ON_STARTUP, "false") == "true"
->>>>>>> 87d3c43bd4a8cfe2e09f744eb9c535cdd5c0fb02
         )
 
         self._hotkey_increment.setKeySequence(settings.get(SETTING_HOTKEY_INCREMENT, "F9"))
@@ -343,7 +246,6 @@ class SettingsWindow(QDialog):
         )
 
     def _save(self) -> None:
-<<<<<<< HEAD
         db = self._database
         db.set_setting(SETTING_THEME, self._theme_combo.currentText())
         db.set_setting(
@@ -373,17 +275,10 @@ class SettingsWindow(QDialog):
             "true" if self._show_stats_check.isChecked() else "false",
         )
         db.set_setting(
-=======
-        self._database.set_setting(SETTING_THEME, self._theme_combo.currentText())
-        self._database.set_setting(SETTING_OVERLAY_FONT_SIZE, self._font_size_spin.value())
-        self._database.set_setting(SETTING_OVERLAY_OPACITY, self._opacity_spin.value())
-        self._database.set_setting(
->>>>>>> 87d3c43bd4a8cfe2e09f744eb9c535cdd5c0fb02
             SETTING_OVERLAY_ALWAYS_ON_TOP,
             "true" if self._always_on_top_check.isChecked() else "false",
         )
 
-<<<<<<< HEAD
         db.set_setting(
             SETTING_DEATHS_TXT_ENABLED,
             "true" if self._deaths_txt_check.isChecked() else "false",
@@ -392,8 +287,6 @@ class SettingsWindow(QDialog):
         template = self._deaths_txt_template.text().strip() or "{game} - {boss}: {deaths}"
         db.set_setting(SETTING_DEATHS_TXT_TEMPLATE, template)
 
-=======
->>>>>>> 87d3c43bd4a8cfe2e09f744eb9c535cdd5c0fb02
         for setting_key, edit in (
             (SETTING_HOTKEY_INCREMENT, self._hotkey_increment),
             (SETTING_HOTKEY_DECREMENT, self._hotkey_decrement),
@@ -402,11 +295,7 @@ class SettingsWindow(QDialog):
         ):
             sequence_text = edit.keySequence().toString().lower()
             if sequence_text:
-<<<<<<< HEAD
                 db.set_setting(setting_key, sequence_text)
-=======
-                self._database.set_setting(setting_key, sequence_text)
->>>>>>> 87d3c43bd4a8cfe2e09f744eb9c535cdd5c0fb02
 
         logger.info("Settings saved")
         self.settings_changed.emit()
