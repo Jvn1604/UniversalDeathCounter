@@ -168,6 +168,8 @@ class HotkeyManager(QObject):
         undo_triggered: Emitted when the undo hotkey is pressed.
         toggle_overlay_triggered: Emitted when the overlay-toggle hotkey
             is pressed.
+        calibrate_triggered: Emitted when the death-screen calibration
+            hotkey is pressed.
         registration_failed: Emitted with ``[(action, key), ...]`` for keys
             that could not be registered (unknown key, or already taken
             by another program).
@@ -177,6 +179,7 @@ class HotkeyManager(QObject):
     decrement_triggered = Signal()
     undo_triggered = Signal()
     toggle_overlay_triggered = Signal()
+    calibrate_triggered = Signal()
     registration_failed = Signal(list)
 
     def __init__(
@@ -185,6 +188,7 @@ class HotkeyManager(QObject):
         decrement_key: str,
         undo_key: str,
         toggle_overlay_key: str,
+        calibrate_key: str = "f8",
         parent: QObject | None = None,
     ) -> None:
         """
@@ -193,6 +197,7 @@ class HotkeyManager(QObject):
             decrement_key: Key combo for -1 death.
             undo_key: Key combo for undo.
             toggle_overlay_key: Key combo for toggling the overlay.
+            calibrate_key: Key combo for capturing a death-screen calibration.
             parent: Optional Qt parent object.
         """
         super().__init__(parent)
@@ -201,12 +206,14 @@ class HotkeyManager(QObject):
             "decrement": decrement_key,
             "undo": undo_key,
             "toggle_overlay": toggle_overlay_key,
+            "calibrate": calibrate_key,
         }
         self._signals: dict[str, Signal] = {
             "increment": self.increment_triggered,
             "decrement": self.decrement_triggered,
             "undo": self.undo_triggered,
             "toggle_overlay": self.toggle_overlay_triggered,
+            "calibrate": self.calibrate_triggered,
         }
         self._thread: _HotkeyThread | None = None
 
@@ -243,7 +250,12 @@ class HotkeyManager(QObject):
         logger.info("Hotkeys unregistered")
 
     def update_bindings(
-        self, increment_key: str, decrement_key: str, undo_key: str, toggle_overlay_key: str
+        self,
+        increment_key: str,
+        decrement_key: str,
+        undo_key: str,
+        toggle_overlay_key: str,
+        calibrate_key: str = "f8",
     ) -> None:
         """Stop, rebind, and restart hotkeys with new key combinations."""
         was_active = self._thread is not None
@@ -253,6 +265,7 @@ class HotkeyManager(QObject):
             "decrement": decrement_key,
             "undo": undo_key,
             "toggle_overlay": toggle_overlay_key,
+            "calibrate": calibrate_key,
         }
         if was_active:
             self.start()

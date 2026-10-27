@@ -119,6 +119,19 @@ class Database:
                 value TEXT NOT NULL
             )
             """,
+            # Per-game auto-detection config. Kept out of `games` because the
+            # exe path is machine-specific and the template is a BLOB, so
+            # neither belongs in JSON backups.
+            """
+            CREATE TABLE IF NOT EXISTS game_detection (
+                game_id INTEGER PRIMARY KEY,
+                exe_path TEXT,
+                mode TEXT NOT NULL DEFAULT 'off',
+                region TEXT,
+                template BLOB,
+                FOREIGN KEY (game_id) REFERENCES games (id) ON DELETE CASCADE
+            )
+            """,
         )
         with self._cursor() as cursor:
             for statement in schema_statements:
@@ -239,6 +252,48 @@ class Database:
                 "UPDATE games SET name = ? WHERE id = ?", (new_name.strip(), game_id)
             )
         logger.info("Renamed game id=%s to '%s'", game_id, new_name)
+
+    # ----------------------------------------------------------------
+    # Auto-detection config
+    # ----------------------------------------------------------------
+    def get_game_detection(self, game_id: int) -> sqlite3.Row | None:
+        """Return a game's auto-detection config row, or ``None`` if never set."""
+        with self._cursor() as cursor:
+            cursor.execute("SELECT * FROM game_detection WHERE game_id = ?", (game_id,))
+            return cursor.fetchone()
+
+    def set_game_detection(self, game_id: int, exe_path: str | None, mode: str) -> None:
+        """
+        Set a game's executable and detection mode, keeping any calibration.
+
+        Args:
+            game_id: The game to configure.
+            exe_path: Full path of the game's .exe (``None`` to clear).
+            mode: One of the ``DETECTION_MODE_*`` constants.
+        """
+        with self._cursor() as cursor:
+            cursor.execute(
+                """
+                INSERT INTO game_detection (game_id, exe_path, mode) VALUES (?, ?, ?)
+                ON CONFLICT (game_id) DO UPDATE
+                SET exe_path = excluded.exe_path, mode = excluded.mode
+                """,
+                (game_id, exe_path, mode),
+            )
+        logger.info("Set detection for game_id=%s: mode=%s exe=%s", game_id, mode, exe_path)
+
+    def set_game_death_template(self, game_id: int, region: str, template: bytes) -> None:
+        """Store a calibrated death-screen template for a game."""
+        with self._cursor() as cursor:
+            cursor.execute(
+                """
+                INSERT INTO game_detection (game_id, region, template) VALUES (?, ?, ?)
+                ON CONFLICT (game_id) DO UPDATE
+                SET region = excluded.region, template = excluded.template
+                """,
+                (game_id, region, sqlite3.Binary(template)),
+            )
+        logger.info("Stored death-screen template for game_id=%s", game_id)
 
     # ----------------------------------------------------------------
     # Bosses

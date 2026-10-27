@@ -13,6 +13,7 @@ A free, open-source death counter for Soulslike games, challenge runs, speedruns
 ## Features
 
 - **Manual death counting** — works with *any* game, no memory reading or injection required
+- **Automatic death detection (Windows)** — pick the game's `.exe` and the app watches its window for the death screen, counting each death for you. Calibrate any game once (`F8` on the death screen, then box the death text), or use the zero-setup **Souls preset** for Elden Ring, Dark Souls I–III and Sekiro. Screen capture only, so it's safe with anti-cheat
 - **Session + Total counters** — track a single run and your all-time total separately
 - **Full CRUD freedom** — create, rename, and delete any game or boss at any time; nothing is locked in
 - **Quick-Add templates** — one click adds a popular game (Elden Ring, Dark Souls III, Sekiro, Bloodborne, Hollow Knight, Cuphead) with its full boss list pre-filled — then edit/rename/delete freely
@@ -20,7 +21,7 @@ A free, open-source death counter for Soulslike games, challenge runs, speedruns
 - **Session history** — review every past run per game, with per-session death counts and one-click delete
 - **Backup & restore** — export all your data to a single JSON file and import it back (or onto another PC) anytime
 - **Clear all data** — full reset in one confirmed action, with settings preserved
-- **Global hotkeys** — `F9` (+1), `F10` (-1), `F11` (Undo), `Ctrl+F12` (Toggle Overlay) work even while your game is focused. They use Windows' own hotkey API (no keyboard hook), so they only ever see their own key combos
+- **Global hotkeys** — `F9` (+1), `F10` (-1), `F11` (Undo), `Ctrl+F12` (Toggle Overlay), `F8` (Calibrate death screen) work even while your game is focused. They use Windows' own hotkey API (no keyboard hook), so they only ever see their own key combos
 - **OBS-ready overlay** — transparent, frameless, resizable, movable window for Window Capture — **plus a chroma-key green mode** for color-key filters
 - **Overlay customization** — pick the counter color, font size, which number the big counter shows (session / boss / total), and toggle each line (game, boss, stats) on or off
 - **deaths.txt for OBS Text Sources** — writes a fully customizable template like `{game} - {boss}: {deaths}` to a text file on every change, so streamers can skip window capture entirely
@@ -96,6 +97,7 @@ python -m src.app
 2. Double-click any game or boss in that dialog to rename it; delete buttons remove it (and its history) entirely. Nothing is permanent until you want it to be.
 3. Select your game/boss from the dropdowns on the main window.
 4. Hit **+1 Death** (or `F9`) every time you die. `F10` decrements, `F11` undoes the last action, and **Set Exact Count…** lets you jump straight to a specific number.
+   - **Or let the app count for you:** click **Auto-Detect…** (also under **Manage → Auto Death Detection…**), browse to the game's `.exe`, and save. Souls games get the built-in preset automatically. For any other game, press `F8` in-game the first time the death screen shows, drag a box around the death text, and save. From then on, deaths are counted whenever that game is running. Run the game in **borderless or windowed** mode, since exclusive fullscreen can capture as black.
 5. Beat a boss? Select it in **Manage → Games & Bosses…** and hit **Toggle Defeated ✓** — your "deaths until victory" number is captured permanently.
 6. Open **Manage → Games & Bosses… → Session History** to review or delete individual past runs for a game.
 7. Open **View → Toggle Overlay** (or `Ctrl+F12`) and add it as a **Window Capture** source in OBS — or switch the overlay to **chroma** mode in Settings and use a Color Key filter. Prefer text? Enable **deaths.txt** in Settings and point an OBS **Text Source** at the file, with your own `{game} - {boss}: {deaths}` template.
@@ -116,6 +118,7 @@ UniversalDeathCounter/
 │   ├── ui/                      # Main window, settings, boss manager, session history, about
 │   ├── overlay/                  # OBS-ready transparent overlay
 │   ├── hotkeys/                 # Global hotkey listener
+│   ├── detection/               # Auto death detection: window capture, matchers, watcher thread
 │   ├── themes/                   # Dark/Light QSS stylesheets + loader
 │   └── utils/                    # Constants, logging, game templates
 ├── packaging/                    # PyInstaller spec + Inno Setup installer script
@@ -167,11 +170,13 @@ UniversalDeathCounter/
 - [x] System tray with quick actions + minimize-to-tray
 - [x] Startup update check via GitHub Releases
 
+### Next
+- [x] Automatic death detection: per-game `.exe`, one-time calibration for any game, Souls preset
+
 ### Future
 - [ ] Additional themes
 
 ### v2.0
-- [ ] OCR-based automatic detection ("YOU DIED", "DEMISE", "DEFEAT")
 - [ ] Formal plugin API for memory reading, Steam, and Discord Rich Presence integrations
 
 ## Contributing
@@ -190,7 +195,7 @@ Bug reports and feature requests are just as valuable as code — please open an
 ## Known Limitations
 
 - Global hotkeys are **Windows-only**. A registered hotkey is consumed, so the game doesn't also receive that key. If another program has already registered a combo (plain `F12` is often taken), the app shows a notice and you can pick a different key in **Settings → Preferences**. The in-app buttons always work.
-- v1.0 is manual-only by design; see the Roadmap for planned automatic detection.
+- Automatic death detection is **Windows-only** and relies on a visible death screen: games running in exclusive fullscreen may capture as black (use borderless/windowed), and games without a consistent death screen can't be auto-detected, so keep using the hotkeys there. The Souls preset is a color heuristic; if it misfires in a game, calibrate that game instead.
 
 ## License
 

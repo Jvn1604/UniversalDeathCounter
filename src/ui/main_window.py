@@ -9,6 +9,7 @@ system into the primary user-facing UI.
 from __future__ import annotations
 
 import json
+from datetime import datetime
 from pathlib import Path
 
 from PySide6.QtCore import Qt
@@ -35,10 +36,14 @@ from src.core.counter_manager import CounterManager, CounterSnapshot
 from src.core.session_manager import SessionManager
 from src.core.statistics import StatisticsService
 from src.database.database import Database
+from src.detection.death_watcher import DeathWatcher, WatchConfig
+from src.detection.game_window import capture_game_frame, detection_available
+from src.detection.matchers import build_matcher
 from src.hotkeys.hotkey_manager import HotkeyManager
 from src.overlay.overlay_window import OverlayWindow
 from src.themes.theme_manager import apply_theme
 from src.ui.about_window import AboutWindow
+from src.ui.auto_detect_window import AutoDetectWindow, CalibrationDialog
 from src.ui.boss_window import BossWindow
 from src.ui.death_log_window import DeathLogWindow
 from src.ui.settings_window import SettingsWindow
@@ -46,12 +51,15 @@ from src.ui.statistics_window import StatisticsWindow
 from src.utils.constants import (
     APP_NAME,
     DEFAULT_HOTKEY_TOGGLE_OVERLAY,
+    DETECTION_MODE_TEMPLATE,
     ICONS_DIR,
     SAVES_DIR,
     SETTING_CHECK_UPDATES,
     SETTING_DEATHS_TXT_ENABLED,
     SETTING_DEATHS_TXT_PATH,
     SETTING_DEATHS_TXT_TEMPLATE,
+    SETTING_DETECTION_COOLDOWN,
+    SETTING_HOTKEY_CALIBRATE,
     SETTING_HOTKEY_DECREMENT,
     SETTING_HOTKEY_INCREMENT,
     SETTING_HOTKEY_TOGGLE_OVERLAY,
@@ -89,6 +97,7 @@ class MainWindow(QMainWindow):
         self._counter_manager = CounterManager(self._database, self._session_manager)
         self._statistics_service = StatisticsService(self._database)
         self._overlay = OverlayWindow()
+        self._death_watcher = DeathWatcher(parent=self)
         self._quitting = False
 
         self._update_window_title()
@@ -96,6 +105,7 @@ class MainWindow(QMainWindow):
         self._build_ui()
         self._build_tray()
         self._setup_hotkeys()
+        self._setup_death_watcher()
         self._apply_saved_settings()
         self._reload_games()
         self._maybe_check_updates()
@@ -132,6 +142,8 @@ class MainWindow(QMainWindow):
         manage_menu = menu_bar.addMenu("&Manage")
         manage_action = manage_menu.addAction("Games && Bosses…")
         manage_action.triggered.connect(self._open_boss_window)
+        detect_action = manage_menu.addAction("Auto Death Detection…")
+        detect_action.triggered.connect(self._open_auto_detect_window)
 
         view_menu = menu_bar.addMenu("&View")
         overlay_action = view_menu.addAction("Toggle Overlay")
@@ -183,6 +195,21 @@ class MainWindow(QMainWindow):
         selector_layout.addWidget(self._labeled("Game", self._game_combo))
         selector_layout.addWidget(self._labeled("Boss", self._boss_combo))
         root_layout.addLayout(selector_layout)
+
+        detect_layout = QHBoxLayout()
+        detect_text_layout = QVBoxLayout()
+        detect_text_layout.setSpacing(2)
+        self._detect_status_label = QLabel("Auto-detect off")
+        self._detect_status_label.setWordWrap(True)
+        self._detect_last_label = QLabel("")
+        self._detect_last_label.setStyleSheet("color: #999999; font-size: 11px;")
+        detect_text_layout.addWidget(self._detect_status_label)
+        detect_text_layout.addWidget(self._detect_last_label)
+        detect_button = QPushButton("Auto-Detect…")
+        detect_button.clicked.connect(self._open_auto_detect_window)
+        detect_layout.addLayout(detect_text_layout, 1)
+        detect_layout.addWidget(detect_button)
+        root_layout.addLayout(detect_layout)
 
         card = QFrame()
         card.setObjectName("Card")
@@ -301,12 +328,14 @@ class MainWindow(QMainWindow):
             toggle_overlay_key=settings.get(
                 SETTING_HOTKEY_TOGGLE_OVERLAY, DEFAULT_HOTKEY_TOGGLE_OVERLAY
             ),
+            calibrate_key=settings.get(SETTING_HOTKEY_CALIBRATE, "f8"),
             parent=self,
         )
         self._hotkey_manager.increment_triggered.connect(self._on_increment)
         self._hotkey_manager.decrement_triggered.connect(self._on_decrement)
         self._hotkey_manager.undo_triggered.connect(self._on_undo)
         self._hotkey_manager.toggle_overlay_triggered.connect(self._toggle_overlay)
+        self._hotkey_manager.calibrate_triggered.connect(self._on_calibrate_hotkey)
         self._hotkey_manager.registration_failed.connect(self._on_hotkeys_failed)
         self._hotkey_manager.start()
 
@@ -316,6 +345,7 @@ class MainWindow(QMainWindow):
             "decrement": "-1 Death",
             "undo": "Undo",
             "toggle_overlay": "Toggle Overlay",
+            "calibrate": "Calibrate Death Screen",
         }
         keys = ", ".join(
             f"{key.upper()} ({labels.get(action, action)})" for action, key in failures
@@ -330,6 +360,70 @@ class MainWindow(QMainWindow):
             )
         else:
             QMessageBox.warning(self, "Hotkey Unavailable", message)
+
+    # ----------------------------------------------------------------
+    # Auto death detection
+    # ----------------------------------------------------------------
+    def _setup_death_watcher(self) -> None:
+        self._death_watcher.status_changed.connect(self._detect_status_label.setText)
+        self._death_watcher.death_detected.connect(self._on_death_detected)
+        self._death_watcher.start()
+
+    def _configure_detection(self) -> None:
+        """Point the watcher at the current game's detection config, if any."""
+        game_id = self._counter_manager.current_game_id
+        row = self._database.get_game_detection(game_id) if game_id is not None else None
+        matcher = (
+            build_matcher(row["mode"], row["region"], row["template"]) if row is not None else None
+        )
+        if game_id is None or row is None or not row["exe_path"] or matcher is None:
+            self._death_watcher.configure(None)
+            if not detection_available():
+                status = "Auto-detect needs Windows"
+            elif row is not None and row["mode"] == DETECTION_MODE_TEMPLATE and matcher is None:
+                hotkey = self._database.get_setting(SETTING_HOTKEY_CALIBRATE, "f8").upper()
+                status = f"Auto-detect: press {hotkey} on the death screen to calibrate"
+            else:
+                status = "Auto-detect off"
+            self._detect_status_label.setText(status)
+            return
+        cooldown = float(self._database.get_setting(SETTING_DETECTION_COOLDOWN, "8") or 8)
+        self._death_watcher.configure(
+            WatchConfig(game_id=game_id, exe_path=row["exe_path"], matcher=matcher),
+            cooldown_seconds=cooldown,
+        )
+
+    def _on_death_detected(self, game_id: int) -> None:
+        if game_id != self._counter_manager.current_game_id:
+            return  # game switched while the frame was being processed
+        self._on_increment()
+        undo_key = self._database.get_setting(SETTING_HOTKEY_UNDO, "f11").upper()
+        self._detect_last_label.setText(
+            f"Death auto-counted at {datetime.now():%H:%M:%S} ({undo_key} to undo)"
+        )
+
+    def _on_calibrate_hotkey(self) -> None:
+        game_id = self._counter_manager.current_game_id
+        if game_id is None or not detection_available():
+            return
+        row = self._database.get_game_detection(game_id)
+        exe_path = row["exe_path"] if row is not None else None
+        frame = capture_game_frame(exe_path)
+        if frame is None:
+            return
+        self.show()
+        self.raise_()
+        self.activateWindow()
+        dialog = CalibrationDialog(frame, parent=self)
+        if dialog.exec() != CalibrationDialog.DialogCode.Accepted or dialog.template is None:
+            return
+        self._database.set_game_death_template(
+            game_id, dialog.template.region_json(), dialog.template.patch_bytes()
+        )
+        self._database.set_game_detection(game_id, exe_path, DETECTION_MODE_TEMPLATE)
+        self._configure_detection()
+        if not exe_path:
+            self._open_auto_detect_window()
 
     def _apply_saved_settings(self) -> None:
         settings = self._database.get_all_settings()
@@ -449,6 +543,7 @@ class MainWindow(QMainWindow):
             self._counter_manager.set_current_game(None, None)
             self._reload_bosses(None)
             self._refresh_counters()
+            self._configure_detection()
 
     def _reload_bosses(self, game_id: int | None) -> None:
         self._boss_combo.blockSignals(True)
@@ -470,6 +565,8 @@ class MainWindow(QMainWindow):
         self._counter_manager.set_current_game(game_id, game_name)
         self._reload_bosses(game_id)
         self._refresh_counters()
+        self._detect_last_label.setText("")
+        self._configure_detection()
 
     def _on_boss_changed(self, index: int) -> None:
         boss_id = self._boss_combo.itemData(index)
@@ -614,6 +711,17 @@ class MainWindow(QMainWindow):
         dialog.exec()
         self._reload_games()
 
+    def _open_auto_detect_window(self) -> None:
+        game_id = self._counter_manager.current_game_id
+        if game_id is None:
+            QMessageBox.information(self, "Select a Game", "Select a game first.")
+            return
+        dialog = AutoDetectWindow(
+            self._database, game_id, self._game_combo.currentText(), parent=self
+        )
+        dialog.exec()
+        self._configure_detection()
+
     def _open_death_log(self) -> None:
         game_id = self._counter_manager.current_game_id
         if game_id is None:
@@ -646,6 +754,7 @@ class MainWindow(QMainWindow):
             toggle_overlay_key=settings.get(
                 SETTING_HOTKEY_TOGGLE_OVERLAY, DEFAULT_HOTKEY_TOGGLE_OVERLAY
             ),
+            calibrate_key=settings.get(SETTING_HOTKEY_CALIBRATE, "f8"),
         )
 
     def _toggle_overlay(self) -> None:
@@ -687,6 +796,7 @@ class MainWindow(QMainWindow):
         self._database.set_setting(SETTING_OVERLAY_GEOMETRY, self._overlay.geometry_string())
         self._session_manager.end_current_session()
         self._hotkey_manager.stop()
+        self._death_watcher.stop()
         self._overlay.close()
         if self._tray is not None:
             self._tray.hide()
