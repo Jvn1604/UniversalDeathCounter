@@ -18,6 +18,16 @@ block_cipher = None
 # regardless of the current working directory it's invoked from.
 PROJECT_ROOT = Path(SPECPATH).resolve().parent
 
+# collect_submodules("src") silently skips some modules (e.g. src.ui.main_window,
+# src.database.database), causing ModuleNotFoundError at runtime. Walk the
+# filesystem instead and force every module under src/ into hiddenimports.
+SRC_MODULES = sorted(
+    ".".join(path.relative_to(PROJECT_ROOT).with_suffix("").parts)
+    for path in (PROJECT_ROOT / "src").rglob("*.py")
+    if "__pycache__" not in path.parts
+)
+SRC_MODULES = [m.removesuffix(".__init__") for m in SRC_MODULES]
+
 a = Analysis(
     [str(PROJECT_ROOT / "src" / "app.py")],
     pathex=[str(PROJECT_ROOT)],
@@ -27,7 +37,7 @@ a = Analysis(
         (str(PROJECT_ROOT / "src" / "themes" / "light.qss"), "src/themes"),
         (str(PROJECT_ROOT / "assets" / "icons"), "assets/icons"),
     ],
-    hiddenimports=["keyboard"],
+    hiddenimports=["keyboard", *SRC_MODULES],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
