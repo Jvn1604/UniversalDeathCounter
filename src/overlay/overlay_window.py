@@ -1,5 +1,4 @@
 """
-<<<<<<< HEAD
 Transparent, always-on-top overlay window for OBS capture.
 
 The overlay is a frameless, drag-movable widget showing the game name,
@@ -12,19 +11,11 @@ line. It supports two background modes:
 Every visual aspect (text color, counter source, which lines are shown,
 font size, opacity) is user-configurable via Settings and applied live
 through :meth:`apply_display_settings`.
-=======
-Transparent, always-on-top overlay window for OBS Window Capture.
-
-The overlay is a frameless, click-through-free (but drag-movable) widget
-that shows only Game name, Boss name, and Death count. It is intentionally
-minimal so it composites cleanly over gameplay footage in OBS.
->>>>>>> 87d3c43bd4a8cfe2e09f744eb9c535cdd5c0fb02
 """
 
 from __future__ import annotations
 
 from PySide6.QtCore import Qt, QPoint
-<<<<<<< HEAD
 from PySide6.QtGui import QMouseEvent
 from PySide6.QtWidgets import QLabel, QSizeGrip, QVBoxLayout, QWidget
 
@@ -40,32 +31,19 @@ from src.utils.constants import (
     SETTING_OVERLAY_SHOW_STATS,
     SETTING_OVERLAY_TEXT_COLOR,
 )
-=======
-from PySide6.QtGui import QMouseEvent, QResizeEvent
-from PySide6.QtWidgets import QLabel, QSizeGrip, QVBoxLayout, QWidget
-
-from src.utils.constants import ACCENT_COLOR
->>>>>>> 87d3c43bd4a8cfe2e09f744eb9c535cdd5c0fb02
 from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
-<<<<<<< HEAD
 CHROMA_GREEN = "#00ff00"
 
 
 class OverlayWindow(QWidget):
     """A movable, resizable, OBS-friendly death counter overlay."""
-=======
-
-class OverlayWindow(QWidget):
-    """A movable, resizable, transparent always-on-top death counter overlay."""
->>>>>>> 87d3c43bd4a8cfe2e09f744eb9c535cdd5c0fb02
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._drag_offset: QPoint | None = None
-<<<<<<< HEAD
 
         # Display configuration (updated via apply_display_settings)
         self._font_size = 24
@@ -78,10 +56,6 @@ class OverlayWindow(QWidget):
         self._show_stats = True
 
         self._last_snapshot: CounterSnapshot | None = None
-=======
-        self._font_size = 24
-        self._opacity = 0.85
->>>>>>> 87d3c43bd4a8cfe2e09f744eb9c535cdd5c0fb02
 
         self.setWindowFlags(
             Qt.WindowType.FramelessWindowHint
@@ -90,16 +64,10 @@ class OverlayWindow(QWidget):
         )
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setMinimumSize(220, 110)
-<<<<<<< HEAD
         self.resize(280, 150)
 
         self._build_ui()
         self._restyle()
-=======
-        self.resize(280, 140)
-
-        self._build_ui()
->>>>>>> 87d3c43bd4a8cfe2e09f744eb9c535cdd5c0fb02
 
     # ----------------------------------------------------------------
     # UI construction
@@ -110,40 +78,20 @@ class OverlayWindow(QWidget):
         layout.setSpacing(2)
 
         self._game_label = QLabel("No Game Selected")
-<<<<<<< HEAD
         self._boss_label = QLabel("")
         self._death_label = QLabel("0")
         self._caption_label = QLabel("DEATHS")
         self._stats_label = QLabel("")
-=======
-        self._game_label.setStyleSheet("color: #dddddd; font-size: 13px; font-weight: 500;")
-
-        self._boss_label = QLabel("")
-        self._boss_label.setStyleSheet("color: #aaaaaa; font-size: 12px;")
-
-        self._death_label = QLabel("0")
-        self._death_label.setStyleSheet(
-            f"color: {ACCENT_COLOR}; font-size: 36px; font-weight: 800;"
-        )
-
-        caption = QLabel("DEATHS")
-        caption.setStyleSheet("color: #888888; font-size: 10px; letter-spacing: 2px;")
->>>>>>> 87d3c43bd4a8cfe2e09f744eb9c535cdd5c0fb02
 
         layout.addWidget(self._game_label)
         layout.addWidget(self._boss_label)
         layout.addWidget(self._death_label)
-<<<<<<< HEAD
         layout.addWidget(self._caption_label)
         layout.addWidget(self._stats_label)
-=======
-        layout.addWidget(caption)
->>>>>>> 87d3c43bd4a8cfe2e09f744eb9c535cdd5c0fb02
 
         self._size_grip = QSizeGrip(self)
         layout.addWidget(self._size_grip, 0, Qt.AlignmentFlag.AlignRight)
 
-<<<<<<< HEAD
     def _restyle(self) -> None:
         """Re-apply all label styles and the background for current config."""
         if self._bg_mode == "chroma":
@@ -173,21 +121,10 @@ class OverlayWindow(QWidget):
         self._game_label.setVisible(self._show_game)
         self._boss_label.setVisible(self._show_boss)
         self._stats_label.setVisible(self._show_stats)
-=======
-        self._apply_background()
-
-    def _apply_background(self) -> None:
-        alpha = max(0, min(255, int(self._opacity * 255)))
-        self.setStyleSheet(
-            f"OverlayWindow {{ background-color: rgba(20, 20, 22, {alpha}); "
-            f"border-radius: 12px; border: 1px solid rgba(255, 77, 77, 120); }}"
-        )
->>>>>>> 87d3c43bd4a8cfe2e09f744eb9c535cdd5c0fb02
 
     # ----------------------------------------------------------------
     # Public API
     # ----------------------------------------------------------------
-<<<<<<< HEAD
     def apply_display_settings(self, settings: dict[str, str]) -> None:
         """
         Apply overlay-related settings (from the settings table) live.
@@ -229,33 +166,6 @@ class OverlayWindow(QWidget):
             f"Session {snapshot.session_deaths}  •  Total {snapshot.total_deaths}"
         )
 
-=======
-    def update_counters(self, game_name: str | None, boss_name: str | None, deaths: int) -> None:
-        """
-        Refresh the overlay's displayed text.
-
-        Args:
-            game_name: Currently selected game name, or ``None``.
-            boss_name: Currently selected boss name, or ``None``.
-            deaths: The death count to display (typically session deaths).
-        """
-        self._game_label.setText(game_name or "No Game Selected")
-        self._boss_label.setText(boss_name or "")
-        self._death_label.setText(str(deaths))
-
-    def set_font_size(self, size: int) -> None:
-        """Update the death counter's font size."""
-        self._font_size = size
-        self._death_label.setStyleSheet(
-            f"color: {ACCENT_COLOR}; font-size: {size}px; font-weight: 800;"
-        )
-
-    def set_opacity_level(self, opacity: float) -> None:
-        """Update the overlay background's opacity (0.0 - 1.0)."""
-        self._opacity = max(0.0, min(1.0, opacity))
-        self._apply_background()
-
->>>>>>> 87d3c43bd4a8cfe2e09f744eb9c535cdd5c0fb02
     def set_always_on_top(self, enabled: bool) -> None:
         """Toggle the always-on-top window flag and re-show the widget."""
         flags = self.windowFlags()
@@ -289,16 +199,8 @@ class OverlayWindow(QWidget):
         self._drag_offset = None
         super().mouseReleaseEvent(event)
 
-<<<<<<< HEAD
     # ----------------------------------------------------------------
     # Geometry persistence helpers
-=======
-    def resizeEvent(self, event: QResizeEvent) -> None:  # noqa: N802
-        super().resizeEvent(event)
-
-    # ----------------------------------------------------------------
-    # Geometry persistence helpers (used by app.py with Database settings)
->>>>>>> 87d3c43bd4a8cfe2e09f744eb9c535cdd5c0fb02
     # ----------------------------------------------------------------
     def geometry_string(self) -> str:
         """Serialize current geometry as 'x,y,w,h' for persistence."""
