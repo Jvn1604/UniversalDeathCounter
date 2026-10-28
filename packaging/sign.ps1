@@ -23,7 +23,7 @@ try {
     foreach ($file in $Files) {
         & $signtool.FullName sign /f $pfx /p $env:SIGNING_CERT_PASSWORD `
             /fd sha256 /tr http://timestamp.digicert.com /td sha256 `
-            /d "Universal Death Counter" $file
+            /d "DePhantom Universal Death Counter" $file
         if ($LASTEXITCODE -ne 0) { throw "Signing failed for $file" }
     }
 }

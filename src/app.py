@@ -1,5 +1,5 @@
 """
-Universal Death Counter — application entry point.
+DePhantom Universal Death Counter (DUDC): application entry point.
 
 Run with:
     python -m src.app
@@ -21,12 +21,12 @@ logger = get_logger(__name__)
 
 
 def main() -> int:
-    """Launch the Universal Death Counter application."""
+    """Launch the DePhantom Universal Death Counter application."""
     app = QApplication(sys.argv)
     app.setApplicationName(APP_NAME)
     app.setOrganizationName(APP_ORG)
 
-    icon_path = ICONS_DIR / "app_icon.png"
+    icon_path = ICONS_DIR / "app_icon.ico"
     if icon_path.exists():
         app.setWindowIcon(QIcon(str(icon_path)))
 
@@ -37,7 +37,7 @@ def main() -> int:
         QMessageBox.critical(
             None,
             "Startup Error",
-            "Universal Death Counter failed to start. Check saves/logs/app.log for details.",
+            f"{APP_NAME} failed to start. Check saves/logs/app.log for details.",
         )
         return 1
 

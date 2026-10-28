@@ -1,4 +1,4 @@
-; Inno Setup script for Universal Death Counter.
+; Inno Setup script for DePhantom Universal Death Counter (DUDC).
 ;
 ; Produces a proper Windows installer (Setup.exe) that installs the app,
 ; creates Start Menu / optional Desktop shortcuts, and registers an
@@ -12,7 +12,7 @@
 ;
 ; This is also run automatically by .github/workflows/build-windows.yml.
 
-#define AppName "Universal Death Counter"
+#define AppName "DePhantom Universal Death Counter"
 ; The version's single source of truth is APP_VERSION in
 ; src/utils/constants.py. CI passes it in with /DAppVersion=...; this
 ; fallback is only for quick local builds.

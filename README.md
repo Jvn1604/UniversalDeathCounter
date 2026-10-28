@@ -1,6 +1,6 @@
-# Universal Death Counter
+# DePhantom Universal Death Counter (DUDC)
 
-![Universal Death Counter](assets/icons/readme_banner.png)
+![DePhantom Universal Death Counter](assets/icons/readme_banner.png)
 
 A free, open-source death counter for Soulslike games, challenge runs, speedruns, and literally any PC game. Built for streamers, challenge runners, and masochists who need to know exactly how many times Malenia has humbled them.
 
@@ -118,7 +118,7 @@ python -m src.app
    - Run games in **borderless or windowed** mode, since exclusive fullscreen can capture as black. **Auto-Detect…** (also under **Manage → Auto Death Detection…**) changes the exe, the method, the saved death screens, and the cooldown.
 5. Beat a boss? Select it in **Manage → Games & Bosses…** and hit **Toggle Defeated ✓** — your "deaths until victory" number is captured permanently.
 6. Open **Manage → Games & Bosses… → Session History** to review or delete individual past runs for a game.
-7. Open **View → Toggle Overlay** (or `Ctrl+F12`) and add it as a **Window Capture** source in OBS — or switch the overlay to **chroma** mode in Settings and use a Color Key filter. Prefer text? Enable **deaths.txt** in Settings and point an OBS **Text Source** at the file, with your own `{game} - {boss}: {deaths}` template.
+7. **Streaming?** Open **Help → Set Up OBS Overlay…** for a step-by-step guide with one-click setup buttons. Or do it manually: open **View → Toggle Overlay** (or `Ctrl+F12`) and add it as a **Window Capture** source in OBS — or switch the overlay to **chroma** mode in Settings and use a Color Key filter. Prefer text? Enable **deaths.txt** in Settings and point an OBS **Text Source** at the file, with your own `{game} - {boss}: {deaths}` template.
 8. Check **View → Statistics & Graphs…** for your per-boss breakdown, victories, and three charts (deaths per boss, deaths over time, per-session trend). **View → Death Log…** lets you attach a note to any individual death.
 9. Use the **Profile** menu to create fully separate databases (e.g. a co-op profile) and switch between them instantly.
 10. Use **File → Export Backup (JSON)** to save all your data, **File → Import Backup (JSON)** to restore it, and **File → Export CSV Summary…** for a spreadsheet-friendly report. **File → Clear All Data** wipes the current profile if you want a fresh start.

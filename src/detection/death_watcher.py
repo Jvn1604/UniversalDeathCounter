@@ -25,6 +25,7 @@ from src.detection.game_window import (
     find_main_window,
     find_process_ids,
     grab_rect,
+    open_screen_capture,
     window_client_rect,
 )
 from src.detection.matchers import DeathDebouncer, Matcher
@@ -136,7 +137,7 @@ class DeathWatcher(QObject):
 
     def _run(self) -> None:
         try:
-            with mss.mss() as sct:
+            with open_screen_capture() as sct:
                 self._watch_loop(sct)
         except Exception:  # noqa: BLE001 - detection must never crash the app
             logger.exception("Death watcher stopped unexpectedly")

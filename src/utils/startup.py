@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import sys
 
-from src.utils.constants import APP_NAME
+from src.utils.constants import APP_ORG
 from src.utils.logger import get_logger
 
 if sys.platform == "win32":
@@ -23,6 +23,9 @@ if sys.platform == "win32":
 logger = get_logger(__name__)
 
 RUN_KEY: str = r"Software\Microsoft\Windows\CurrentVersion\Run"
+# Registry value name: a fixed internal id, so renaming the app's display
+# name never orphans an existing start-with-Windows entry.
+RUN_VALUE_NAME: str = APP_ORG
 
 
 def startup_supported() -> bool:
@@ -38,7 +41,7 @@ def startup_command() -> str:
 def _registered_command(key_path: str) -> str | None:
     try:
         with winreg.OpenKey(winreg.HKEY_CURRENT_USER, key_path) as key:
-            value, _ = winreg.QueryValueEx(key, APP_NAME)
+            value, _ = winreg.QueryValueEx(key, RUN_VALUE_NAME)
             return str(value)
     except FileNotFoundError:
         return None
@@ -62,11 +65,11 @@ def set_enabled(enabled: bool, key_path: str = RUN_KEY, command: str | None = No
         return
     if enabled:
         with winreg.CreateKey(winreg.HKEY_CURRENT_USER, key_path) as key:
-            winreg.SetValueEx(key, APP_NAME, 0, winreg.REG_SZ, command or startup_command())
+            winreg.SetValueEx(key, RUN_VALUE_NAME, 0, winreg.REG_SZ, command or startup_command())
         logger.info("Enabled start with Windows")
     elif _registered_command(key_path) is not None:
         with winreg.OpenKey(winreg.HKEY_CURRENT_USER, key_path, 0, winreg.KEY_SET_VALUE) as key:
-            winreg.DeleteValue(key, APP_NAME)
+            winreg.DeleteValue(key, RUN_VALUE_NAME)
         logger.info("Disabled start with Windows")
 
 
