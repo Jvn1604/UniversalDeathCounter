@@ -524,9 +524,6 @@ class MainWindow(QMainWindow):
         if self._tray is not None:  # the hotkey is usually pressed in-game
             self._tray.showMessage(
                 APP_BRAND,
-    APP_NAME,
-    APP_SUBTITLE,
-    CONTROL_ACTIONS,
                 "Auto-detect paused" if self._detection_paused else "Auto-detect resumed",
                 QSystemTrayIcon.MessageIcon.Information,
                 2000,
@@ -561,9 +558,6 @@ class MainWindow(QMainWindow):
                 if self._tray is not None:
                     self._tray.showMessage(
                         APP_BRAND,
-    APP_NAME,
-    APP_SUBTITLE,
-    CONTROL_ACTIONS,
                         f"{self._game_combo.itemText(index)} started: now counting its deaths.",
                         QSystemTrayIcon.MessageIcon.Information,
                         4000,
@@ -679,9 +673,6 @@ class MainWindow(QMainWindow):
         if self._tray is not None:
             self._tray.showMessage(
                 APP_BRAND,
-    APP_NAME,
-    APP_SUBTITLE,
-    CONTROL_ACTIONS,
                 f"Version {latest} is available! Get it at:\n{url}",
                 QSystemTrayIcon.MessageIcon.Information,
                 8000,
@@ -1127,9 +1118,6 @@ class MainWindow(QMainWindow):
             self.hide()
             self._tray.showMessage(
                 APP_BRAND,
-    APP_NAME,
-    APP_SUBTITLE,
-    CONTROL_ACTIONS,
                 "Still running in the tray — hotkeys stay active. Right-click to quit.",
                 QSystemTrayIcon.MessageIcon.Information,
                 3000,
