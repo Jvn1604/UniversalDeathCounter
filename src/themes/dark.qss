@@ -27,6 +27,18 @@ QLabel#CounterLabel {
     color: #ff4d4d;
 }
 
+/* Labels sit on the card's own surface. */
+QFrame#Card QLabel {
+    background-color: transparent;
+}
+
+QLabel#CounterCaption {
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 2px;
+    color: #b5b5b5;
+}
+
 QLabel#SubCounterLabel {
     font-size: 16px;
     color: #b5b5b5;

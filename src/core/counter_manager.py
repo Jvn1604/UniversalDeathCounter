@@ -79,25 +79,44 @@ class CounterManager:
         return self._apply_delta(+1)
 
     def decrement(self) -> CounterSnapshot:
-        """Manually remove one death (-1) for the current game/boss/session."""
+        """
+        Manually remove one death (-1) for the current game/boss/session.
+
+        Ignored when it would take the session, total or boss count below zero.
+        """
+        snapshot = self.get_snapshot()
+        boss_empty = self._current_boss_id is not None and snapshot.boss_deaths <= 0
+        if snapshot.session_deaths <= 0 or snapshot.total_deaths <= 0 or boss_empty:
+            logger.info("Ignored -1: a counter is already at zero")
+            return snapshot
         return self._apply_delta(-1)
 
     def undo(self) -> CounterSnapshot:
-        """Remove the most recently recorded death event, if any."""
+        """
+        Remove the most recently recorded death event, if any.
+
+        Undoing a +1 after the total was reset could make the total negative,
+        so that is ignored.
+        """
         session_id = self._session_manager.current_session_id
-        if session_id is not None:
+        if session_id is not None and self._current_game_id is not None:
+            last = self._database.get_last_event(session_id)
+            total = self._database.get_total_deaths(self._current_game_id)
+            if last is not None and last["delta"] > total:
+                logger.info("Ignored undo: the total is already at zero")
+                return self.get_snapshot()
             removed = self._database.remove_last_event(session_id)
             if not removed:
                 logger.debug("Undo requested but no events exist for session_id=%s", session_id)
         return self.get_snapshot()
 
     def reset_session(self) -> CounterSnapshot:
-        """Reset only the current session's death count to zero."""
+        """Start the session count over at zero; the total keeps its deaths."""
         self._session_manager.reset_session()
         return self.get_snapshot()
 
     def reset_total(self) -> CounterSnapshot:
-        """Reset the entire total death count for the current game."""
+        """Set the current game's total to zero; session and boss counts stay."""
         if self._current_game_id is not None:
             self._database.reset_total(self._current_game_id)
         return self.get_snapshot()
@@ -126,9 +145,7 @@ class CounterManager:
                 clamped to 0).
         """
         if self._current_game_id is not None:
-            self._database.set_total_death_count(
-                self._current_game_id, self._current_boss_id, target
-            )
+            self._database.set_total_death_count(self._current_game_id, target)
         return self.get_snapshot()
 
     def _apply_delta(self, delta: int) -> CounterSnapshot:
