@@ -20,12 +20,15 @@ APP_BRAND: str = "DePhantom"  # big header text; APP_SUBTITLE goes underneath
 APP_SUBTITLE: str = "Universal Death Counter (DUDC)"
 # APP_ORG (below), the exe name and the data folder intentionally keep the
 # old internal name, so existing installs upgrade in place and keep data.
-APP_VERSION: str = "2.7.1"
+APP_VERSION: str = "2.8.0"
 APP_ORG: str = "UniversalDeathCounter"
 
 # GitHub repository ("owner/repo") used by the update checker. Edit this
 # to match the actual repository the project is published under.
 GITHUB_REPO: str = "Jvn1604/UniversalDeathCounter"
+# The maker, credited in the sidebar and About.
+CREATOR_NAME: str = "DePhantom"
+CREATOR_CHANNEL_URL: str = "https://www.youtube.com/@ImDePhantom"
 
 # --------------------------------------------------------------------------
 # Filesystem paths
@@ -138,6 +141,7 @@ SETTING_OVERLAY_COUNTER_SOURCE: str = "overlay_counter_source"  # session|boss|t
 SETTING_OVERLAY_SHOW_GAME: str = "overlay_show_game"
 SETTING_OVERLAY_SHOW_BOSS: str = "overlay_show_boss"
 SETTING_OVERLAY_SHOW_STATS: str = "overlay_show_stats"
+SETTING_OVERLAY_LOCKED: str = "overlay_locked"  # "true" = can't be dragged
 SETTING_DEATHS_TXT_ENABLED: str = "deaths_txt_enabled"
 SETTING_DEATHS_TXT_PATH: str = "deaths_txt_path"
 SETTING_DEATHS_TXT_TEMPLATE: str = "deaths_txt_template"
@@ -163,6 +167,8 @@ SETTING_HOTKEY_TIMER_UNDO: str = "hotkey_timer_undo"
 SETTING_HOTKEY_TIMER_SKIP: str = "hotkey_timer_skip"
 SETTING_TIMER_GEOMETRY: str = "timer_geometry"
 SETTING_TIMER_VISIBLE: str = "timer_visible"
+SETTING_MINI_GEOMETRY: str = "mini_geometry"  # compact mini mode window
+SETTING_WELCOME_SHOWN: str = "welcome_shown"  # "true" once the first-run guide closed
 SETTING_TIMER_METHOD: str = "timer_method"  # "real" | "game"
 SETTING_TIMER_COMPARISON: str = "timer_comparison"  # "pb" | "previous" | "best"
 SETTING_TIMER_DIGITS: str = "timer_digits"  # decimals: 0-3 (3 = milliseconds)
@@ -277,4 +283,3 @@ DEFAULT_SETTINGS: dict[str, str] = {
 # UI styling
 # --------------------------------------------------------------------------
 ACCENT_COLOR: str = "#ff4d4d"
-AVAILABLE_THEMES: list[str] = ["dark", "light"]

@@ -248,7 +248,7 @@ def first_death_hint(hotkey: str) -> str:
     return (
         "Detection starts once the app knows this game's death screen. The next time "
         f"you die, either press {hotkey} while the death screen shows, or click "
-        "📷 Capture Screen on the main window afterwards and pick it from the last few "
+        "Capture Screen on the Detection page afterwards and pick it from the last few "
         "seconds."
     )
 
@@ -469,7 +469,7 @@ class AutoDetectWindow(QDialog):
         hotkey = self._database.get_setting(SETTING_HOTKEY_CALIBRATE, "f8").upper()
         self._screens_hint = self._hint(
             f"Press {hotkey} in-game while the death screen is showing, or after a death "
-            "click 📷 Capture Screen on the main window and pick the frame. Add more than "
+            "click Capture Screen on the Detection page and pick the frame. Add more than "
             "one if some deaths are missed: any saved death screen counts."
         )
         form.addRow("", self._screens_hint)
@@ -565,7 +565,7 @@ class AutoDetectWindow(QDialog):
         form.addRow(
             "",
             self._hint(
-                "After beating a boss, click 📷 Capture Screen on the main window, pick "
+                "After beating a boss, click Capture Screen on the Detection page, pick "
                 "the frame with the victory banner and choose \"A boss victory screen\". "
                 "From then on, beating the selected boss marks it defeated, moves to the "
                 "next boss and can split the timer (Settings → General)."

@@ -10,14 +10,20 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import sqlite3
+import tempfile
+import threading
 import time
 from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
 
-from PySide6.QtCore import QByteArray, Qt, QTimer
+from PySide6.QtCore import QByteArray, QObject, QPoint, Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import (
+    QAction,
+    QActionGroup,
     QColor,
+    QDesktopServices,
     QGuiApplication,
     QIcon,
     QKeySequence,
@@ -38,8 +44,8 @@ from PySide6.QtWidgets import (
     QListWidget,
     QMainWindow,
     QMenu,
-    QMenuBar,
     QMessageBox,
+    QProgressDialog,
     QPushButton,
     QScrollArea,
     QStackedWidget,
@@ -89,7 +95,8 @@ from src.detection.matchers import (
 from src.hotkeys.gamepad import GamepadManager, combo_label
 from src.hotkeys.hotkey_manager import HotkeyManager
 from src.overlay.overlay_window import OverlayWindow, available_screen_rects
-from src.themes.theme_manager import THEME_BASE_COLORS, apply_theme
+from src.themes.theme_manager import active_theme, apply_theme, theme_info
+from src.ui import icons
 from src.ui.about_window import AboutWindow
 from src.ui.auto_detect_window import (
     AutoDetectWindow,
@@ -100,11 +107,18 @@ from src.ui.auto_detect_window import (
 )
 from src.ui.boss_window import BossWindow
 from src.ui.death_log_window import DeathLogWindow
+from src.ui.mini_window import MiniWindow
 from src.ui.obs_guide_window import ObsGuideWindow
 from src.ui.settings_window import SettingsWindow
 from src.ui.statistics_window import StatisticsWindow
 from src.ui.timer_window import RunHistoryDialog, SplitsDialog, TimerWindow
+from src.ui.welcome_dialog import CHOICE_EXE, CHOICE_OBS, CHOICE_TEMPLATE, WelcomeDialog
 from src.ui.widgets import (
+    ActionButton,
+    AutoHideLabel,
+    CreditCard,
+    HeroCard,
+    NavToggle,
     StatTile,
     StatusPill,
     card,
@@ -123,6 +137,8 @@ from src.utils.constants import (
     APP_SUBTITLE,
     APP_VERSION,
     CONTROL_ACTIONS,
+    CREATOR_CHANNEL_URL,
+    CREATOR_NAME,
     DETECTION_MODE_HEALTH,
     DETECTION_MODE_LOG,
     DETECTION_MODE_OFF,
@@ -143,11 +159,15 @@ from src.utils.constants import (
     SETTING_LAST_BOSS_ID,
     SETTING_LAST_GAME_ID,
     SETTING_MAIN_WINDOW_GEOMETRY,
+    SETTING_MINI_GEOMETRY,
     SETTING_MINIMIZE_TO_TRAY,
     SETTING_OVERLAY_ALWAYS_ON_TOP,
+    SETTING_OVERLAY_BG_IMAGE,
     SETTING_OVERLAY_BG_MODE,
     SETTING_OVERLAY_COUNTER_SOURCE,
+    SETTING_OVERLAY_FONT_SIZE,
     SETTING_OVERLAY_GEOMETRY,
+    SETTING_OVERLAY_LOCKED,
     SETTING_THEME,
     SETTING_TIMER_AUTOSAVE,
     SETTING_TIMER_COMPARISON,
@@ -165,14 +185,23 @@ from src.utils.constants import (
     SETTING_UI_COUNTER_COLOR,
     SETTING_UI_FONT,
     SETTING_UI_TEXT_COLOR,
+    SETTING_WELCOME_SHOWN,
     pad_setting,
 )
 from src.utils.exporters import write_csv_summary
+from src.utils.game_templates import add_template_bosses, get_template
 from src.utils.logger import get_logger
 from src.utils.profiles import DEFAULT_PROFILE_NAME, ProfileManager
 from src.utils.screens import display_name, fit_to_screens, screen_index_at
 from src.utils.stream_writer import render_template, write_deaths_file
 from src.utils.update_checker import UpdateChecker
+from src.utils.updater import (
+    INSTALLER_NAME,
+    UpdateError,
+    download_installer,
+    is_installed_copy,
+    launch_installer,
+)
 
 logger = get_logger(__name__)
 
@@ -188,8 +217,54 @@ _GAME_TIME_PAUSES = {
     ACTIVITY_NOT_RESPONDING: ("Game not responding", SETTING_TIMER_PAUSE_NOT_RESPONDING),
     ACTIVITY_BACKGROUND: ("Game in background", SETTING_TIMER_PAUSE_BACKGROUND),
 }
-# Sidebar pages, in stack order.
+# Timer keys besides Start/Split are only registered while a run is going:
+# a registered hotkey is swallowed system-wide, and these default to number-
+# pad digits, which would otherwise stop typing in every other app.
+_RUN_ONLY_ACTIONS = ("timer_pause", "timer_reset", "timer_undo", "timer_skip")
+# Timer page buttons: (label, icon).
+_TIMER_BUTTONS = {
+    "split": ("Start / Split", "flag"),
+    "pause": ("Pause", "pause"),
+    "undo": ("Undo", "undo-2"),
+    "skip": ("Skip", "skip-forward"),
+    "reset": ("Reset", "rotate-ccw"),
+}
+
+
+class _UpdateDownload(QObject):
+    """Downloads the update installer on a worker thread and reports back by signal."""
+
+    progress = Signal(int, int)
+    succeeded = Signal(str)
+    failed = Signal(str)
+
+    def __init__(self, url: str, size: int, destination: Path) -> None:
+        super().__init__()
+        self._url, self._size, self._destination = url, size, destination
+        self.cancelled = threading.Event()
+
+    def start(self) -> None:
+        threading.Thread(target=self._run, name="UpdateDownload", daemon=True).start()
+
+    def _run(self) -> None:
+        try:
+            path = download_installer(
+                self._url, self._destination, self._size, self.progress.emit, self.cancelled
+            )
+        except UpdateError as exc:
+            self.failed.emit(str(exc))
+            return
+        self.succeeded.emit(str(path))
+
+
+# Sidebar pages, in stack order: (name, icon).
 _PAGE_HOME, _PAGE_TIMER, _PAGE_STATS, _PAGE_DETECTION = range(4)
+_PAGES = (
+    ("Home", "house"),
+    ("Timer", "timer"),
+    ("Stats", "chart-column"),
+    ("Detection", "scan-eye"),
+)
 _TIMER_STATUS_COLORS = {AHEAD: "#3ad07a", BEHIND: "#ff5c5c", GOLD: "#ffd24a"}
 _MODE_NAMES = {
     DETECTION_MODE_OFF: "Off",
@@ -253,6 +328,10 @@ class MainWindow(QMainWindow):
         self._counter_manager = CounterManager(self._database, self._session_manager)
         self._statistics_service = StatisticsService(self._database)
         self._overlay = OverlayWindow()
+        self._overlay.menu_requested.connect(self._overlay_context_menu)
+        self._overlay.settings_requested.connect(self._open_overlay_settings)
+        self._mini = MiniWindow()
+        self._mini.action_requested.connect(self._on_mini_action)
         self._timer_window = TimerWindow()
         self._timer_window.action_requested.connect(self._on_timer_window_action)
         self._speedrun: SpeedrunController | None = None
@@ -261,10 +340,14 @@ class MainWindow(QMainWindow):
         self._detection_paused = False  # not persisted: every launch starts active
         self._quitting = False
         self._closed = False  # cleanup ran; a second close must not touch the database
+        self._run_keys_active = False  # see _RUN_ONLY_ACTIONS
+        self._update_page_url = ""
+        self._update_version = ""
         # True once this session has written a crash-recovery snapshot. Until
         # then a snapshot in the settings belongs to a crashed earlier run,
         # waiting for the recovery prompt, and must not be cleared.
         self._autosave_written = False
+        self._menu_icons: list[tuple[QAction, str]] = []  # re-tinted with the theme
 
         self._update_window_title()
         self._build_menu()
@@ -298,57 +381,31 @@ class MainWindow(QMainWindow):
     # Menu
     # ----------------------------------------------------------------
     def _build_menu(self) -> None:
-        menu_bar: QMenuBar = self.menuBar()
-        menu_bar.clear()
+        """
+        The top bar's menus: profiles, and the "more" menu (backups, about, quit).
 
-        file_menu = menu_bar.addMenu("&File")
-        export_action = file_menu.addAction("Export Backup (JSON)…")
-        export_action.triggered.connect(self._export_backup)
-        import_action = file_menu.addAction("Import Backup (JSON)…")
-        import_action.triggered.connect(self._import_backup)
-        csv_action = file_menu.addAction("Export CSV Summary…")
-        csv_action.triggered.connect(self._export_csv)
-        file_menu.addSeparator()
-        clear_action = file_menu.addAction("Clear All Data…")
-        clear_action.triggered.connect(self._clear_all_data)
-        file_menu.addSeparator()
-        quit_action = file_menu.addAction("Quit")
-        quit_action.triggered.connect(self._quit_app)
-
-        self._profile_menu = menu_bar.addMenu("&Profile")
+        Everything else has one home: pages in the sidebar, the overlay and
+        tools under Tools, the timer window and splits on the Timer page.
+        """
+        self._profile_menu = QMenu(self)
         self._rebuild_profile_menu()
+        menu = self._more_menu = QMenu(self)
+        self._menu_action(menu, "save", "Export Backup…", self._export_backup)
+        self._menu_action(menu, "upload", "Import Backup…", self._import_backup)
+        menu.addSeparator()
+        self._menu_action(menu, "info", "About", self._open_about_window)
+        menu.addSeparator()
+        self._menu_action(menu, "trash-2", "Clear All Data…", self._clear_all_data)
+        self._menu_action(menu, "power", "Quit", self._quit_app)
 
-        manage_menu = menu_bar.addMenu("&Manage")
-        manage_action = manage_menu.addAction("Games && Bosses…")
-        manage_action.triggered.connect(self._open_boss_window)
-        detect_action = manage_menu.addAction("Auto Death Detection…")
-        detect_action.triggered.connect(self._open_auto_detect_window)
-        splits_action = manage_menu.addAction("Speedrun Splits…")
-        splits_action.triggered.connect(self._open_splits_dialog)
-
-        view_menu = menu_bar.addMenu("&View")
-        overlay_action = view_menu.addAction("Toggle Overlay")
-        overlay_action.triggered.connect(self._toggle_overlay)
-        self._add_display_menu(view_menu)
-        timer_action = view_menu.addAction("Speedrun Timer")
-        timer_action.triggered.connect(self._toggle_timer_window)
-        history_action = view_menu.addAction("Run History && Records…")
-        history_action.triggered.connect(self._open_run_history)
-        stats_action = view_menu.addAction("Statistics && Graphs…")
-        stats_action.triggered.connect(self._show_statistics)
-        log_action = view_menu.addAction("Death Log…")
-        log_action.triggered.connect(self._open_death_log)
-
-        settings_menu = menu_bar.addMenu("&Settings")
-        settings_action = settings_menu.addAction("Preferences…")
-        settings_action.triggered.connect(self._open_settings_window)
-
-        help_menu = menu_bar.addMenu("&Help")
-        obs_action = help_menu.addAction("Set Up OBS Overlay…")
-        obs_action.triggered.connect(self._open_obs_guide)
-        help_menu.addSeparator()
-        about_action = help_menu.addAction("About")
-        about_action.triggered.connect(self._open_about_window)
+    def _menu_action(
+        self, menu: QMenu, icon_name: str, text: str, handler: Callable[[], object]
+    ) -> QAction:
+        """A menu entry with a themed icon."""
+        action = menu.addAction(icons.icon(icon_name, icons.color(icons.NORMAL), size=16), text)
+        action.triggered.connect(lambda _=False: handler())
+        self._menu_icons.append((action, icon_name))
+        return action
 
     def _rebuild_profile_menu(self) -> None:
         self._profile_menu.clear()
@@ -361,7 +418,9 @@ class MainWindow(QMainWindow):
             combo.setCurrentText(active)
             combo.blockSignals(False)
         for name in self._profile_manager.list_profiles():
-            action = self._profile_menu.addAction(f"{'● ' if name == active else '   '}{name}")
+            action = self._profile_menu.addAction(name)
+            action.setCheckable(True)
+            action.setChecked(name == active)
             action.triggered.connect(lambda _=False, n=name: self._switch_profile(n))
         self._profile_menu.addSeparator()
         new_action = self._profile_menu.addAction("New Profile…")
@@ -399,6 +458,7 @@ class MainWindow(QMainWindow):
             scroll = QScrollArea()
             scroll.setWidgetResizable(True)
             scroll.setFrameShape(QFrame.Shape.NoFrame)
+            scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
             scroll.setWidget(page)
             self._pages.addWidget(scroll)
         self._pages.currentChanged.connect(self._on_page_changed)
@@ -410,19 +470,13 @@ class MainWindow(QMainWindow):
         bar = QFrame()
         bar.setObjectName("TopBar")
         layout = QHBoxLayout(bar)
-        layout.setContentsMargins(18, 10, 18, 10)
-        layout.setSpacing(12)
+        layout.setContentsMargins(18, 10, 14, 10)
+        layout.setSpacing(8)
         logo_label = QLabel()
-        logo = QPixmap(str(ICONS_DIR / "app_icon_48.png"))
+        logo = QPixmap(str(ICONS_DIR / "app_icon_128.png"))
         if not logo.isNull():
-            logo_label.setPixmap(
-                logo.scaled(
-                    36,
-                    36,
-                    Qt.AspectRatioMode.KeepAspectRatio,
-                    Qt.TransformationMode.SmoothTransformation,
-                )
-            )
+            logo.setDevicePixelRatio(logo.width() / 40)
+            logo_label.setPixmap(logo)
         titles = QVBoxLayout()
         titles.setSpacing(0)
         title_label = QLabel(APP_BRAND)
@@ -432,52 +486,101 @@ class MainWindow(QMainWindow):
         titles.addWidget(title_label)
         titles.addWidget(subtitle_label)
         layout.addWidget(logo_label)
-        layout.addLayout(titles, 1)
+        layout.addSpacing(4)
+        layout.addLayout(titles)
+        layout.addSpacing(14)
+        self._page_badge = QLabel()
+        self._page_badge.setObjectName("PageBadge")
+        layout.addWidget(self._page_badge)
+        layout.addStretch(1)
 
-        profile_caption = QLabel("PROFILE")
-        profile_caption.setObjectName("FieldLabel")
+        self._update_btn = QPushButton()
+        self._update_btn.setObjectName("AccentButton")
+        self._update_btn.setToolTip("Download and install the new version")
+        icons.set_icon(self._update_btn, "circle-arrow-up", icons.ACCENT, size=16)
+        self._update_btn.clicked.connect(self._start_update)
+        self._update_btn.hide()
+        layout.addWidget(self._update_btn)
+        layout.addSpacing(6)
+
         self._profile_combo = QComboBox()
-        self._profile_combo.setToolTip("Each profile keeps its own games and counts.")
+        self._profile_combo.setToolTip("Profile: each one keeps its own games and counts.")
         self._profile_combo.setMinimumWidth(150)
         self._profile_combo.activated.connect(
             lambda index: self._switch_profile(self._profile_combo.itemText(index))
         )
-        settings_button = QPushButton("≡")
-        settings_button.setObjectName("IconButton")
-        settings_button.setToolTip("Settings")
-        settings_button.clicked.connect(self._open_settings_window)
-        layout.addWidget(profile_caption)
+        profile_button = self._top_button("users", "Profiles: switch, add or delete")
+        profile_button.setMenu(self._profile_menu)
+        help_button = self._top_button("circle-help", "Guide: how everything works")
+        help_button.clicked.connect(lambda: self.maybe_show_welcome(force=True))
+        more_button = self._top_button("ellipsis-vertical", "Backups, About, Quit")
+        more_button.setMenu(self._more_menu)
         layout.addWidget(self._profile_combo)
-        layout.addWidget(settings_button)
+        layout.addWidget(profile_button)
+        layout.addSpacing(4)
+        layout.addWidget(help_button)
+        layout.addWidget(more_button)
         return bar
+
+    @staticmethod
+    def _top_button(icon_name: str, tooltip: str) -> QPushButton:
+        button = QPushButton()
+        button.setObjectName("TopIconButton")
+        button.setToolTip(tooltip)
+        button.setCursor(Qt.CursorShape.PointingHandCursor)
+        icons.set_icon(button, icon_name, size=19)
+        return button
 
     def _build_sidebar(self) -> QWidget:
         sidebar = QFrame()
         sidebar.setObjectName("Sidebar")
-        sidebar.setFixedWidth(176)
+        sidebar.setFixedWidth(214)
         layout = QVBoxLayout(sidebar)
-        layout.setContentsMargins(0, 14, 0, 10)
-        layout.setSpacing(2)
+        layout.setContentsMargins(0, 8, 0, 12)
+        layout.setSpacing(1)
+        menu_title = QLabel("MENU")
+        menu_title.setObjectName("NavSection")
+        layout.addWidget(menu_title)
         self._nav_group = QButtonGroup(self)
         self._nav_group.setExclusive(True)
         self._nav_buttons: list[QPushButton] = []
-        for index, text in enumerate(
-            ("⌂   Home", "◷   Timer", "▤   Stats", "◎   Detection")
-        ):
-            button = nav_button(text)
+        for index, (text, icon_name) in enumerate(_PAGES):
+            button = nav_button(text, icon_name)
             button.clicked.connect(lambda _=False, i=index: self._show_page(i))
             self._nav_group.addButton(button, index)
             self._nav_buttons.append(button)
             layout.addWidget(button)
-        layout.addStretch()
-        for text, handler in (
-            ("▣   Overlay", self._toggle_overlay),
-            ("◉   OBS Setup", self._open_obs_guide),
-            ("≡   Settings", self._open_settings_window),
+
+        tools_title = QLabel("TOOLS")
+        tools_title.setObjectName("NavSection")
+        layout.addWidget(tools_title)
+        self._overlay_nav = NavToggle("Overlay", "layers")
+        self._overlay_nav.setToolTip(
+            "Show or hide the overlay for OBS. Right-click the overlay for its options."
+        )
+        self._overlay_nav.clicked.connect(self._toggle_overlay)
+        self._overlay.visibility_changed.connect(self._overlay_nav.set_on)
+        layout.addWidget(self._overlay_nav)
+        for text, icon_name, handler, tip in (
+            ("Mini Mode", "picture-in-picture-2", self._toggle_mini_mode,
+             "A tiny always-on-top counter instead of this window"),
+            ("OBS Setup", "radio", self._open_obs_guide, "Put the counter on your stream"),
+            ("Settings", "settings", self._open_settings_window,
+             "Look, themes, overlay, timer and controls"),
         ):
-            button = nav_button(text, checkable=False)
+            button = nav_button(text, icon_name, checkable=False)
+            button.setToolTip(tip)
             button.clicked.connect(handler)
             layout.addWidget(button)
+        layout.addStretch()
+
+        credit = self._credit = CreditCard(
+            QPixmap(str(ICONS_DIR / "channel_logo.png")), CREATOR_NAME, CREATOR_CHANNEL_URL
+        )
+        credit_row = QHBoxLayout()
+        credit_row.setContentsMargins(12, 0, 12, 0)
+        credit_row.addWidget(credit)
+        layout.addLayout(credit_row)
         footer = QLabel(f"{APP_SHORT_NAME} v{APP_VERSION}")
         footer.setObjectName("NavFooter")
         layout.addWidget(footer)
@@ -500,18 +603,37 @@ class MainWindow(QMainWindow):
         self._game_combo.currentIndexChanged.connect(self._on_game_changed)
         self._boss_combo = QComboBox()
         self._boss_combo.currentIndexChanged.connect(self._on_boss_changed)
-        self._prev_boss_btn = QPushButton("◀")
+        for combo, handler in (
+            (self._game_combo, self._game_context_menu),
+            (self._boss_combo, self._boss_context_menu),
+        ):
+            combo.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+            combo.customContextMenuRequested.connect(handler)
+            combo.setToolTip("Right-click to rename")
+            # Long boss names mustn't widen the page (the list still shows them in full).
+            combo.setSizeAdjustPolicy(
+                QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon
+            )
+            combo.setMinimumContentsLength(10)
+        self._prev_boss_btn = QPushButton()
         self._prev_boss_btn.clicked.connect(lambda: self._select_adjacent_boss(-1))
-        self._next_boss_btn = QPushButton("▶")
+        self._next_boss_btn = QPushButton()
         self._next_boss_btn.clicked.connect(lambda: self._select_adjacent_boss(+1))
-        self._defeated_btn = QPushButton("✓")
+        self._defeated_btn = QPushButton()
         self._defeated_btn.setToolTip("Boss defeated: mark it ✓ and move to the next boss")
         self._defeated_btn.clicked.connect(lambda: self._defeat_current_boss(detected=False))
-        for button in (self._prev_boss_btn, self._next_boss_btn, self._defeated_btn):
+        for button, icon_name in (
+            (self._prev_boss_btn, "chevron-left"),
+            (self._next_boss_btn, "chevron-right"),
+            (self._defeated_btn, "trophy"),
+        ):
             button.setObjectName("IconButton")
-        manage_button = QPushButton("Manage…")
+            button.setCursor(Qt.CursorShape.PointingHandCursor)
+            icons.set_icon(button, icon_name)
+        manage_button = QPushButton(" Games && Bosses")
         manage_button.setObjectName("GhostButton")
-        manage_button.setToolTip("Games & bosses: add, rename, boss lists, defeated…")
+        manage_button.setToolTip("Add, rename and delete games and bosses; boss lists")
+        icons.set_icon(manage_button, "library", size=17)
         manage_button.clicked.connect(self._open_boss_window)
 
         boss_row = QWidget()
@@ -528,18 +650,28 @@ class MainWindow(QMainWindow):
         selectors.addWidget(manage_button, 0, Qt.AlignmentFlag.AlignBottom)
         layout.addLayout(selectors)
 
-        hero, hero_layout = card("HeroCard", margins=18)
-        hero_layout.setSpacing(2)
+        hero = HeroCard()
+        hero_layout = QVBoxLayout(hero)
+        hero_layout.setContentsMargins(22, 14, 22, 18)
+        hero_layout.setSpacing(0)
         self._counter_label = QLabel("0")
         self._counter_label.setObjectName("CounterLabel")
         self._counter_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        glow(self._counter_label)
         self._counter_caption = QLabel(_COUNTER_CAPTIONS["session"])
         self._counter_caption.setObjectName("CounterCaption")
         self._counter_caption.setAlignment(Qt.AlignmentFlag.AlignCenter)
         hero_layout.addWidget(self._counter_label)
         hero_layout.addWidget(self._counter_caption)
-        hero_layout.addSpacing(8)
+        # Empty state: one obvious first step instead of a lonely 0.
+        self._first_game_btn = QPushButton(" Add Your First Game")
+        self._first_game_btn.setObjectName("AccentButton")
+        self._first_game_btn.setMinimumHeight(44)
+        icons.set_icon(self._first_game_btn, "plus", icons.ACCENT)
+        self._first_game_btn.clicked.connect(lambda: self.maybe_show_welcome(force=True))
+        self._first_game_btn.hide()
+        hero_layout.addSpacing(10)
+        hero_layout.addWidget(self._first_game_btn, 0, Qt.AlignmentFlag.AlignHCenter)
+        hero_layout.addSpacing(14)
         self._tile_session = StatTile("This session")
         self._tile_boss = StatTile("This boss")
         self._tile_total = StatTile("All-time")
@@ -554,52 +686,56 @@ class MainWindow(QMainWindow):
         hero_layout.addLayout(tiles)
         layout.addWidget(hero)
 
-        # Labels get the current hotkeys from _update_hotkey_labels().
-        self._plus_btn = QPushButton()
+        # Keys come from _update_hotkey_labels().
+        self._plus_btn = ActionButton("+1 Death", "skull", icons.ACCENT)
         self._plus_btn.setObjectName("AccentButton")
+        self._plus_btn.setMinimumHeight(58)
         self._plus_btn.clicked.connect(self._on_increment)
-        self._minus_btn = QPushButton()
+        self._minus_btn = ActionButton("−1 Death", "")
         self._minus_btn.clicked.connect(self._on_decrement)
-        self._undo_btn = QPushButton()
+        self._undo_btn = ActionButton("Undo", "undo-2")
         self._undo_btn.clicked.connect(self._on_undo)
-        for button in (self._plus_btn, self._minus_btn, self._undo_btn):
-            button.setProperty("big", True)
-            button.setMinimumHeight(48)
-            button.setStyleSheet("font-size: 15px; border-radius: 12px;")
+        for button in (self._minus_btn, self._undo_btn):
+            button.setMinimumHeight(58)
         layout.addLayout(row(self._plus_btn, self._minus_btn, self._undo_btn, stretch=(2, 1, 1)))
 
         status, status_layout = card(margins=14)
         self._detect_status_label = StatusPill("Auto-detect off")
-        self._detect_last_label = QLabel("")
+        self._detect_last_label = AutoHideLabel()
         self._detect_last_label.setObjectName("Muted")
         self._detect_last_label.setWordWrap(True)
-        self._pause_btn = QPushButton("❚❚ Pause")
+        self._detect_last_label.hide()
+        self._pause_btn = QPushButton(" Pause")
+        icons.set_icon(self._pause_btn, "pause", size=16)
         self._pause_btn.clicked.connect(self._toggle_detection_pause)
-        capture_button = QPushButton("📷 Capture Screen…")
-        capture_button.setToolTip(
-            "A death wasn't counted, or teach a boss victory banner: pick the screen "
-            "from the last few seconds (or a screenshot)."
-        )
-        capture_button.clicked.connect(self._open_death_screen_dialog)
+        open_detection = QPushButton("Detection ")
+        open_detection.setObjectName("GhostButton")
+        open_detection.setLayoutDirection(Qt.LayoutDirection.RightToLeft)  # icon after text
+        open_detection.setToolTip("Set up detection, or pick a missed death screen")
+        icons.set_icon(open_detection, "chevron-right", size=16)
+        open_detection.clicked.connect(lambda: self._show_page(_PAGE_DETECTION))
         status_layout.setSpacing(8)
         status_top = QHBoxLayout()
         status_top.setSpacing(10)
         status_top.addWidget(section_title("Auto-detect"))
         status_top.addWidget(self._detect_status_label, 1)
         status_top.addWidget(self._pause_btn)
-        status_top.addWidget(capture_button)
+        status_top.addWidget(open_detection)
         status_layout.addLayout(status_top)
         status_layout.addWidget(self._detect_last_label)
         layout.addWidget(status)
 
-        set_count_btn = QPushButton("Set Exact Count…")
+        set_count_btn = QPushButton(" Set Exact Count")
         set_count_btn.setObjectName("GhostButton")
+        icons.set_icon(set_count_btn, "pencil", size=16)
         set_count_btn.clicked.connect(self._on_set_count)
-        reset_session_btn = QPushButton("Reset Session")
+        reset_session_btn = QPushButton(" Reset Session")
         reset_session_btn.setObjectName("DangerButton")
+        icons.set_icon(reset_session_btn, "rotate-ccw", icons.DANGER, size=16)
         reset_session_btn.clicked.connect(self._on_reset_session)
-        reset_total_btn = QPushButton("Reset Total")
+        reset_total_btn = QPushButton(" Reset Total")
         reset_total_btn.setObjectName("DangerButton")
+        icons.set_icon(reset_total_btn, "trash-2", icons.DANGER, size=16)
         reset_total_btn.clicked.connect(self._on_reset_total)
         footer = QHBoxLayout()
         footer.addWidget(set_count_btn)
@@ -634,20 +770,23 @@ class MainWindow(QMainWindow):
         hero_layout.addWidget(self._timer_page_info)
         layout.addWidget(hero)
 
-        split_button = QPushButton("▶  Start / Split")
-        split_button.setObjectName("AccentButton")
-        buttons = [split_button]
-        for text in ("❚❚  Pause", "↶  Undo", "⤼  Skip"):
-            buttons.append(QPushButton(text))
-        reset_button = QPushButton("⟲  Reset")
-        reset_button.setObjectName("DangerButton")
-        buttons.append(reset_button)
-        for button, action in zip(
-            buttons, ("split", "pause", "undo", "skip", "reset"), strict=True
-        ):
-            button.setMinimumHeight(44)
+        # Keys come from _update_hotkey_labels().
+        self._timer_buttons: dict[str, ActionButton] = {}
+        for action, (text, icon_name) in _TIMER_BUTTONS.items():
+            split = action == "split"
+            role = icons.ACCENT if split else icons.DANGER if action == "reset" else icons.NORMAL
+            button = ActionButton(text, icon_name, role)
+            if split:
+                button.setObjectName("AccentButton")
+            elif action == "reset":
+                button.setObjectName("DangerButton")
             button.clicked.connect(lambda _=False, a=action: self._timer_action(a))
-        layout.addLayout(row(*buttons, stretch=(2, 1, 1, 1, 1)))
+            self._timer_buttons[action] = button
+        self._timer_buttons["split"].setMinimumHeight(58)
+        layout.addWidget(self._timer_buttons["split"])
+        layout.addLayout(
+            row(*(self._timer_buttons[a] for a in ("pause", "undo", "skip", "reset")))
+        )
 
         self._timer_tiles = {
             "pb": StatTile("Personal best"),
@@ -661,14 +800,19 @@ class MainWindow(QMainWindow):
             tiles.addWidget(tile, 1)
         layout.addLayout(tiles)
 
-        window_button = QPushButton("Show / Hide Timer Window")
-        window_button.setToolTip("The timer window is what you capture in OBS.")
-        window_button.clicked.connect(self._toggle_timer_window)
-        splits_button = QPushButton("Edit Splits…")
+        self._timer_window_btn = NavToggle("Timer Window", "app-window", object_name="")
+        self._timer_window_btn.setToolTip(
+            "The timer's own window: what you capture in OBS. Right-click it for options."
+        )
+        self._timer_window_btn.clicked.connect(self._toggle_timer_window)
+        self._timer_window.visibility_changed.connect(self._timer_window_btn.set_on)
+        splits_button = QPushButton(" Edit Splits")
+        icons.set_icon(splits_button, "list-ordered", size=16)
         splits_button.clicked.connect(self._open_splits_dialog)
-        history_button = QPushButton("Run History && Records…")
+        history_button = QPushButton(" Run History && Records")
+        icons.set_icon(history_button, "history", size=16)
         history_button.clicked.connect(self._open_run_history)
-        layout.addLayout(row(window_button, splits_button, history_button))
+        layout.addLayout(row(self._timer_window_btn, splits_button, history_button))
         hint = QLabel(
             "Timing method, comparison, precision and auto-pause are in "
             "Settings → Speedrun. Splits can come from your boss list."
@@ -703,13 +847,13 @@ class MainWindow(QMainWindow):
         layout.addWidget(self._recent_list, 1)
 
         buttons = []
-        for text, handler in (
-            ("Graphs…", self._show_statistics),
-            ("Death Log…", self._open_death_log),
-            ("Run History && Records…", self._open_run_history),
-            ("Export CSV…", self._export_csv),
+        for text, icon_name, handler in (
+            (" Graphs", "chart-column", self._show_statistics),
+            (" Death Log", "scroll-text", self._open_death_log),
+            (" Export CSV", "file-down", self._export_csv),
         ):
             button = QPushButton(text)
+            icons.set_icon(button, icon_name, size=16)
             button.clicked.connect(handler)
             buttons.append(button)
         layout.addLayout(row(*buttons))
@@ -738,21 +882,30 @@ class MainWindow(QMainWindow):
         status_layout.addWidget(self._detect_page_info)
         layout.addWidget(status)
 
-        setup_button = QPushButton("Set Up Detection…")
+        setup_button = QPushButton(" Set Up Detection")
         setup_button.setObjectName("AccentButton")
+        icons.set_icon(setup_button, "wand-sparkles", icons.ACCENT, size=16)
         setup_button.clicked.connect(self._open_auto_detect_window)
-        capture_button = QPushButton("📷 Capture Screen…")
+        capture_button = QPushButton(" Capture Screen")
+        icons.set_icon(capture_button, "camera", size=16)
+        capture_button.setToolTip(
+            "A death wasn't counted, or teach a boss victory banner: pick the screen "
+            "from the last few seconds (or a screenshot)."
+        )
         capture_button.clicked.connect(self._open_death_screen_dialog)
-        self._pause_btn_detect = QPushButton("❚❚ Pause")
+        self._pause_btn_detect = QPushButton(" Pause")
+        icons.set_icon(self._pause_btn_detect, "pause", size=16)
         self._pause_btn_detect.clicked.connect(self._toggle_detection_pause)
+        for button in (setup_button, capture_button, self._pause_btn_detect):
+            button.setMinimumHeight(42)
         layout.addLayout(row(setup_button, capture_button, self._pause_btn_detect))
 
         tips, tips_layout = card(margins=18)
         tips_layout.addWidget(section_title("How it learns"))
         tip = QLabel(
             "• <b>Death screen</b>: press the calibrate key (F8) on it, or pick it "
-            "afterwards with 📷 Capture Screen.<br>"
-            "• <b>Boss victory</b>: after a boss, 📷 Capture Screen → \"A boss victory "
+            "afterwards with Capture Screen.<br>"
+            "• <b>Boss victory</b>: after a boss, Capture Screen → \"A boss victory "
             "screen\". Kills then mark the boss defeated and can split the timer.<br>"
             "• <b>No death screen?</b> Use the health bar or the game's log file in "
             "Set Up Detection.<br>"
@@ -770,6 +923,7 @@ class MainWindow(QMainWindow):
     def _show_page(self, index: int) -> None:
         self._pages.setCurrentIndex(index)
         self._nav_buttons[index].setChecked(True)
+        self._page_badge.setText(_PAGES[index][0])
 
     def _on_page_changed(self, index: int) -> None:
         if index == _PAGE_TIMER:
@@ -878,19 +1032,6 @@ class MainWindow(QMainWindow):
             f"{counts[SCREEN_VICTORY]} boss victory · {counts[SCREEN_PAUSE]} pause/loading"
         )
 
-    @staticmethod
-    def _labeled(label_text: str, widget: QWidget) -> QWidget:
-        """Wrap a widget with a small label above it."""
-        container = QWidget()
-        layout = QVBoxLayout(container)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(4)
-        label = QLabel(label_text)
-        label.setStyleSheet("color: #999999; font-size: 11px; font-weight: 600;")
-        layout.addWidget(label)
-        layout.addWidget(widget)
-        return container
-
     # ----------------------------------------------------------------
     # System tray
     # ----------------------------------------------------------------
@@ -913,8 +1054,22 @@ class MainWindow(QMainWindow):
         minus_action.triggered.connect(self._on_decrement)
         undo_action = menu.addAction("Undo")
         undo_action.triggered.connect(self._on_undo)
-        overlay_action = menu.addAction("Toggle Overlay")
-        overlay_action.triggered.connect(self._toggle_overlay)
+        defeated_action = menu.addAction("Boss Defeated")
+        defeated_action.triggered.connect(lambda: self._defeat_current_boss(detected=False))
+        pause_action = menu.addAction("Pause / Resume Auto-Detect")
+        pause_action.triggered.connect(self._toggle_detection_pause)
+        menu.addSeparator()
+        split_action = menu.addAction("Timer: Start / Split")
+        split_action.triggered.connect(lambda: self._timer_action("split"))
+        timer_window_action = menu.addAction("Show / Hide Timer Window")
+        timer_window_action.triggered.connect(self._toggle_timer_window)
+        mini_action = menu.addAction("Mini Mode")
+        mini_action.triggered.connect(self._toggle_mini_mode)
+        menu.addSeparator()
+        overlay_action = menu.addAction("Overlay")
+        overlay_action.setCheckable(True)
+        overlay_action.triggered.connect(lambda _=False: self._toggle_overlay())
+        self._overlay.visibility_changed.connect(overlay_action.setChecked)
         self._add_display_menu(menu)
         menu.addSeparator()
         quit_action = menu.addAction("Quit")
@@ -947,6 +1102,22 @@ class MainWindow(QMainWindow):
             for action, _label, setting_key, default in CONTROL_ACTIONS
         }
 
+    def _registered_bindings(self) -> dict[str, str]:
+        """The keyboard combos to register now: run-only timer keys only during a run."""
+        bindings = self._hotkey_bindings()
+        if not self._run_keys_active:
+            for action in _RUN_ONLY_ACTIONS:
+                bindings[f"{action}_key"] = ""
+        return bindings
+
+    def _sync_run_hotkeys(self) -> None:
+        """Register the run-only timer keys while a run is going (or just finished)."""
+        controller = self._speedrun
+        active = controller is not None and controller.timer.state != IDLE
+        if active != self._run_keys_active:
+            self._run_keys_active = active
+            self._hotkey_manager.update_bindings(**self._registered_bindings())
+
     def _pad_bindings(self) -> dict[str, str]:
         """Controller combos from settings, keyed by action ("" = unbound)."""
         settings = self._database.get_all_settings()
@@ -974,15 +1145,24 @@ class MainWindow(QMainWindow):
         for button, action, text in (
             (self._plus_btn, "increment", "+1 Death"),
             (self._minus_btn, "decrement", "-1 Death"),
-            (self._undo_btn, "undo", "Undo"),
+            (self._undo_btn, "undo", "Undo the last change"),
         ):
-            button.setText(f"{text}  ({key(action)})" if key(action) else text)
+            button.set_key(key(action))
             button.setToolTip(tooltip(action, text))
         self._pause_btn.setToolTip(
             tooltip("pause_detection", "Pause/resume auto-detection (cutscenes, co-op…)")
         )
         self._prev_boss_btn.setToolTip(tooltip("prev_boss", "Previous boss"))
         self._next_boss_btn.setToolTip(tooltip("next_boss", "Next boss not yet defeated"))
+        self._defeated_btn.setToolTip(
+            tooltip("boss_defeated", "Boss defeated: mark it ✓ and move to the next boss")
+        )
+        for action, button in self._timer_buttons.items():
+            button.set_key(key(f"timer_{action}"))
+            what = _TIMER_BUTTONS[action][0]
+            if f"timer_{action}" in _RUN_ONLY_ACTIONS:
+                what += "\nThe key works in-game while a run is going."
+            button.setToolTip(tooltip(f"timer_{action}", what))
 
     def _setup_hotkeys(self) -> None:
         self._action_handlers = {
@@ -1002,7 +1182,7 @@ class MainWindow(QMainWindow):
             "timer_skip": lambda: self._timer_action("skip"),
         }
         bindings = self._hotkey_bindings()
-        self._hotkey_manager = HotkeyManager(**bindings, parent=self)
+        self._hotkey_manager = HotkeyManager(**self._registered_bindings(), parent=self)
         self._hotkey_manager.action_triggered.connect(
             lambda action: self._action_handlers[action]()
         )
@@ -1024,7 +1204,7 @@ class MainWindow(QMainWindow):
         )
         message = (
             f"Hotkey unavailable: {keys}. Another program is already using it, or the key "
-            "isn't supported. Pick a different key in Settings → Preferences."
+            "isn't supported. Pick a different key in Settings → Controls."
         )
         if self._tray is not None:
             self._tray.showMessage(
@@ -1168,7 +1348,7 @@ class MainWindow(QMainWindow):
         if split:
             message += " Split recorded."
         self._detect_last_label.setText(
-            message + (" Wrong? Unmark it in Manage → Games & Bosses." if detected else "")
+            message + (" Wrong? Unmark it in Games & Bosses on the Home page." if detected else "")
         )
         self._notify(message, 6000)
         self._configure_detection()  # watch for the next boss's victory instead
@@ -1178,7 +1358,7 @@ class MainWindow(QMainWindow):
             (t["region"], t["template"]) for t in self._database.get_death_templates(game_id)
         ]
         # A None matcher still watches the window, buffering recent frames so
-        # the player can pick their first death screen with 📷 Capture Screen.
+        # the player can pick their first death screen with Capture Screen.
         matcher = build_matcher(mode, templates, self._database.get_detection_options(game_id))
         if mode != DETECTION_MODE_HEALTH:
             return WatchConfig(game_id=game_id, exe_path=exe_path, matcher=matcher)
@@ -1206,7 +1386,8 @@ class MainWindow(QMainWindow):
     def _toggle_detection_pause(self) -> None:
         self._detection_paused = not self._detection_paused
         for button in (self._pause_btn, self._pause_btn_detect):
-            button.setText("▶ Resume" if self._detection_paused else "❚❚ Pause")
+            button.setText(" Resume" if self._detection_paused else " Pause")
+            icons.set_icon(button, "play" if self._detection_paused else "pause", size=16)
         self._configure_detection()
         if self._tray is not None:  # the hotkey is usually pressed in-game
             self._tray.showMessage(
@@ -1359,15 +1540,32 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, "Teach It Your Death Screen", first_death_hint(hotkey))
 
     def _apply_saved_settings(self) -> None:
+        """Startup and profile switch: the look, plus where the windows were."""
         settings = self._database.get_all_settings()
-        theme = settings.get(SETTING_THEME, "dark")
+        self._apply_appearance(settings)
+        self._timer_window.restore_geometry_string(settings.get(SETTING_TIMER_GEOMETRY, ""))
+        self._timer_window.setVisible(settings.get(SETTING_TIMER_VISIBLE, "false") == "true")
+        self._overlay.restore_geometry_string(settings.get(SETTING_OVERLAY_GEOMETRY, ""))
+
+    def _apply_appearance(self, settings: dict[str, str]) -> None:
+        """Theme, colors, fonts and backgrounds of every window (also the Settings preview)."""
+        theme = active_theme(settings.get(SETTING_THEME, "dark"))
+        info = theme_info(theme)
         image = load_background(settings.get(SETTING_UI_BG_IMAGE, ""))
-        dim = QColor(THEME_BASE_COLORS.get(theme, THEME_BASE_COLORS["dark"]))
+        dim = QColor(info.base)
         try:
             dim.setAlphaF(min(max(int(settings.get(SETTING_UI_BG_DIM, "60")), 0), 90) / 100)
         except ValueError:
             dim.setAlphaF(0.6)
         self._background.set_background(image, dim)
+        icons.set_colors(
+            {
+                icons.NORMAL: info.icon,
+                icons.NAV: info.icon_muted,
+                "nav_active": info.text if info.light else "#ffffff",
+                icons.DANGER: info.danger,
+            }
+        )
         apply_theme(
             self,
             theme,
@@ -1376,14 +1574,29 @@ class MainWindow(QMainWindow):
             font_family=settings.get(SETTING_UI_FONT, ""),
             see_through=image is not None,
         )
+        self._refresh_theme_icons(settings.get(SETTING_UI_COUNTER_COLOR, "") or info.accent)
         self._overlay.apply_display_settings(settings)
         self._timer_window.apply_display_settings(settings)
-        self._timer_window.restore_geometry_string(settings.get(SETTING_TIMER_GEOMETRY, ""))
-        self._timer_window.setVisible(settings.get(SETTING_TIMER_VISIBLE, "false") == "true")
+        self._mini.apply_display_settings(settings)
         self._overlay.set_always_on_top(
             settings.get(SETTING_OVERLAY_ALWAYS_ON_TOP, "true") == "true"
         )
-        self._overlay.restore_geometry_string(settings.get(SETTING_OVERLAY_GEOMETRY, ""))
+        self._overlay.set_locked(settings.get(SETTING_OVERLAY_LOCKED, "false") == "true")
+
+    def _refresh_theme_icons(self, glow_color: str) -> None:
+        icons.refresh_icons(self)
+        for button in self.findChildren(ActionButton):
+            button.refresh_icon()
+        for action, icon_name in self._menu_icons:
+            action.setIcon(icons.icon(icon_name, icons.color(icons.NORMAL), size=16))
+        self._credit.refresh_icon()
+        glow(self._counter_label, glow_color, radius=48)
+
+    def _preview_appearance(self, values: dict[str, str]) -> None:
+        """Show unsaved Settings changes ({} = back to the saved look)."""
+        settings = self._database.get_all_settings()
+        settings.update(values)
+        self._apply_appearance(settings)
 
     def _maybe_check_updates(self) -> None:
         if self._database.get_setting(SETTING_CHECK_UPDATES, "true") != "true":
@@ -1393,10 +1606,13 @@ class MainWindow(QMainWindow):
         self._update_checker.check_async()
 
     def _on_update_available(self, latest: str, url: str) -> None:
+        self._update_version, self._update_page_url = latest, url
+        self._update_btn.setText(f"↑  Update to {latest}")
+        self._update_btn.show()
         if self._tray is not None:
             self._tray.showMessage(
                 APP_BRAND,
-                f"Version {latest} is available! Get it at:\n{url}",
+                f"Version {latest} is available. Click \"Update\" at the top of the window.",
                 QSystemTrayIcon.MessageIcon.Information,
                 8000,
             )
@@ -1404,6 +1620,194 @@ class MainWindow(QMainWindow):
             QMessageBox.information(
                 self, "Update Available", f"Version {latest} is available:\n{url}"
             )
+
+    def _start_update(self) -> None:
+        """Download the new installer, run it silently and quit (installed copies)."""
+        checker = getattr(self, "_update_checker", None)
+        url = checker.installer_url if checker is not None else ""
+        size = checker.installer_size if checker is not None else 0
+        if not is_installed_copy() or not url:
+            # Portable or source copies can't replace themselves: open the release.
+            QDesktopServices.openUrl(QUrl(self._update_page_url))
+            return
+        confirm = QMessageBox.question(
+            self,
+            "Update",
+            f"Download and install {self._update_version} now?\n\n"
+            f"{APP_SHORT_NAME} closes, updates and opens again in a moment. Your games, "
+            "deaths and settings are kept.",
+        )
+        if confirm != QMessageBox.StandardButton.Yes:
+            return
+        progress = QProgressDialog("Downloading the update…", "Cancel", 0, 100, self)
+        progress.setWindowTitle("Update")
+        progress.setMinimumDuration(0)
+        destination = Path(tempfile.gettempdir()) / "DUDC-update" / INSTALLER_NAME
+        download = self._update_download = _UpdateDownload(url, size, destination)
+        download.progress.connect(
+            lambda done, total: progress.setValue(int(done * 100 / max(total, 1)))
+        )
+        progress.canceled.connect(download.cancelled.set)
+
+        def failed(message: str) -> None:
+            progress.close()
+            if not download.cancelled.is_set():
+                QMessageBox.warning(self, "Update Failed", message)
+
+        def succeeded(path: str) -> None:
+            progress.close()
+            try:
+                launch_installer(Path(path))
+            except OSError as exc:
+                QMessageBox.warning(self, "Update Failed", f"Couldn't start the installer: {exc}")
+                return
+            self._quit_app()  # the installer replaces the files and reopens the app
+
+        download.failed.connect(failed)
+        download.succeeded.connect(succeeded)
+        download.start()
+
+    # ----------------------------------------------------------------
+    # Welcome guide, mini mode, quick renames
+    # ----------------------------------------------------------------
+    def maybe_show_welcome(self, force: bool = False) -> None:
+        """The first-run guide: on a fresh install once, or on request."""
+        if not force and (
+            self._database.get_games()
+            or self._database.get_setting(SETTING_WELCOME_SHOWN, "") == "true"
+        ):
+            return
+        bindings = self._hotkey_bindings()
+        keys = {
+            action: QKeySequence(bindings.get(f"{action}_key", "")).toString(
+                QKeySequence.SequenceFormat.NativeText
+            )
+            for action in (
+                "increment",
+                "decrement",
+                "undo",
+                "calibrate",
+                "toggle_overlay",
+                "timer_split",
+                "timer_pause",
+                "timer_reset",
+            )
+        }
+        dialog = WelcomeDialog(keys, parent=self)
+        dialog.exec()
+        self._database.set_setting(SETTING_WELCOME_SHOWN, "false" if dialog.show_again else "true")
+        if dialog.choice == CHOICE_EXE:
+            self._add_game_from_exe()
+        elif dialog.choice == CHOICE_TEMPLATE:
+            self._add_template_game(dialog.template_name)
+        elif dialog.choice == CHOICE_OBS:
+            self._open_obs_guide()
+
+    def _add_template_game(self, name: str) -> None:
+        template = get_template(name)
+        if template is None:
+            return
+        game_id, _added = add_template_bosses(self._database, template)
+        self._reload_games(select_game_id=game_id)
+        if self._boss_combo.count() > 1:
+            self._boss_combo.setCurrentIndex(1)  # the first boss, in story order
+
+    def _toggle_mini_mode(self) -> None:
+        if self._mini.isVisible():
+            self._exit_mini_mode()
+        else:
+            self._enter_mini_mode()
+
+    def _enter_mini_mode(self) -> None:
+        """Swap the full window for the small always-on-top one."""
+        saved = self._database.get_setting(SETTING_MINI_GEOMETRY, "")
+        if saved:
+            self._mini.restore_geometry_string(saved)
+        else:
+            corner = self.frameGeometry().topRight()
+            self._mini.move(corner.x() - self._mini.width(), corner.y() + 40)
+            self._mini.keep_on_screen()
+        self._refresh_counters()
+        self._mini.show()
+        self._mini.raise_()
+        self.hide()
+
+    def _exit_mini_mode(self) -> None:
+        self._database.set_setting(SETTING_MINI_GEOMETRY, self._mini.geometry_string())
+        self._mini.hide()
+        self.show()
+        self.raise_()
+        self.activateWindow()
+
+    def _on_mini_action(self, action: str) -> None:
+        if action == "increment":
+            self._on_increment()
+        elif action == "undo":
+            self._on_undo()
+        elif action == "expand":
+            self._exit_mini_mode()
+
+    def _game_context_menu(self, position) -> None:
+        game_id = self._counter_manager.current_game_id
+        if game_id is None:
+            return
+        menu = QMenu(self)
+        menu.addAction("Rename Game…", self._rename_current_game)
+        menu.addAction("Games && Bosses…", self._open_boss_window)
+        menu.exec(self._game_combo.mapToGlobal(position))
+
+    def _boss_context_menu(self, position) -> None:
+        boss_id = self._counter_manager.current_boss_id
+        menu = QMenu(self)
+        if boss_id is not None:
+            boss = self._database.get_boss(boss_id)
+            menu.addAction("Rename Boss…", self._rename_current_boss)
+            if boss is not None and boss["defeated"]:
+                menu.addAction("Mark Not Defeated", lambda: self._set_boss_defeated(False))
+            else:
+                menu.addAction("Mark Defeated ✓", lambda: self._set_boss_defeated(True))
+            menu.addSeparator()
+        menu.addAction("Games && Bosses…", self._open_boss_window)
+        menu.exec(self._boss_combo.mapToGlobal(position))
+
+    def _rename_current_game(self) -> None:
+        game_id = self._counter_manager.current_game_id
+        if game_id is None:
+            return
+        name, ok = QInputDialog.getText(
+            self, "Rename Game", "New name:", text=self._game_combo.currentText()
+        )
+        if not ok or not name.strip() or name.strip() == self._game_combo.currentText():
+            return
+        try:
+            self._database.rename_game(game_id, name.strip())
+        except (ValueError, sqlite3.Error) as exc:
+            QMessageBox.warning(self, "Could Not Rename", f"{exc}\n\nIs the name already used?")
+            return
+        self._reload_games(select_game_id=game_id)
+
+    def _rename_current_boss(self) -> None:
+        boss_id = self._counter_manager.current_boss_id
+        boss = self._database.get_boss(boss_id) if boss_id is not None else None
+        if boss is None:
+            return
+        name, ok = QInputDialog.getText(self, "Rename Boss", "New name:", text=boss["name"])
+        if not ok or not name.strip() or name.strip() == boss["name"]:
+            return
+        try:
+            self._database.rename_boss(boss_id, name.strip())
+        except (ValueError, sqlite3.Error) as exc:
+            QMessageBox.warning(self, "Could Not Rename", f"{exc}\n\nIs the name already used?")
+            return
+        self._reload_bosses(self._counter_manager.current_game_id)
+
+    def _set_boss_defeated(self, defeated: bool) -> None:
+        boss_id = self._counter_manager.current_boss_id
+        if boss_id is None:
+            return
+        self._database.set_boss_defeated(boss_id, defeated)
+        self._reload_bosses(self._counter_manager.current_game_id)
+        self._configure_detection()  # victory watching follows defeated state
 
     # ----------------------------------------------------------------
     # Profiles
@@ -1500,6 +1904,7 @@ class MainWindow(QMainWindow):
             self._game_combo.blockSignals(True)
             self._game_combo.setCurrentIndex(index)
             self._game_combo.blockSignals(False)
+            self._first_game_btn.hide()
             self._on_game_changed(index)
         else:
             self._game_combo.blockSignals(True)
@@ -1510,6 +1915,7 @@ class MainWindow(QMainWindow):
             self._refresh_counters()
             self._configure_detection()
             self._load_speedrun()  # drops a run of a game that was just deleted
+            self._first_game_btn.show()
 
     def _saved_id(self, setting_key: str) -> int | None:
         """Read an id stored in the settings table (empty/invalid -> None)."""
@@ -1672,6 +2078,7 @@ class MainWindow(QMainWindow):
         if self._pages.currentIndex() == _PAGE_STATS:
             self._refresh_stats_page()
         self._overlay.update_counters(snapshot)
+        self._mini.update_counters(snapshot)
         self._write_deaths_txt(snapshot)
 
     def _deaths_txt_path(self) -> Path:
@@ -1782,15 +2189,21 @@ class MainWindow(QMainWindow):
         )
         dialog.exec()
 
-    def _open_settings_window(self) -> None:
+    def _open_settings_window(self, tab: int = 0) -> None:
         dialog = SettingsWindow(
             self._database,
             gamepad=self._gamepad_manager,
             hotkeys=self._hotkey_manager,
             parent=self,
+            tab=tab,
         )
         dialog.settings_changed.connect(self._on_settings_changed)
-        dialog.exec()
+        dialog.preview_changed.connect(self._preview_appearance)
+        if dialog.exec() != SettingsWindow.DialogCode.Accepted and dialog.previewed:
+            self._preview_appearance({})  # cancelled: back to what's saved
+
+    def _open_overlay_settings(self) -> None:
+        self._open_settings_window(tab=SettingsWindow.TAB_OVERLAY)
 
     def _open_about_window(self) -> None:
         AboutWindow(parent=self).exec()
@@ -1809,7 +2222,7 @@ class MainWindow(QMainWindow):
     def _show_overlay_for_obs(self) -> None:
         """Green-screen background (for OBS's Chroma Key) and make the overlay visible."""
         self._database.set_setting(SETTING_OVERLAY_BG_MODE, "chroma")
-        self._apply_saved_settings()
+        self._apply_appearance(self._database.get_all_settings())
         self._overlay.keep_on_screen()
         self._overlay.show()
         self._overlay.raise_()
@@ -1820,7 +2233,7 @@ class MainWindow(QMainWindow):
         self._refresh_counters()
 
     def _on_settings_changed(self) -> None:
-        self._apply_saved_settings()
+        self._apply_appearance(self._database.get_all_settings())
         if self._speedrun is not None:
             self._apply_timer_options(self._speedrun)
             self._timer_window.set_controller(self._speedrun)
@@ -1831,12 +2244,91 @@ class MainWindow(QMainWindow):
     def _on_settings_changed_hotkeys(self) -> None:
         bindings = self._hotkey_bindings()
         pads = self._pad_bindings()
-        self._hotkey_manager.update_bindings(**bindings)
+        self._hotkey_manager.update_bindings(**self._registered_bindings())
         self._gamepad_manager.update_bindings(pads)
         self._update_hotkey_labels(bindings, pads)
 
     def _toggle_overlay(self) -> None:
         self._overlay.toggle_visibility()
+        if self._overlay.isVisible():
+            self._overlay.keep_on_screen()
+
+    def _overlay_context_menu(self, position: QPoint) -> None:
+        """The overlay's right-click menu: count, change its look, place it."""
+        settings = self._database.get_all_settings()
+        menu = QMenu(self)
+        self._menu_icons_before = len(self._menu_icons)
+        self._menu_action(menu, "skull", "+1 Death", self._on_increment)
+        self._menu_action(menu, "minus", "−1 Death", self._on_decrement)
+        self._menu_action(menu, "undo-2", "Undo", self._on_undo)
+        self._menu_action(
+            menu, "trophy", "Boss Defeated", lambda: self._defeat_current_boss(detected=False)
+        )
+        menu.addSeparator()
+
+        def choices(title: str, key: str, options, current: str) -> None:
+            submenu = menu.addMenu(title)
+            group = QActionGroup(submenu)
+            for value, label, enabled in options:
+                action = submenu.addAction(label)
+                action.setCheckable(True)
+                action.setChecked(value == current)
+                action.setEnabled(enabled)
+                group.addAction(action)
+                action.triggered.connect(
+                    lambda _=False, v=value: self._set_overlay_setting(key, v)
+                )
+
+        choices(
+            "Big Number Shows",
+            SETTING_OVERLAY_COUNTER_SOURCE,
+            (("session", "This Session", True), ("boss", "This Boss", True),
+             ("total", "All-Time", True)),
+            settings.get(SETTING_OVERLAY_COUNTER_SOURCE, "session"),
+        )
+        has_image = bool(settings.get(SETTING_OVERLAY_BG_IMAGE, ""))
+        choices(
+            "Background",
+            SETTING_OVERLAY_BG_MODE,
+            (("dark", "Card", True), ("chroma", "Green Screen (Chroma Key)", True),
+             ("image", "Image" if has_image else "Image (choose one in Settings)", has_image)),
+            settings.get(SETTING_OVERLAY_BG_MODE, "dark"),
+        )
+        try:
+            size = int(settings.get(SETTING_OVERLAY_FONT_SIZE, "24"))
+        except ValueError:
+            size = 24
+        size_menu = menu.addMenu("Number Size")
+        for label, step in (("Bigger", +4), ("Smaller", -4)):
+            action = size_menu.addAction(label)
+            new_size = min(max(size + step, 10), 96)
+            action.setEnabled(new_size != size)
+            action.triggered.connect(
+                lambda _=False, v=new_size: self._set_overlay_setting(SETTING_OVERLAY_FONT_SIZE, v)
+            )
+        menu.addSeparator()
+        for key, label, default in (
+            (SETTING_OVERLAY_LOCKED, "Lock Position", "false"),
+            (SETTING_OVERLAY_ALWAYS_ON_TOP, "Always on Top", "true"),
+        ):
+            action = menu.addAction(label)
+            action.setCheckable(True)
+            on = settings.get(key, default) == "true"
+            action.setChecked(on)
+            action.triggered.connect(
+                lambda _=False, k=key, v=on: self._set_overlay_setting(k, "false" if v else "true")
+            )
+        self._add_display_menu(menu)
+        menu.addSeparator()
+        self._menu_action(menu, "settings", "Overlay Settings…", self._open_overlay_settings)
+        self._menu_action(menu, "eye-off", "Hide Overlay", self._toggle_overlay)
+        menu.exec(position)
+        del self._menu_icons[self._menu_icons_before:]  # this menu is gone
+
+    def _set_overlay_setting(self, key: str, value: object) -> None:
+        self._database.set_setting(key, value)
+        self._apply_appearance(self._database.get_all_settings())
+        self._refresh_counters()  # "Big number shows" also changes this window
 
     def _show_statistics(self) -> None:
         dialog = StatisticsWindow(
@@ -1886,6 +2378,7 @@ class MainWindow(QMainWindow):
         self._apply_timer_options(controller)
         self._speedrun = controller
         self._timer_window.set_controller(controller)
+        self._sync_run_hotkeys()
 
     def _apply_timer_options(self, controller: SpeedrunController) -> None:
         settings = self._database.get_all_settings()
@@ -2044,6 +2537,7 @@ class MainWindow(QMainWindow):
             self._toggle_timer_window()
         self._timer_window.refresh()
         self._configure_detection()
+        self._sync_run_hotkeys()
 
     def _timer_action(self, action: str) -> None:
         controller = self._speedrun
@@ -2071,6 +2565,7 @@ class MainWindow(QMainWindow):
         self._autosave()
         self._timer_window.refresh()
         self._refresh_timer_page()
+        self._sync_run_hotkeys()
 
     def _on_timer_window_action(self, action: str) -> None:
         if action == "edit_splits":
@@ -2158,6 +2653,7 @@ class MainWindow(QMainWindow):
             self.move(fitted.topLeft())
         self._overlay.keep_on_screen()
         self._timer_window.keep_on_screen()
+        self._mini.keep_on_screen()
 
     def _on_screen_removed(self, _screen: QScreen) -> None:
         # Let Qt finish re-laying out the remaining displays first.
@@ -2184,6 +2680,7 @@ class MainWindow(QMainWindow):
 
         self._end_speedrun()
         self._database.set_setting(SETTING_OVERLAY_GEOMETRY, self._overlay.geometry_string())
+        self._database.set_setting(SETTING_MINI_GEOMETRY, self._mini.geometry_string())
         self._database.set_setting(
             SETTING_MAIN_WINDOW_GEOMETRY, bytes(self.saveGeometry().toBase64()).decode("ascii")
         )
@@ -2198,6 +2695,7 @@ class MainWindow(QMainWindow):
         self._log_watcher.stop()
         self._overlay.close()
         self._timer_window.close()
+        self._mini.close()
         if self._tray is not None:
             self._tray.hide()
         self._database.close()

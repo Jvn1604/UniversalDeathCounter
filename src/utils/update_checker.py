@@ -18,6 +18,7 @@ from PySide6.QtCore import QObject, Signal
 
 from src.utils.constants import APP_VERSION, GITHUB_REPO
 from src.utils.logger import get_logger
+from src.utils.updater import INSTALLER_NAME
 
 logger = get_logger(__name__)
 
@@ -48,6 +49,13 @@ class UpdateChecker(QObject):
 
     update_available = Signal(str, str)
 
+    def __init__(self, parent: QObject | None = None) -> None:
+        super().__init__(parent)
+        # The new release's installer, for in-place updates (set before the
+        # signal fires; empty if the release has none).
+        self.installer_url = ""
+        self.installer_size = 0
+
     def check_async(self) -> None:
         """Start the check in a background daemon thread and return."""
         thread = threading.Thread(target=self._check, daemon=True)
@@ -69,6 +77,10 @@ class UpdateChecker(QObject):
         if not latest_tag:
             return
 
+        for asset in payload.get("assets") or []:
+            if asset.get("name") == INSTALLER_NAME:
+                self.installer_url = str(asset.get("browser_download_url", ""))
+                self.installer_size = int(asset.get("size") or 0)
         if _parse_version(latest_tag) > _parse_version(APP_VERSION):
             logger.info("Update available: %s (current %s)", latest_tag, APP_VERSION)
             # Cross-thread signal emission is safe: Qt queues it to the
