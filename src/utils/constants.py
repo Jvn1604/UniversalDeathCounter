@@ -20,7 +20,7 @@ APP_BRAND: str = "DePhantom"  # big header text; APP_SUBTITLE goes underneath
 APP_SUBTITLE: str = "Universal Death Counter (DUDC)"
 # APP_ORG (below), the exe name and the data folder intentionally keep the
 # old internal name, so existing installs upgrade in place and keep data.
-APP_VERSION: str = "2.1.0"
+APP_VERSION: str = "2.2.0"
 APP_ORG: str = "UniversalDeathCounter"
 
 # GitHub repository ("owner/repo") used by the update checker. Edit this
@@ -89,6 +89,8 @@ DEFAULT_HOTKEY_UNDO: str = "f11"
 DEFAULT_HOTKEY_TOGGLE_OVERLAY: str = "ctrl+f12"  # plain F12 is often taken (Steam, debuggers)
 DEFAULT_HOTKEY_CALIBRATE: str = "f8"
 DEFAULT_HOTKEY_PAUSE_DETECTION: str = "ctrl+f8"
+DEFAULT_HOTKEY_PREV_BOSS: str = "ctrl+f9"
+DEFAULT_HOTKEY_NEXT_BOSS: str = "ctrl+f10"
 
 # --------------------------------------------------------------------------
 # Settings keys (used in the `settings` table)
@@ -109,6 +111,9 @@ SETTING_MAIN_WINDOW_GEOMETRY: str = "main_window_geometry"  # Qt saveGeometry, b
 # --- v1.5 overlay & streaming ---
 SETTING_OVERLAY_BG_MODE: str = "overlay_bg_mode"  # "dark" | "chroma"
 SETTING_OVERLAY_TEXT_COLOR: str = "overlay_text_color"
+# Main-window colors; "" means the theme's own color.
+SETTING_UI_TEXT_COLOR: str = "ui_text_color"
+SETTING_UI_COUNTER_COLOR: str = "ui_counter_color"
 SETTING_OVERLAY_COUNTER_SOURCE: str = "overlay_counter_source"  # session|boss|total
 SETTING_OVERLAY_SHOW_GAME: str = "overlay_show_game"
 SETTING_OVERLAY_SHOW_BOSS: str = "overlay_show_boss"
@@ -124,6 +129,8 @@ SETTING_CHECK_UPDATES: str = "check_updates"
 # --- auto death detection ---
 SETTING_HOTKEY_CALIBRATE: str = "hotkey_calibrate"
 SETTING_HOTKEY_PAUSE_DETECTION: str = "hotkey_pause_detection"
+SETTING_HOTKEY_PREV_BOSS: str = "hotkey_prev_boss"
+SETTING_HOTKEY_NEXT_BOSS: str = "hotkey_next_boss"
 
 
 # Every bindable action: (action name, label, keyboard setting, default key).
@@ -146,6 +153,8 @@ CONTROL_ACTIONS: tuple[tuple[str, str, str, str], ...] = (
         SETTING_HOTKEY_PAUSE_DETECTION,
         DEFAULT_HOTKEY_PAUSE_DETECTION,
     ),
+    ("prev_boss", "Previous Boss", SETTING_HOTKEY_PREV_BOSS, DEFAULT_HOTKEY_PREV_BOSS),
+    ("next_boss", "Next Boss", SETTING_HOTKEY_NEXT_BOSS, DEFAULT_HOTKEY_NEXT_BOSS),
 )
 
 

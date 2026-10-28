@@ -45,6 +45,7 @@ from src.utils.screens import fit_to_screens, place_in_corner
 logger = get_logger(__name__)
 
 CHROMA_GREEN = "#00ff00"
+_CAPTIONS = {"session": "SESSION DEATHS", "boss": "BOSS DEATHS", "total": "ALL-TIME DEATHS"}
 OVERLAY_WINDOW_TITLE = "DUDC Overlay"
 
 
@@ -52,7 +53,12 @@ class OverlayWindow(QWidget):
     """A movable, resizable, OBS-friendly death counter overlay."""
 
     def __init__(self, parent: QWidget | None = None) -> None:
-        super().__init__(parent)
+        # OBS's Window Capture list leaves out tool windows, so the overlay is a
+        # normal window. Being owned by a never-shown window keeps it off the
+        # taskbar and Alt-Tab anyway.
+        owner = QWidget() if parent is None else None
+        super().__init__(parent or owner)
+        self._owner = owner
         self._drag_offset: QPoint | None = None
         # Frameless, so never shown on screen, but it's how the overlay is
         # listed in OBS's Window Capture picker.
@@ -71,9 +77,9 @@ class OverlayWindow(QWidget):
         self._last_snapshot: CounterSnapshot | None = None
 
         self.setWindowFlags(
-            Qt.WindowType.FramelessWindowHint
+            Qt.WindowType.Window
+            | Qt.WindowType.FramelessWindowHint
             | Qt.WindowType.WindowStaysOnTopHint
-            | Qt.WindowType.Tool
         )
         # Translucent so the dark card's rounded corners and opacity show through.
         # Qt doesn't paint stylesheet backgrounds on translucent windows, so the
@@ -168,8 +174,9 @@ class OverlayWindow(QWidget):
         self._game_label.setText(snapshot.game_name or "No Game Selected")
         self._boss_label.setText(snapshot.boss_name or "")
         self._death_label.setText(str(big_number))
+        self._caption_label.setText(_CAPTIONS.get(self._counter_source, "DEATHS"))
         self._stats_label.setText(
-            f"Session {snapshot.session_deaths}  •  Total {snapshot.total_deaths}"
+            f"Session {snapshot.session_deaths}  •  All-time {snapshot.total_deaths}"
         )
 
     def set_always_on_top(self, enabled: bool) -> None:

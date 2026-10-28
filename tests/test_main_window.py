@@ -122,3 +122,73 @@ def test_log_mode_saves_and_starts_the_log_watcher(window, tmp_path) -> None:
     window._detection_paused = True
     window._configure_detection()
     assert window._log_watcher._config is None
+
+
+def test_overlay_is_a_normal_owned_window_so_obs_can_list_it(window) -> None:
+    """Regression: as a Qt.Tool window the overlay was missing from OBS's Window Capture."""
+    from PySide6.QtCore import Qt
+
+    assert window._overlay.windowType() == Qt.WindowType.Window  # was Qt.Tool
+    owner = window._overlay.parentWidget()
+    assert owner is not None and not owner.isVisible()  # keeps it off the taskbar
+
+
+def test_next_and_previous_boss_skip_defeated(window) -> None:
+    db = window._database
+    game_id = db.create_game("Dark Souls")
+    first = db.create_boss(game_id, "Asylum Demon")
+    second = db.create_boss(game_id, "Taurus Demon")
+    third = db.create_boss(game_id, "Bell Gargoyles")
+    db.set_boss_defeated(second, True)
+    window._reload_games(select_game_id=game_id)
+    window._boss_combo.setCurrentIndex(window._boss_combo.findData(first))
+    window._select_adjacent_boss(+1)
+    assert window._counter_manager.current_boss_id == third
+    window._select_adjacent_boss(+1)  # last boss: stays put
+    assert window._counter_manager.current_boss_id == third
+    window._select_adjacent_boss(-1)
+    assert window._counter_manager.current_boss_id == first
+    window._select_adjacent_boss(-1)
+    assert window._counter_manager.current_boss_id is None  # "(No Boss)"
+
+
+def test_counter_labels_name_each_count(window) -> None:
+    db = window._database
+    game_id = db.create_game("Dark Souls")
+    window._reload_games(select_game_id=game_id)
+    window._on_increment()
+    assert window._counter_caption.text() == "DEATHS THIS SESSION"
+    assert window._sub_counter_label.text().startswith("This session: 1")
+    db.set_setting("overlay_counter_source", "total")
+    window._refresh_counters()
+    assert window._counter_caption.text() == "ALL-TIME DEATHS"
+
+
+def test_profile_box_lists_profiles(window) -> None:
+    assert window._profile_combo.currentText() == window._profile_manager.active_profile
+    window._profile_manager.create_profile("Streaming")
+    window._rebuild_profile_menu()
+    items = [window._profile_combo.itemText(i) for i in range(window._profile_combo.count())]
+    assert "Streaming" in items
+
+
+def test_custom_ui_colors_apply() -> None:
+    from src.themes.theme_manager import customize_stylesheet, load_stylesheet
+
+    base = load_stylesheet("dark")
+    custom = customize_stylesheet(base, "dark", "#7fd1ff", "#00ff88")
+    assert "color: #e8e8e8;" not in custom
+    assert "color: #7fd1ff;" in custom
+    assert custom.rstrip().endswith("QLabel#CounterLabel { color: #00ff88; }")
+    assert "color: #ffffff;" in custom  # text on red buttons stays readable
+    assert customize_stylesheet(base, "dark") == base
+
+
+def test_timeline_has_a_point_per_change(window) -> None:
+    db = window._database
+    game_id = db.create_game("Dark Souls")
+    window._reload_games(select_game_id=game_id)
+    for _ in range(3):
+        window._on_increment()
+    window._counter_manager.reset_total()
+    assert [row["delta"] for row in db.get_total_timeline(game_id)] == [1, 1, 1, -3]
