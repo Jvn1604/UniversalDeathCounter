@@ -20,7 +20,7 @@ APP_BRAND: str = "DePhantom"  # big header text; APP_SUBTITLE goes underneath
 APP_SUBTITLE: str = "Universal Death Counter (DUDC)"
 # APP_ORG (below), the exe name and the data folder intentionally keep the
 # old internal name, so existing installs upgrade in place and keep data.
-APP_VERSION: str = "2.0.1"
+APP_VERSION: str = "2.1.0"
 APP_ORG: str = "UniversalDeathCounter"
 
 # GitHub repository ("owner/repo") used by the update checker. Edit this
@@ -158,6 +158,8 @@ SETTING_DETECTION_COOLDOWN: str = "detection_cooldown"  # seconds between deaths
 DETECTION_MODE_OFF: str = "off"
 DETECTION_MODE_TEMPLATE: str = "template"  # calibrated death screen, any game
 DETECTION_MODE_SOULS: str = "souls"  # built-in red "YOU DIED" preset
+DETECTION_MODE_HEALTH: str = "health"  # calibrated health bar emptying
+DETECTION_MODE_LOG: str = "log"  # death lines appended to a game log file
 
 # --------------------------------------------------------------------------
 # Default settings values

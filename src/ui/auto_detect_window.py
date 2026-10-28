@@ -5,11 +5,14 @@ Auto death detection dialogs.
   detection method, calibration, and the cooldown between deaths.
 * :class:`CalibrationDialog` — shows a screenshot of the death screen and
   lets the player drag a box around the death text (e.g. "YOU DIED").
+* :class:`HealthBarDialog` — the same, for marking the health bar.
 """
 
 from __future__ import annotations
 
+import os
 import time
+from collections.abc import Callable
 from pathlib import Path
 
 import numpy as np
@@ -37,13 +40,17 @@ from PySide6.QtWidgets import (
 
 from src.database.database import Database
 from src.detection.game_window import detection_available
-from src.detection.matchers import SOULS_PRESET_EXES, DeathTemplate, Region
+from src.detection.log_watcher import compile_death_pattern, scan_log
+from src.detection.matchers import SOULS_PRESET_EXES, DeathTemplate, HealthBar, Region
 from src.utils.constants import (
+    DETECTION_MODE_HEALTH,
+    DETECTION_MODE_LOG,
     DETECTION_MODE_OFF,
     DETECTION_MODE_SOULS,
     DETECTION_MODE_TEMPLATE,
     SETTING_DETECTION_COOLDOWN,
     SETTING_HOTKEY_CALIBRATE,
+    SETTING_HOTKEY_INCREMENT,
 )
 from src.utils.logger import get_logger
 
@@ -53,6 +60,8 @@ _MODE_LABELS: tuple[tuple[str, str], ...] = (
     (DETECTION_MODE_OFF, "Off"),
     (DETECTION_MODE_TEMPLATE, "Calibrated death screen (any game)"),
     (DETECTION_MODE_SOULS, "Souls preset (red \"YOU DIED\" / 死 text)"),
+    (DETECTION_MODE_HEALTH, "Health bar empties (games without a death screen)"),
+    (DETECTION_MODE_LOG, "Game log file (e.g. Minecraft)"),
 )
 _MAX_PREVIEW = QSize(1100, 650)
 
@@ -128,22 +137,25 @@ class CalibrationDialog(QDialog):
     Lets the player mark the death text on a screenshot.
 
     After ``exec()`` returns Accepted, :attr:`template` holds the result.
+    Subclasses change the wording and override :meth:`_build_result`.
     """
+
+    _TITLE = "Calibrate Death Screen"
+    _INSTRUCTIONS = (
+        "Drag a box tightly around the death text (e.g. \"YOU DIED\").\n"
+        "Pick something that looks the same every time you die, and avoid "
+        "parts that change, such as the game world behind it."
+    )
+    _SAVE_LABEL = "Save Calibration"
 
     def __init__(self, frame: np.ndarray, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self.setWindowTitle("Calibrate Death Screen")
+        self.setWindowTitle(self._TITLE)
         self._frame = frame
         self.template: DeathTemplate | None = None
 
         layout = QVBoxLayout(self)
-        layout.addWidget(
-            QLabel(
-                "Drag a box tightly around the death text (e.g. \"YOU DIED\").\n"
-                "Pick something that looks the same every time you die, and avoid "
-                "parts that change, such as the game world behind it."
-            )
-        )
+        layout.addWidget(QLabel(self._INSTRUCTIONS))
         pixmap = QPixmap.fromImage(frame_to_qimage(frame)).scaled(
             _MAX_PREVIEW,
             Qt.AspectRatioMode.KeepAspectRatio,
@@ -157,7 +169,7 @@ class CalibrationDialog(QDialog):
         buttons.addStretch()
         cancel_button = QPushButton("Cancel")
         cancel_button.clicked.connect(self.reject)
-        self._save_button = QPushButton("Save Calibration")
+        self._save_button = QPushButton(self._SAVE_LABEL)
         self._save_button.setObjectName("AccentButton")
         self._save_button.setEnabled(False)
         self._save_button.clicked.connect(self._save)
@@ -168,16 +180,43 @@ class CalibrationDialog(QDialog):
     def _on_selection_changed(self) -> None:
         self._save_button.setEnabled(self._selector.selected_region() is not None)
 
+    def _build_result(self, region: Region) -> None:
+        """Turn the selection into the dialog's result; raise ValueError if unusable."""
+        self.template = DeathTemplate.from_frame(self._frame, region)
+
     def _save(self) -> None:
         region = self._selector.selected_region()
         if region is None:
             return
         try:
-            self.template = DeathTemplate.from_frame(self._frame, region)
+            self._build_result(region)
         except ValueError as exc:
             QMessageBox.warning(self, "Try Another Area", str(exc))
             return
         self.accept()
+
+
+class HealthBarDialog(CalibrationDialog):
+    """
+    Lets the player mark their health bar on a full-health screenshot.
+
+    After ``exec()`` returns Accepted, :attr:`health_bar` holds the result.
+    """
+
+    _TITLE = "Mark Your Health Bar"
+    _INSTRUCTIONS = (
+        "Drag a box around your health bar. Use a screenshot taken at full health, "
+        "so the whole bar is filled.\n"
+        "Box only the bar itself, not the portrait, numbers or icons next to it."
+    )
+    _SAVE_LABEL = "Save Health Bar"
+
+    def __init__(self, frame: np.ndarray, parent: QWidget | None = None) -> None:
+        self.health_bar: HealthBar | None = None
+        super().__init__(frame, parent)
+
+    def _build_result(self, region: Region) -> None:
+        self.health_bar = HealthBar.from_frame(self._frame, region)
 
 
 def first_death_hint(hotkey: str) -> str:
@@ -304,69 +343,134 @@ class AutoDetectWindow(QDialog):
     """Configure automatic death detection for one game."""
 
     def __init__(
-        self, database: Database, game_id: int, game_name: str, parent: QWidget | None = None
+        self,
+        database: Database,
+        game_id: int,
+        game_name: str,
+        recent_frames: Callable[[], list[tuple[float, np.ndarray]]] | None = None,
+        parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
         self._database = database
         self._game_id = game_id
+        self._recent_frames = recent_frames
         self.setWindowTitle(f"Auto Death Detection: {game_name}")
-        self.setMinimumWidth(520)
+        self.setMinimumWidth(560)
         self._build_ui()
         self._load_current_values()
+
+    @staticmethod
+    def _hint(text: str) -> QLabel:
+        label = QLabel(text)
+        label.setWordWrap(True)
+        label.setStyleSheet("color: #999999; font-size: 11px;")
+        return label
+
+    @staticmethod
+    def _row(*widgets: QWidget, stretch_after: int | None = None) -> QWidget:
+        """Pack widgets into one form-row field (a QWidget, so the row can be hidden)."""
+        container = QWidget()
+        row = QHBoxLayout(container)
+        row.setContentsMargins(0, 0, 0, 0)
+        for index, widget in enumerate(widgets):
+            row.addWidget(widget)
+            if index == stretch_after:
+                row.addStretch()
+        return container
 
     def _build_ui(self) -> None:
         layout = QVBoxLayout(self)
 
         if not detection_available():
-            warning = QLabel("Auto-detection needs Windows, so it is unavailable here.")
+            warning = QLabel(
+                "Screen-based detection needs Windows, so only log-file detection works here."
+            )
             warning.setStyleSheet("color: #ff4d4d; font-weight: 600;")
             layout.addWidget(warning)
 
         intro = QLabel(
-            "The app watches the game's window and counts a death whenever the death "
-            "screen appears. It only reads the screen, so it is safe with anti-cheat. "
-            "Run the game in borderless or windowed mode for reliable capture."
+            "The app counts a death when the death screen appears, when your health bar "
+            "empties, or when the game writes a death to its log file. It only reads the "
+            "screen or files, so it is safe with anti-cheat. Run the game in borderless or "
+            "windowed mode for reliable capture."
         )
         intro.setWordWrap(True)
         layout.addWidget(intro)
 
-        form = QFormLayout()
-        exe_row = QHBoxLayout()
+        form = self._form = QFormLayout()
         self._exe_edit = QLineEdit()
         self._exe_edit.setReadOnly(True)
         self._exe_edit.setPlaceholderText("Select the game's .exe")
         browse_button = QPushButton("Browse…")
         browse_button.clicked.connect(self._browse_exe)
-        exe_row.addWidget(self._exe_edit)
-        exe_row.addWidget(browse_button)
-        form.addRow("Game executable", exe_row)
+        form.addRow("Game executable", self._row(self._exe_edit, browse_button))
 
         self._mode_combo = QComboBox()
         for mode, label in _MODE_LABELS:
             self._mode_combo.addItem(label, userData=mode)
+        self._mode_combo.currentIndexChanged.connect(self._update_visible_rows)
         form.addRow("Detection method", self._mode_combo)
 
-        calibration_row = QHBoxLayout()
+        # Death screens: template and Souls modes (and extras for health-bar mode).
         self._calibration_label = QLabel()
         screenshot_button = QPushButton("Add from Screenshot…")
         screenshot_button.clicked.connect(self._calibrate_from_file)
         self._clear_button = QPushButton("Clear")
         self._clear_button.clicked.connect(self._clear_templates)
-        calibration_row.addWidget(self._calibration_label)
-        calibration_row.addStretch()
-        calibration_row.addWidget(screenshot_button)
-        calibration_row.addWidget(self._clear_button)
-        form.addRow("Death screens", calibration_row)
-
+        self._screens_row = self._row(
+            self._calibration_label, screenshot_button, self._clear_button, stretch_after=0
+        )
+        form.addRow("Death screens", self._screens_row)
         hotkey = self._database.get_setting(SETTING_HOTKEY_CALIBRATE, "f8").upper()
-        hint = QLabel(
+        self._screens_hint = self._hint(
             f"Press {hotkey} in-game while the death screen is showing, or after a death "
             "click 📷 Death Screen on the main window and pick the frame. Add more than "
             "one if some deaths are missed: any saved death screen counts."
         )
-        hint.setWordWrap(True)
-        hint.setStyleSheet("color: #999999; font-size: 11px;")
-        form.addRow("", hint)
+        form.addRow("", self._screens_hint)
+
+        # Health bar.
+        self._health_label = QLabel()
+        self._health_frame_button = QPushButton("Use Last Game Frame")
+        self._health_frame_button.setToolTip(
+            "Mark the bar on the most recent capture of the game window."
+        )
+        self._health_frame_button.clicked.connect(self._health_from_recent_frame)
+        health_file_button = QPushButton("From Screenshot…")
+        health_file_button.clicked.connect(self._health_from_file)
+        self._health_row = self._row(
+            self._health_label, self._health_frame_button, health_file_button, stretch_after=0
+        )
+        form.addRow("Health bar", self._health_row)
+        increment = self._database.get_setting(SETTING_HOTKEY_INCREMENT, "f9").upper()
+        self._health_hint = self._hint(
+            f"At full health, press {hotkey} in-game and box the health bar. A death counts "
+            "when the bar empties after your health was below about 60%, so opening a menu "
+            "at high health never counts. One-hit kills from high health are missed: press "
+            f"{increment} for those."
+        )
+        form.addRow("", self._health_hint)
+
+        # Log file.
+        self._log_edit = QLineEdit()
+        self._log_edit.setPlaceholderText(r"e.g. %APPDATA%\.minecraft\logs\latest.log")
+        log_browse_button = QPushButton("Browse…")
+        log_browse_button.clicked.connect(self._browse_log)
+        self._log_row = self._row(self._log_edit, log_browse_button)
+        form.addRow("Log file", self._log_row)
+        self._pattern_edit = QLineEdit()
+        self._pattern_edit.setPlaceholderText("e.g. Steve was slain|Steve died|Steve fell")
+        test_button = QPushButton("Test")
+        test_button.setToolTip("Count matching lines near the end of the log file.")
+        test_button.clicked.connect(self._test_pattern)
+        self._pattern_row = self._row(self._pattern_edit, test_button)
+        form.addRow("Death text", self._pattern_row)
+        self._log_hint = self._hint(
+            "Each new line in the log that contains this text counts as one death. Use | "
+            "between alternatives (it's a case-insensitive regular expression). In "
+            "multiplayer, include your player name so other players' deaths don't count."
+        )
+        form.addRow("", self._log_hint)
 
         self._cooldown_spin = QSpinBox()
         self._cooldown_spin.setRange(3, 120)
@@ -380,19 +484,50 @@ class AutoDetectWindow(QDialog):
         save_button.clicked.connect(self._save)
         layout.addWidget(save_button)
 
+    def _update_visible_rows(self) -> None:
+        mode = self._mode_combo.currentData()
+        screen_modes = (DETECTION_MODE_TEMPLATE, DETECTION_MODE_SOULS, DETECTION_MODE_HEALTH)
+        visible = {
+            self._screens_row: mode in screen_modes,
+            self._screens_hint: mode in (DETECTION_MODE_TEMPLATE, DETECTION_MODE_SOULS),
+            self._health_row: mode == DETECTION_MODE_HEALTH,
+            self._health_hint: mode == DETECTION_MODE_HEALTH,
+            self._log_row: mode == DETECTION_MODE_LOG,
+            self._pattern_row: mode == DETECTION_MODE_LOG,
+            self._log_hint: mode == DETECTION_MODE_LOG,
+            self._cooldown_spin: mode in screen_modes,
+        }
+        for widget, show in visible.items():
+            self._form.setRowVisible(widget, show)
+        self._exe_edit.setPlaceholderText(
+            "Optional: auto-selects this game when it starts"
+            if mode == DETECTION_MODE_LOG
+            else "Select the game's .exe"
+        )
+        self.adjustSize()
+
     def _load_current_values(self) -> None:
         row = self._database.get_game_detection(self._game_id)
         if row is not None:
             self._exe_edit.setText(row["exe_path"] or "")
             index = self._mode_combo.findData(row["mode"])
             self._mode_combo.setCurrentIndex(max(index, 0))
+        options = self._database.get_detection_options(self._game_id)
+        self._log_edit.setText(str(options.get("log_path") or ""))
+        self._pattern_edit.setText(str(options.get("log_pattern") or ""))
         self._update_calibration_label()
+        self._update_health_label()
+        self._health_frame_button.setEnabled(bool(self._recent_frames and self._recent_frames()))
         self._cooldown_spin.setValue(
             int(self._database.get_setting(SETTING_DETECTION_COOLDOWN, "8") or 8)
         )
+        self._update_visible_rows()
 
     def _has_template(self) -> bool:
         return bool(self._database.get_death_templates(self._game_id))
+
+    def _health_bar(self) -> HealthBar | None:
+        return HealthBar.from_options(self._database.get_detection_options(self._game_id))
 
     def _update_calibration_label(self) -> None:
         count = len(self._database.get_death_templates(self._game_id))
@@ -400,6 +535,16 @@ class AutoDetectWindow(QDialog):
             "None saved" if count == 0 else f"{count} saved ✓"
         )
         self._clear_button.setEnabled(count > 0)
+
+    def _update_health_label(self) -> None:
+        bar = self._health_bar()
+        if bar is None:
+            self._health_label.setText("Not set")
+            self._health_label.setStyleSheet("")
+            return
+        r, g, b = bar.color
+        self._health_label.setText("■ Set ✓")
+        self._health_label.setStyleSheet(f"color: rgb({r}, {g}, {b}); font-weight: 600;")
 
     def _clear_templates(self) -> None:
         confirm = QMessageBox.question(
@@ -421,17 +566,24 @@ class AutoDetectWindow(QDialog):
             mode = DETECTION_MODE_SOULS if preset else DETECTION_MODE_TEMPLATE
             self._mode_combo.setCurrentIndex(self._mode_combo.findData(mode))
 
-    def _calibrate_from_file(self) -> None:
+    @staticmethod
+    def _open_image(parent: QWidget, title: str) -> np.ndarray | None:
         path, _ = QFileDialog.getOpenFileName(
-            self, "Death Screen Screenshot", "", "Images (*.png *.jpg *.jpeg *.bmp)"
+            parent, title, "", "Images (*.png *.jpg *.jpeg *.bmp)"
         )
         if not path:
-            return
+            return None
         image = QImage(path)
         if image.isNull():
-            QMessageBox.warning(self, "Could Not Open", "That file is not a readable image.")
+            QMessageBox.warning(parent, "Could Not Open", "That file is not a readable image.")
+            return None
+        return qimage_to_frame(image)
+
+    def _calibrate_from_file(self) -> None:
+        frame = self._open_image(self, "Death Screen Screenshot")
+        if frame is None:
             return
-        dialog = CalibrationDialog(qimage_to_frame(image), parent=self)
+        dialog = CalibrationDialog(frame, parent=self)
         if dialog.exec() != QDialog.DialogCode.Accepted or dialog.template is None:
             return
         self._database.add_death_template(
@@ -441,15 +593,94 @@ class AutoDetectWindow(QDialog):
             self._mode_combo.setCurrentIndex(self._mode_combo.findData(DETECTION_MODE_TEMPLATE))
         self._update_calibration_label()
 
+    def _mark_health_bar(self, frame: np.ndarray) -> None:
+        dialog = HealthBarDialog(frame, parent=self)
+        if dialog.exec() != QDialog.DialogCode.Accepted or dialog.health_bar is None:
+            return
+        self._database.update_detection_options(self._game_id, **dialog.health_bar.to_options())
+        self._update_health_label()
+
+    def _health_from_recent_frame(self) -> None:
+        frames = self._recent_frames() if self._recent_frames else []
+        if not frames:
+            QMessageBox.information(
+                self, "No Game Frame Yet", "Start the game first, then try again."
+            )
+            return
+        self._mark_health_bar(frames[-1][1])
+
+    def _health_from_file(self) -> None:
+        frame = self._open_image(self, "Full-Health Screenshot")
+        if frame is not None:
+            self._mark_health_bar(frame)
+
+    def _browse_log(self) -> None:
+        start = os.path.expandvars(self._log_edit.text().strip())
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Select the Game's Log File", start, "Log files (*.log *.txt);;All files (*)"
+        )
+        if path:
+            self._log_edit.setText(str(Path(path)))
+
+    def _log_path(self) -> Path | None:
+        text = self._log_edit.text().strip()
+        return Path(os.path.expandvars(text)) if text else None
+
+    def _test_pattern(self) -> None:
+        path = self._log_path()
+        if path is None or not path.is_file():
+            QMessageBox.warning(self, "Log File Not Found", "Choose an existing log file first.")
+            return
+        try:
+            pattern = compile_death_pattern(self._pattern_edit.text())
+            count, last = scan_log(path, pattern)
+        except ValueError as exc:
+            QMessageBox.warning(self, "Check the Death Text", str(exc))
+            return
+        except OSError as exc:
+            QMessageBox.warning(self, "Can't Read the Log", str(exc))
+            return
+        if count == 0:
+            QMessageBox.information(
+                self,
+                "No Matches",
+                "No lines near the end of the log match. Die once in-game, then test again, "
+                "or copy the exact wording from the log.",
+            )
+        else:
+            QMessageBox.information(
+                self, "Matches Found", f"{count} matching line(s). The latest:\n\n{last[:300]}"
+            )
+
     def _save(self) -> None:
         mode = self._mode_combo.currentData()
         exe_path = self._exe_edit.text().strip() or None
-        if mode != DETECTION_MODE_OFF and exe_path is None:
+        if mode == DETECTION_MODE_LOG:
+            log_path = self._log_path()
+            if log_path is None:
+                QMessageBox.warning(self, "Choose the Log File", "Choose the game's log file.")
+                return
+            try:
+                compile_death_pattern(self._pattern_edit.text())
+            except ValueError as exc:
+                QMessageBox.warning(self, "Check the Death Text", str(exc))
+                return
+            self._database.update_detection_options(
+                self._game_id, log_path=str(log_path), log_pattern=self._pattern_edit.text()
+            )
+        elif mode != DETECTION_MODE_OFF and exe_path is None:
             QMessageBox.warning(self, "Select the Game", "Select the game's .exe first.")
             return
+        hotkey = self._database.get_setting(SETTING_HOTKEY_CALIBRATE, "f8").upper()
         if mode == DETECTION_MODE_TEMPLATE and not self._has_template():
-            hotkey = self._database.get_setting(SETTING_HOTKEY_CALIBRATE, "f8").upper()
             QMessageBox.information(self, "Teach It Your Death Screen", first_death_hint(hotkey))
+        if mode == DETECTION_MODE_HEALTH and self._health_bar() is None:
+            QMessageBox.information(
+                self,
+                "Mark Your Health Bar",
+                f"Start the game, and at full health press {hotkey} and box your health bar. "
+                "Deaths are counted from then on.",
+            )
         self._database.set_game_detection(self._game_id, exe_path, mode)
         self._database.set_setting(SETTING_DETECTION_COOLDOWN, self._cooldown_spin.value())
         self.accept()
