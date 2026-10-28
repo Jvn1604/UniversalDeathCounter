@@ -47,6 +47,9 @@ from src.utils.backgrounds import IMAGE_FILTER, import_background
 from src.utils.constants import (
     AVAILABLE_THEMES,
     CONTROL_ACTIONS,
+    SETTING_BOSS_AUTO_ADVANCE,
+    SETTING_BOSS_AUTO_SPLIT,
+    SETTING_BOSS_DETECTION,
     SETTING_CHECK_UPDATES,
     SETTING_DEATHS_TXT_ENABLED,
     SETTING_DEATHS_TXT_PATH,
@@ -157,6 +160,11 @@ def _select_data(combo: QComboBox, value: str) -> None:
     combo.setCurrentIndex(max(combo.findData(value), 0))
 
 
+_BOSS_OPTIONS: tuple[tuple[str, str], ...] = (
+    (SETTING_BOSS_DETECTION, "Detect boss kills from saved victory screens"),
+    (SETTING_BOSS_AUTO_ADVANCE, "After a boss is defeated, select the next boss"),
+    (SETTING_BOSS_AUTO_SPLIT, "After a boss is defeated, split the speedrun timer"),
+)
 _TIMER_COMPARISONS: tuple[tuple[str, str], ...] = (
     ("pb", "Personal Best"),
     ("previous", "Previous Run"),
@@ -283,6 +291,22 @@ class SettingsWindow(QDialog):
         self._check_updates_check = QCheckBox("Check for updates on startup")
         general_form.addRow(self._check_updates_check)
         layout.addWidget(general_group)
+
+        boss_group = QGroupBox("Boss kills")
+        boss_layout = QVBoxLayout(boss_group)
+        self._boss_checks: dict[str, QCheckBox] = {}
+        for key, label in _BOSS_OPTIONS:
+            check = QCheckBox(label)
+            boss_layout.addWidget(check)
+            self._boss_checks[key] = check
+        boss_note = QLabel(
+            "Teach a game its victory banner with 📷 Capture Screen after a boss "
+            "fight. The Boss Defeated key (Controls) does the same by hand."
+        )
+        boss_note.setWordWrap(True)
+        boss_note.setStyleSheet("color: #999999; font-size: 11px;")
+        boss_layout.addWidget(boss_note)
+        layout.addWidget(boss_group)
 
         # --- Streaming (deaths.txt) ---
         stream_group = QGroupBox("Streaming — deaths.txt for OBS Text Source")
@@ -671,6 +695,8 @@ class SettingsWindow(QDialog):
         self._check_updates_check.setChecked(
             settings.get(SETTING_CHECK_UPDATES, "true") == "true"
         )
+        for key, check in self._boss_checks.items():
+            check.setChecked(settings.get(key, "true") == "true")
 
         _select_data(self._bg_mode_combo, settings.get(SETTING_OVERLAY_BG_MODE, "dark"))
         self._counter_source_combo.setCurrentText(
@@ -752,6 +778,8 @@ class SettingsWindow(QDialog):
             SETTING_CHECK_UPDATES,
             "true" if self._check_updates_check.isChecked() else "false",
         )
+        for key, check in self._boss_checks.items():
+            db.set_setting(key, "true" if check.isChecked() else "false")
 
         db.set_setting(SETTING_OVERLAY_BG_MODE, self._bg_mode_combo.currentData())
         db.set_setting(SETTING_OVERLAY_COUNTER_SOURCE, self._counter_source_combo.currentText())

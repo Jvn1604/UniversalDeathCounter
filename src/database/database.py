@@ -46,6 +46,7 @@ EVENT_TOTAL_ADJUST: str = "total_adjust"
 # death_templates.kind
 SCREEN_DEATH: str = "death"
 SCREEN_PAUSE: str = "pause"
+SCREEN_VICTORY: str = "victory"  # a boss-kill banner, e.g. "GREAT ENEMY FELLED"
 
 
 def _utc_now_iso() -> str:
@@ -551,10 +552,16 @@ class Database:
         logger.info("Deleted boss id=%s", boss_id)
 
     def get_bosses(self, game_id: int) -> list[sqlite3.Row]:
-        """Return all bosses belonging to a game, ordered alphabetically."""
+        """
+        Return all bosses belonging to a game, in the order they were added.
+
+        That's story order for the built-in boss lists (and usually for bosses
+        added while playing), which is what "next boss", auto-advance after a
+        kill, and splits made from the boss list need.
+        """
         with self._cursor() as cursor:
             cursor.execute(
-                "SELECT * FROM bosses WHERE game_id = ? ORDER BY name COLLATE NOCASE",
+                "SELECT * FROM bosses WHERE game_id = ? ORDER BY id",
                 (game_id,),
             )
             return cursor.fetchall()
