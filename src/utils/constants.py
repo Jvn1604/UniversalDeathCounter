@@ -20,7 +20,7 @@ APP_BRAND: str = "DePhantom"  # big header text; APP_SUBTITLE goes underneath
 APP_SUBTITLE: str = "Universal Death Counter (DUDC)"
 # APP_ORG (below), the exe name and the data folder intentionally keep the
 # old internal name, so existing installs upgrade in place and keep data.
-APP_VERSION: str = "2.8.2"
+APP_VERSION: str = "2.9.0"
 APP_ORG: str = "UniversalDeathCounter"
 
 # GitHub repository ("owner/repo") used by the update checker. Edit this
@@ -142,6 +142,11 @@ SETTING_OVERLAY_SHOW_GAME: str = "overlay_show_game"
 SETTING_OVERLAY_SHOW_BOSS: str = "overlay_show_boss"
 SETTING_OVERLAY_SHOW_STATS: str = "overlay_show_stats"
 SETTING_OVERLAY_LOCKED: str = "overlay_locked"  # "true" = can't be dragged
+# Console players
+SETTING_PHONE_REMOTE: str = "phone_remote_enabled"  # "true" = serve the phone page
+SETTING_PHONE_REMOTE_KEY: str = "phone_remote_key"  # secret part of the phone link
+# Detection option: watch the window of the game's .exe whose title contains this.
+OPTION_WINDOW_TITLE: str = "window_title"
 SETTING_DEATHS_TXT_ENABLED: str = "deaths_txt_enabled"
 SETTING_DEATHS_TXT_PATH: str = "deaths_txt_path"
 SETTING_DEATHS_TXT_TEMPLATE: str = "deaths_txt_template"

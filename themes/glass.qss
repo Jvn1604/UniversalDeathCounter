@@ -777,3 +777,13 @@ QFrame#UpdateCard QPushButton#AccentButton {
     padding: 7px 10px;
     font-size: 12px;
 }
+
+QLabel#PhoneLink {
+    color: #f2efff;
+    font-family: "Cascadia Mono", "Consolas", monospace;
+    font-size: 15px;
+    font-weight: 700;
+    padding: 10px 12px;
+    border: 1px dashed rgba(128, 128, 128, 0.45);
+    border-radius: 10px;
+}

@@ -16,6 +16,7 @@ from __future__ import annotations
 import os
 import struct
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
@@ -42,6 +43,20 @@ if DETECTION_SUPPORTED:
     _EnumWindowsProc = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
 
 Rect = tuple[int, int, int, int]  # left, top, width, height in screen pixels
+
+
+@dataclass(frozen=True)
+class WindowInfo:
+    """A window on the desktop that detection could watch."""
+
+    title: str
+    exe_path: str
+    width: int
+    height: int
+
+    @property
+    def label(self) -> str:
+        return f"{self.title}  —  {Path(self.exe_path).name}  ({self.width}×{self.height})"
 
 
 def open_screen_capture() -> mss.base.MSSBase:
@@ -149,11 +164,26 @@ def _version_info_name(exe_path: str) -> str | None:
     return None
 
 
-def find_main_window(pids: list[int]) -> int | None:
-    """Return the largest visible top-level window owned by any of ``pids``."""
+def window_title(hwnd: int) -> str:
+    length = _user32.GetWindowTextLengthW(hwnd)
+    if length <= 0:
+        return ""
+    buffer = ctypes.create_unicode_buffer(length + 1)
+    _user32.GetWindowTextW(hwnd, buffer, length + 1)
+    return buffer.value
+
+
+def find_main_window(pids: list[int], title: str = "") -> int | None:
+    """
+    Return the largest visible top-level window owned by any of ``pids``.
+
+    With ``title``, only windows whose title contains it (any case) count:
+    e.g. one OBS projector out of OBS's many windows, for console players.
+    """
     if not DETECTION_SUPPORTED or not pids:
         return None
     wanted = set(pids)
+    wanted_title = title.casefold()
     best: tuple[int, int] | None = None  # (area, hwnd)
 
     def _visit(hwnd: int, _lparam: int) -> bool:
@@ -164,6 +194,8 @@ def find_main_window(pids: list[int]) -> int | None:
         _user32.GetWindowThreadProcessId(hwnd, ctypes.byref(owner))
         if owner.value not in wanted:
             return True
+        if wanted_title and wanted_title not in window_title(hwnd).casefold():
+            return True
         rect = wintypes.RECT()
         _user32.GetClientRect(hwnd, ctypes.byref(rect))
         area = (rect.right - rect.left) * (rect.bottom - rect.top)
@@ -173,6 +205,62 @@ def find_main_window(pids: list[int]) -> int | None:
 
     _user32.EnumWindows(_EnumWindowsProc(_visit), 0)
     return best[1] if best is not None else None
+
+
+_GWL_EXSTYLE = -20
+_WS_EX_TOOLWINDOW = 0x00000080
+_WS_EX_TRANSPARENT = 0x00000020  # click-through overlays (e.g. GeForce Experience)
+_DWMWA_CLOAKED = 14
+
+
+def _is_hidden_layer(hwnd: int) -> bool:
+    """Tool windows, click-through overlays and "cloaked" (invisible) system windows."""
+    style = _user32.GetWindowLongW(hwnd, _GWL_EXSTYLE)
+    if style & (_WS_EX_TOOLWINDOW | _WS_EX_TRANSPARENT):
+        return True
+    cloaked = wintypes.DWORD()
+    result = ctypes.windll.dwmapi.DwmGetWindowAttribute(
+        hwnd, _DWMWA_CLOAKED, ctypes.byref(cloaked), ctypes.sizeof(cloaked)
+    )
+    return result == 0 and cloaked.value != 0
+
+
+def list_windows() -> list[WindowInfo]:
+    """
+    Visible, titled windows of other programs, largest first: what a console
+    player can pick (PS Remote Play, the Xbox app, a capture card's viewer,
+    an OBS projector).
+    """
+    if not detection_available():
+        return []
+    own_pid = os.getpid()
+    found: dict[tuple[str, str], WindowInfo] = {}
+
+    def _visit(hwnd: int, _lparam: int) -> bool:
+        if not _user32.IsWindowVisible(hwnd) or _user32.IsIconic(hwnd):
+            return True
+        title = window_title(hwnd).strip()
+        if not title or title == "Program Manager" or _is_hidden_layer(hwnd):
+            return True
+        pid = wintypes.DWORD()
+        _user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+        if pid.value == own_pid:
+            return True
+        rect = window_client_rect(hwnd)
+        if rect is None or rect[2] < 200 or rect[3] < 150:
+            return True  # tool strips, tray helpers, tiny pop-ups
+        try:
+            exe_path = psutil.Process(pid.value).exe()
+        except (psutil.AccessDenied, psutil.NoSuchProcess):
+            return True
+        info = WindowInfo(title, exe_path, rect[2], rect[3])
+        key = (title, exe_path)
+        if key not in found or info.width * info.height > found[key].width * found[key].height:
+            found[key] = info
+        return True
+
+    _user32.EnumWindows(_EnumWindowsProc(_visit), 0)
+    return sorted(found.values(), key=lambda w: -(w.width * w.height))
 
 
 def is_not_responding(hwnd: int) -> bool:
@@ -268,17 +356,18 @@ def grab_into(
     canvas[top:bottom, left:right] = np.asarray(shot)[..., 2::-1]
 
 
-def capture_game_frame(exe_path: str | None) -> np.ndarray | None:
+def capture_game_frame(exe_path: str | None, title: str = "") -> np.ndarray | None:
     """
     One-off capture for calibration: the game's window if it is running,
     otherwise the display under the mouse cursor (where the player is
-    looking). Returns None if capture is unavailable.
+    looking). ``title`` picks one window of the program (console capture).
+    Returns None if capture is unavailable.
     """
     if not detection_available():
         return None
     with open_screen_capture() as sct:
         if exe_path:
-            hwnd = find_main_window(find_process_ids(exe_path))
+            hwnd = find_main_window(find_process_ids(exe_path), title)
             rect = window_client_rect(hwnd) if hwnd is not None else None
             if rect is not None:
                 return np.ascontiguousarray(grab_rect(sct, rect))

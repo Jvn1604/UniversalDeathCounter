@@ -114,6 +114,9 @@ class WatchConfig:
     victory_matcher: Matcher | None = None
     required_frames: int = 3
     setup_hint: str = "after you die, click Capture Screen (Detection page) to teach it"
+    # Console players: watch the window of ``exe_path`` whose title contains
+    # this (PS Remote Play, a capture card viewer, an OBS projector).
+    window_title: str = ""
 
 
 class DeathWatcher(QObject):
@@ -240,10 +243,10 @@ class DeathWatcher(QObject):
                 self._stop_event.wait(_IDLE_POLL_SECONDS)
                 continue
 
-            exe_name = Path(config.exe_path).name
+            exe_name = config.window_title or Path(config.exe_path).name
             now = time.monotonic()
             if hwnd is None or now >= next_lookup:
-                hwnd = find_main_window(find_process_ids(config.exe_path))
+                hwnd = find_main_window(find_process_ids(config.exe_path), config.window_title)
                 next_lookup = now + _WINDOW_LOOKUP_INTERVAL
             if hwnd is None:
                 if not ever_seen:

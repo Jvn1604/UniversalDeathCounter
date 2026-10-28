@@ -20,3 +20,24 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
 _APP = QApplication.instance() or QApplication([])
+
+
+import pytest  # noqa: E402
+from PySide6.QtWidgets import QMessageBox  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def _no_hotkey_warning_box(monkeypatch):
+    """
+    Another program (often an installed copy of this app) may hold the default
+    hotkeys while tests run. The "Hotkey Unavailable" box would then wait for
+    a click forever; tests that care about message boxes patch them themselves.
+    """
+    real_warning = QMessageBox.warning
+
+    def warning(parent, title, *args, **kwargs):
+        if title == "Hotkey Unavailable":
+            return QMessageBox.StandardButton.Ok
+        return real_warning(parent, title, *args, **kwargs)
+
+    monkeypatch.setattr(QMessageBox, "warning", warning)
