@@ -12,8 +12,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from src.database.database import Database
 from src.core.session_manager import SessionManager
+from src.database.database import Database
 from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -27,10 +27,7 @@ class CounterSnapshot:
     boss_name: str | None
     session_deaths: int
     total_deaths: int
-<<<<<<< HEAD
     boss_deaths: int = 0
-=======
->>>>>>> 87d3c43bd4a8cfe2e09f744eb9c535cdd5c0fb02
 
 
 class CounterManager:
@@ -105,7 +102,6 @@ class CounterManager:
             self._database.reset_total(self._current_game_id)
         return self.get_snapshot()
 
-<<<<<<< HEAD
     def set_session_count(self, target: int) -> CounterSnapshot:
         """
         Force the current session's death count to an exact value.
@@ -135,8 +131,6 @@ class CounterManager:
             )
         return self.get_snapshot()
 
-=======
->>>>>>> 87d3c43bd4a8cfe2e09f744eb9c535cdd5c0fb02
     def _apply_delta(self, delta: int) -> CounterSnapshot:
         """Persist a +1/-1 death event for the current selection."""
         if self._current_game_id is None:
@@ -161,23 +155,17 @@ class CounterManager:
             if self._current_game_id is not None
             else 0
         )
-<<<<<<< HEAD
         boss_deaths = (
             self._database.get_boss_deaths(self._current_boss_id)
             if self._current_boss_id is not None
             else 0
         )
-=======
->>>>>>> 87d3c43bd4a8cfe2e09f744eb9c535cdd5c0fb02
         return CounterSnapshot(
             game_name=self._current_game_name,
             boss_name=self._current_boss_name,
             session_deaths=self._session_manager.get_session_deaths(),
             total_deaths=total,
-<<<<<<< HEAD
             boss_deaths=boss_deaths,
-=======
->>>>>>> 87d3c43bd4a8cfe2e09f744eb9c535cdd5c0fb02
         )
 
     @property

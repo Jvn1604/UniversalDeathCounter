@@ -1,39 +1,106 @@
-# This is a basic workflow to help you get started with Actions
+# Lints, tests, and builds the app folder and the Inno Setup installer on
+# Windows. Pushing a v* tag (e.g. v1.6.0) also publishes a GitHub Release,
+# which the in-app update checker reads. The tag must match APP_VERSION in
+# src/utils/constants.py, the version's single source of truth.
 
-name: CI
+name: Build Windows Executable
 
-# Controls when the workflow will run
 on:
+  push:
+    branches: [ "main" ]
+    tags: [ "v*" ]
+  pull_request:
+    branches: [ "main" ]
+  workflow_dispatch:
 
 permissions:
   contents: write
-  # Triggers the workflow on push or pull request events but only for the "main" branch
-  push:
-    branches: [ "main" ]
-  pull_request:
-    branches: [ "main" ]
 
-  # Allows you to run this workflow manually from the Actions tab
-  workflow_dispatch:
-
-# A workflow run is made up of one or more jobs that can run sequentially or in parallel
 jobs:
-  # This workflow contains a single job called "build"
   build:
-    # The type of runner that the job will run on
-    runs-on: ubuntu-latest
+    runs-on: windows-latest
+    env:
+      # Code signing runs only when these repository secrets exist
+      # (see docs/code-signing.md).
+      SIGNING_CERT_PFX_BASE64: ${{ secrets.SIGNING_CERT_PFX_BASE64 }}
+      SIGNING_CERT_PASSWORD: ${{ secrets.SIGNING_CERT_PASSWORD }}
 
-    # Steps represent a sequence of tasks that will be executed as part of the job
     steps:
-      # Checks-out your repository under $GITHUB_WORKSPACE, so your job can access it
       - uses: actions/checkout@v4
 
-      # Runs a single command using the runners shell
-      - name: Run a one-line script
-        run: echo Hello, world!
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
 
-      # Runs a set of commands using the runners shell
-      - name: Run a multi-line script
+      - name: Install dependencies
         run: |
-          echo Add other actions to build,
-          echo test, and deploy your project.
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Lint (conflict markers, YAML/TOML, ruff)
+        run: pre-commit run --all-files --show-diff-on-failure
+
+      - name: Run tests
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: python -m pytest -q
+
+      - name: Read app version
+        id: version
+        shell: pwsh
+        run: |
+          $version = python -c "from src.utils.constants import APP_VERSION; print(APP_VERSION)"
+          "version=$version" >> $env:GITHUB_OUTPUT
+          if ("${{ github.ref_type }}" -eq "tag" -and "${{ github.ref_name }}" -ne "v$version") {
+            Write-Error "Tag ${{ github.ref_name }} does not match APP_VERSION $version. Bump APP_VERSION in src/utils/constants.py or retag."
+            exit 1
+          }
+          Write-Host "Building version $version"
+
+      - name: Build app folder
+        run: pyinstaller --noconfirm packaging/UniversalDeathCounter.spec
+
+      - name: Sign executable
+        if: env.SIGNING_CERT_PFX_BASE64 != ''
+        shell: pwsh
+        run: ./packaging/sign.ps1 dist/UniversalDeathCounter/UniversalDeathCounter.exe
+
+      - name: Install Inno Setup (if missing)
+        shell: pwsh
+        run: |
+          if (-not (Test-Path "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe")) {
+            choco install innosetup --no-progress -y
+          }
+
+      - name: Build installer
+        shell: pwsh
+        run: '& "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" "/DAppVersion=${{ steps.version.outputs.version }}" packaging\installer.iss'
+
+      - name: Sign installer
+        if: env.SIGNING_CERT_PFX_BASE64 != ''
+        shell: pwsh
+        run: ./packaging/sign.ps1 dist_installer/UniversalDeathCounterSetup.exe
+
+      - name: Zip portable build
+        shell: pwsh
+        run: Compress-Archive -Path dist/UniversalDeathCounter -DestinationPath "dist/UniversalDeathCounter-${{ steps.version.outputs.version }}-portable.zip"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: UniversalDeathCounter-Setup
+          path: dist_installer/UniversalDeathCounterSetup.exe
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: UniversalDeathCounter-portable
+          path: dist/UniversalDeathCounter-${{ steps.version.outputs.version }}-portable.zip
+
+      - name: Publish GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist_installer/UniversalDeathCounterSetup.exe
+            dist/UniversalDeathCounter-${{ steps.version.outputs.version }}-portable.zip
+          generate_release_notes: true

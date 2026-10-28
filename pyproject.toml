@@ -1,0 +1,11 @@
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+extend-exclude = ["venv", "build", "dist", "dist_installer"]
+
+[tool.ruff.lint]
+# pycodestyle errors/warnings, pyflakes, import order, bugbear, pyupgrade
+select = ["E", "W", "F", "I", "B", "UP"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

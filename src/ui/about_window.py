@@ -1,11 +1,20 @@
-"""About dialog showing app metadata, version, and license info."""
+"""About dialog showing the logo, app metadata, version, and license info."""
 
 from __future__ import annotations
 
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import QDialog, QLabel, QPushButton, QVBoxLayout
 
-from src.utils.constants import ACCENT_COLOR, APP_NAME, APP_VERSION
+from src.utils.constants import (
+    ACCENT_COLOR,
+    APP_BRAND,
+    APP_NAME,
+    APP_SUBTITLE,
+    APP_VERSION,
+    GITHUB_REPO,
+    ICONS_DIR,
+)
 
 
 class AboutWindow(QDialog):
@@ -14,17 +23,26 @@ class AboutWindow(QDialog):
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
         self.setWindowTitle(f"About {APP_NAME}")
-        self.setFixedSize(380, 260)
+        self.setFixedSize(400, 470)
         self._build_ui()
 
     def _build_ui(self) -> None:
         layout = QVBoxLayout(self)
-        layout.setSpacing(10)
+        layout.setSpacing(8)
         layout.setContentsMargins(24, 24, 24, 24)
 
-        title = QLabel(APP_NAME)
+        logo = QLabel()
+        logo.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        pixmap = QPixmap(str(ICONS_DIR / "app_icon_128.png"))
+        if not pixmap.isNull():
+            logo.setPixmap(pixmap)
+
+        title = QLabel(APP_BRAND)
         title.setObjectName("TitleLabel")
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        subtitle = QLabel(APP_SUBTITLE)
+        subtitle.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        subtitle.setStyleSheet("color: #b56cff; font-weight: 600;")
 
         version = QLabel(f"Version {APP_VERSION}")
         version.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -42,15 +60,21 @@ class AboutWindow(QDialog):
         license_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         license_label.setStyleSheet(f"color: {ACCENT_COLOR};")
 
-        github_label = QLabel("github.com — Universal Death Counter")
+        github_label = QLabel(
+            f'<a href="https://github.com/{GITHUB_REPO}" style="color: #999999;">'
+            f"github.com/{GITHUB_REPO}</a>"
+        )
+        github_label.setOpenExternalLinks(True)
         github_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        github_label.setStyleSheet("color: #999999; font-size: 11px;")
+        github_label.setStyleSheet("font-size: 11px;")
 
         close_button = QPushButton("Close")
         close_button.setObjectName("AccentButton")
         close_button.clicked.connect(self.accept)
 
+        layout.addWidget(logo)
         layout.addWidget(title)
+        layout.addWidget(subtitle)
         layout.addWidget(version)
         layout.addWidget(description)
         layout.addStretch()
