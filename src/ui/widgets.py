@@ -237,6 +237,87 @@ def round_pixmap(source: QPixmap, size: int) -> QPixmap:
     return result
 
 
+class UpdateCard(QFrame):
+    """
+    Sidebar card for updates: this version, whether it's current, and an
+    Update button when a newer one is out.
+
+    States: "idle" (checks are off), "checking", "current", "failed",
+    "available". :attr:`button` is the Update button.
+    """
+
+    check_requested = Signal()
+
+    # state -> (icon, icon color or "" for the theme's, title)
+    _LOOK = {
+        "idle": ("info", "", "Updates"),
+        "checking": ("refresh-cw", "", "Checking for updates…"),
+        "current": ("circle-check", "#3ad07a", "Up to date"),
+        "failed": ("circle-alert", "#f0a030", "Couldn't check for updates"),
+        "available": ("circle-arrow-up", "#ff3d55", ""),
+    }
+
+    def __init__(self, version: str, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setObjectName("UpdateCard")
+        self._version = version
+        self._state = "idle"
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(12, 9, 8, 10)
+        layout.setSpacing(8)
+        top = QHBoxLayout()
+        top.setSpacing(9)
+        self._icon = QLabel()
+        texts = QVBoxLayout()
+        texts.setSpacing(0)
+        self._title = QLabel()
+        self._title.setObjectName("UpdateTitle")
+        self._title.setWordWrap(True)
+        self._detail = QLabel()
+        self._detail.setObjectName("UpdateDetail")
+        texts.addWidget(self._title)
+        texts.addWidget(self._detail)
+        self._check = QPushButton()
+        self._check.setObjectName("UpdateCheck")
+        self._check.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._check.setToolTip("Check for updates now")
+        icons.set_icon(self._check, "refresh-cw", size=15)
+        self._check.clicked.connect(self.check_requested)
+        top.addWidget(self._icon, 0, Qt.AlignmentFlag.AlignTop)
+        top.addLayout(texts, 1)
+        top.addWidget(self._check, 0, Qt.AlignmentFlag.AlignTop)
+        layout.addLayout(top)
+        self.button = QPushButton()
+        self.button.setObjectName("AccentButton")
+        self.button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.button.setToolTip("Download and install the new version")
+        icons.set_icon(self.button, "download", icons.ACCENT, size=15)
+        layout.addWidget(self.button)
+        self.set_state("idle")
+
+    def state(self) -> str:
+        return self._state
+
+    def set_state(self, state: str, latest: str = "") -> None:
+        self._state = state
+        _icon_name, _color, title = self._LOOK[state]
+        available = state == "available"
+        self._title.setText(f"{latest} is out!" if available else title)
+        self._detail.setText(f"You have v{self._version}")
+        self.button.setText(f" Update to {latest}")
+        self.button.setVisible(available)
+        self._check.setVisible(not available)
+        self._check.setEnabled(state != "checking")
+        self.setProperty("state", state)
+        self.style().unpolish(self)
+        self.style().polish(self)
+        self.refresh_icon()
+
+    def refresh_icon(self) -> None:
+        icon_name, color, _title = self._LOOK[self._state]
+        self._icon.setPixmap(icons.pixmap(icon_name, color or icons.color(icons.NORMAL), 18))
+
+
 class CreditCard(QFrame):
     """'Made by DePhantom' with the channel logo; opens the YouTube channel."""
 
