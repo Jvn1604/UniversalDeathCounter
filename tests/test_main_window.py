@@ -79,3 +79,46 @@ def test_tray_notifications_use_valid_arguments(window) -> None:
     assert tray.messages[:2] == ["Auto-detect paused", "Auto-detect resumed"]
     window._tray = real_tray
     assert "9.9.9" in tray.messages[2]
+
+
+def test_auto_detect_window_shows_rows_for_the_chosen_method(window) -> None:
+    from src.ui.auto_detect_window import AutoDetectWindow
+    from src.utils.constants import DETECTION_MODE_HEALTH, DETECTION_MODE_LOG
+
+    game_id = window._database.create_game("Minecraft")
+    dialog = AutoDetectWindow(window._database, game_id, "Minecraft", parent=window)
+    dialog.show()
+    combo = dialog._mode_combo
+    combo.setCurrentIndex(combo.findData(DETECTION_MODE_LOG))
+    assert dialog._log_row.isVisible() and dialog._pattern_row.isVisible()
+    assert not dialog._health_row.isVisible() and not dialog._screens_row.isVisible()
+    combo.setCurrentIndex(combo.findData(DETECTION_MODE_HEALTH))
+    assert dialog._health_row.isVisible() and dialog._screens_row.isVisible()
+    assert not dialog._log_row.isVisible()
+    dialog.close()
+
+
+def test_log_mode_saves_and_starts_the_log_watcher(window, tmp_path) -> None:
+    from src.ui.auto_detect_window import AutoDetectWindow
+    from src.utils.constants import DETECTION_MODE_LOG
+
+    log = tmp_path / "latest.log"
+    log.write_text("", encoding="utf-8")
+    db = window._database
+    game_id = db.create_game("Minecraft")
+    window._reload_games(select_game_id=game_id)
+    dialog = AutoDetectWindow(db, game_id, "Minecraft", parent=window)
+    dialog._mode_combo.setCurrentIndex(dialog._mode_combo.findData(DETECTION_MODE_LOG))
+    dialog._log_edit.setText(str(log))
+    dialog._pattern_edit.setText("Steve died")
+    dialog._save()  # no .exe needed in log mode
+    assert db.get_game_detection(game_id)["mode"] == DETECTION_MODE_LOG
+    assert db.get_detection_options(game_id)["log_pattern"] == "Steve died"
+
+    window._configure_detection()
+    config = window._log_watcher._config
+    assert config is not None and config.game_id == game_id
+    assert window._death_watcher._config is None  # no screen capture in log mode
+    window._detection_paused = True
+    window._configure_detection()
+    assert window._log_watcher._config is None

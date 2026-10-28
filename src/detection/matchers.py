@@ -5,7 +5,7 @@ Everything here is pure numpy and framework-agnostic so it can be unit
 tested without a game, a screen, or Qt. Frames are ``(H, W, 3)`` uint8
 RGB arrays.
 
-Two strategies are provided:
+Three strategies are provided:
 
 * :class:`TemplateMatcher` — works for ANY game. The player calibrates
   once by selecting the death-screen text (e.g. "YOU DIED") on a
@@ -14,6 +14,9 @@ Two strategies are provided:
   insensitive to brightness/contrast changes such as fade-ins.
 * :class:`SoulsPresetMatcher` — zero-setup heuristic for FromSoftware
   games, whose death screens show red text in the middle of the screen.
+* :class:`HealthBarMatcher` — for games with no death screen. The player
+  marks their health bar once at full health; a death is the bar emptying
+  after health was already low.
 
 :class:`DeathDebouncer` turns a stream of per-frame matches into discrete
 death events so one death screen is never counted twice.
@@ -23,13 +26,17 @@ from __future__ import annotations
 
 import json
 import struct
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from typing import Protocol
 
 import numpy as np
 
-from src.utils.constants import DETECTION_MODE_SOULS, DETECTION_MODE_TEMPLATE
+from src.utils.constants import (
+    DETECTION_MODE_HEALTH,
+    DETECTION_MODE_SOULS,
+    DETECTION_MODE_TEMPLATE,
+)
 
 # Reference patches are normalized to this width (height keeps aspect).
 TEMPLATE_WIDTH: int = 96
@@ -235,6 +242,119 @@ class SoulsPresetMatcher:
         return matched, band
 
 
+# ----------------------------------------------------------------
+# Health bar — for games without a death screen
+# ----------------------------------------------------------------
+# Max per-channel difference for a pixel to count as the bar's color.
+_BAR_COLOR_TOLERANCE: int = 48
+# The bar must fill at least this share of the selected box at full health.
+_MIN_BAR_COVERAGE: float = 0.25
+
+
+def color_fraction(pixels: np.ndarray, color: tuple[int, int, int]) -> float:
+    """Share of ``pixels`` (``(H, W, 3)`` RGB) within tolerance of ``color``."""
+    if pixels.size == 0:
+        return 0.0
+    diff = np.abs(pixels[..., :3].astype(np.int16) - np.array(color, dtype=np.int16))
+    return float((diff.max(axis=-1) <= _BAR_COLOR_TOLERANCE).mean())
+
+
+@dataclass(slots=True)
+class HealthBar:
+    """A calibrated health bar: where it is, its fill color, and how full it looked."""
+
+    region: Region
+    color: tuple[int, int, int]
+    full_fraction: float  # share of the region in the bar color at full health
+
+    @classmethod
+    def from_frame(cls, frame: np.ndarray, region: Region) -> HealthBar:
+        """
+        Learn the bar from a screenshot taken at full health.
+
+        The fill color is the median of the region's most colorful, brightest
+        pixels, which picks the bar over its dark background or frame.
+
+        Raises:
+            ValueError: If the box doesn't contain a clear bar.
+        """
+        crop = crop_region(frame, region)[..., :3].astype(np.int16)
+        pixels = crop.reshape(-1, 3)
+        salience = (pixels.max(axis=1) - pixels.min(axis=1)) + pixels.max(axis=1) // 2
+        strong = pixels[salience >= np.percentile(salience, 60)]
+        color = (int(v) for v in np.median(strong, axis=0))
+        r, g, b = color
+        if max(r, g, b) < 60:
+            raise ValueError("The selected area is too dark. Box the health bar itself.")
+        full = color_fraction(crop, (r, g, b))
+        if full < _MIN_BAR_COVERAGE:
+            raise ValueError(
+                "Couldn't find a clear bar there. Box only the health bar, at full health."
+            )
+        return cls(region=region, color=(r, g, b), full_fraction=full)
+
+    def fill(self, frame: np.ndarray) -> float:
+        """How full the bar is in ``frame``, from 0.0 to 1.0."""
+        current = color_fraction(crop_region(frame, self.region), self.color)
+        return min(current / self.full_fraction, 1.0) if self.full_fraction > 0 else 0.0
+
+    def to_options(self) -> dict[str, object]:
+        """Serialize for the game's detection options."""
+        return {
+            "health_region": [round(v, 6) for v in self.region],
+            "health_color": list(self.color),
+            "health_full": round(self.full_fraction, 6),
+        }
+
+    @classmethod
+    def from_options(cls, options: Mapping[str, object]) -> HealthBar | None:
+        """Inverse of :meth:`to_options`; None if no bar is saved (or it's corrupt)."""
+        try:
+            x, y, w, h = (float(v) for v in options["health_region"])  # type: ignore[union-attr]
+            r, g, b = (int(v) for v in options["health_color"])  # type: ignore[union-attr]
+            full = float(options["health_full"])  # type: ignore[arg-type]
+        except (KeyError, TypeError, ValueError):
+            return None
+        return cls(region=(x, y, w, h), color=(r, g, b), full_fraction=full)
+
+
+class HealthBarMatcher:
+    """
+    Reports a death while the health bar is empty right after health was low.
+
+    Requiring low health just before keeps menus, maps and cutscenes, which
+    hide the HUD at any health, from counting. The trade-off: a one-hit kill
+    from high health is missed, so count those by hand. Unlike the other
+    matchers this one is stateful, so use one instance per watch session.
+    """
+
+    EMPTY_FILL: float = 0.03  # at or below this the bar counts as empty
+    LOW_FILL: float = 0.6  # health must have been at or below this before emptying
+    MEMORY_FRAMES: int = 25  # how long (frames) an empty bar stays a death candidate
+    # Empty for this many frames (1 s) makes a death, so a low-health bar
+    # that blinks doesn't count.
+    REQUIRED_FRAMES: int = 5
+
+    def __init__(self, bar: HealthBar) -> None:
+        self._bar = bar
+        self._last_visible_fill: float | None = None
+        self._frames_empty = 0
+
+    def match(self, frame: np.ndarray) -> tuple[bool, float]:
+        fill = self._bar.fill(frame)
+        if fill > self.EMPTY_FILL:
+            self._last_visible_fill = fill
+            self._frames_empty = 0
+            return False, fill
+        self._frames_empty += 1
+        matched = (
+            self._last_visible_fill is not None
+            and self._last_visible_fill <= self.LOW_FILL
+            and self._frames_empty <= self.MEMORY_FRAMES
+        )
+        return matched, fill
+
+
 class AnyMatcher:
     """Matches when any of several matchers does (e.g. multiple death screens)."""
 
@@ -251,17 +371,27 @@ class AnyMatcher:
         return False, best
 
 
-def build_matcher(mode: str, templates: Iterable[tuple[str, bytes]]) -> Matcher | None:
+def build_matcher(
+    mode: str,
+    templates: Iterable[tuple[str, bytes]],
+    options: Mapping[str, object] | None = None,
+) -> Matcher | None:
     """
-    Build the matcher for a game's detection mode and saved death screens.
+    Build the matcher for a game's detection mode, death screens and options.
 
-    ``templates`` are stored ``(region_json, patch_bytes)`` pairs. In Souls
-    mode they supplement the preset (covering anything it misses). Returns
-    None when detection is off or there is nothing to match yet.
+    ``templates`` are stored ``(region_json, patch_bytes)`` pairs. In Souls and
+    health-bar mode they supplement the main check (covering anything it
+    misses). Returns None when detection is off or there is nothing to match yet.
     """
-    if mode not in (DETECTION_MODE_TEMPLATE, DETECTION_MODE_SOULS):
+    if mode not in (DETECTION_MODE_TEMPLATE, DETECTION_MODE_SOULS, DETECTION_MODE_HEALTH):
         return None
-    matchers: list[Matcher] = [
+    matchers: list[Matcher] = []
+    if mode == DETECTION_MODE_HEALTH:
+        bar = HealthBar.from_options(options or {})
+        if bar is not None:
+            # First, so AnyMatcher feeds it every frame and its state stays current.
+            matchers.append(HealthBarMatcher(bar))
+    matchers += [
         TemplateMatcher(DeathTemplate.from_storage(region, bytes(patch)))
         for region, patch in templates
     ]

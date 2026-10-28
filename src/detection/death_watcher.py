@@ -60,12 +60,16 @@ class WatchConfig:
 
     ``matcher`` may be None for a game with no death screen saved yet; the
     window is then only captured into the recent-frames buffer, so the
-    player can pick their first death screen from it.
+    player can pick their first death screen from it, and ``setup_hint``
+    is shown as the status. ``required_frames`` is how many consecutive
+    matching frames make a death.
     """
 
     game_id: int
     exe_path: str
     matcher: Matcher | None
+    required_frames: int = 3
+    setup_hint: str = "after you die, click 📷 Death Screen to teach it"
 
 
 class DeathWatcher(QObject):
@@ -160,6 +164,8 @@ class DeathWatcher(QObject):
             if version != seen_version:
                 seen_version = version
                 debouncer.reset()
+                if config is not None:
+                    debouncer.required_frames = config.required_frames
                 hwnd, next_lookup, black_frames, next_recent = None, 0.0, 0, 0.0
 
             if config is None:
@@ -197,9 +203,7 @@ class DeathWatcher(QObject):
                     f"Capture of {exe_name} is black. Switch the game to borderless/windowed."
                 )
             elif config.matcher is None:
-                self._set_status(
-                    f"Watching {exe_name}: after you die, click 📷 Death Screen to teach it"
-                )
+                self._set_status(f"Watching {exe_name}: {config.setup_hint}")
             else:
                 self._set_status(f"Watching {exe_name} for deaths")
 
