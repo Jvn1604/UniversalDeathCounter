@@ -31,9 +31,12 @@ No Python or anything else needed. Windows 10 or 11.
 ## Screenshots
 
 <p align="center">
-  <img src="docs/screenshots/main-window.png" alt="Main window" width="420">
+  <img src="docs/screenshots/main-window.png" alt="Main window: the death counter dashboard" width="760">
+</p>
+<p align="center">
+  <img src="docs/screenshots/dashboard-stats.png" alt="Stats page" width="420">
   &nbsp;
-  <img src="docs/screenshots/overlay-dark.png" alt="Stream overlay" width="380">
+  <img src="docs/screenshots/overlay-dark.png" alt="Stream overlay" width="320">
 </p>
 
 | Auto death detection | Keyboard & controller bindings |
