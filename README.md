@@ -59,6 +59,13 @@ No Python or anything else needed. Windows 10 or 11.
 - **Xbox, PlayStation (DualShock 4 / DualSense) and most other controllers.** Bind a button combo such as *View/Share + D-pad Up*. One binding works on both kinds of pad.
 - **Keybind editor with live conflict detection.** It flags duplicates, keys that would block typing, keys another program already took, and overlapping combos.
 
+### ⏱ Speedrun timer
+- **Splits per game.** Set them up in **Manage → Speedrun Splits…**, or fill them from your boss list in one click.
+- **Compares against your PB:** a delta for every split, **gold** for best-ever segments, plus your PB, sum of best and attempt count.
+- **Counts deaths per run**, including auto-detected ones, so you also see how many deaths your PB run had.
+- **LiveSplit-style controls:** start/split, pause, undo, skip and reset, from hotkeys, a controller combo, or a right-click on the timer.
+- **Its own OBS-ready window** (**View → Speedrun Timer**), styled like the overlay. It only redraws while a run is going.
+
 ### 📺 Made for streaming
 - **OBS-ready overlay, styled your way:** a card in any color, your own picture as the background, or green-screen mode for OBS's Chroma Key. Choose the font, number and text colors, size, corner roundness, opacity, a shadow that keeps text readable, and which lines show.
 - **`deaths.txt`** for OBS Text sources, with your own template, e.g. `{game} - {boss}: {deaths}`.
@@ -103,6 +110,11 @@ You can always count by hand too: **+1 Death** (`F9`), **-1** (`F10`), **Undo** 
 | Calibrate death screen | `F8` | not set |
 | Pause / resume auto-detect | `Ctrl+F8` | not set |
 | Previous / next boss | `Ctrl+F9` / `Ctrl+F10` | not set |
+| Timer: start / split | `Num 1` | not set |
+| Timer: pause / reset | `Num 5` / `Num 3` | not set |
+| Timer: undo / skip split | `Num 8` / `Num 2` | not set |
+
+The timer keys use the number pad, as in LiveSplit, so **Num Lock must be on**. No number pad? Rebind them.
 
 To change any of them, go to **Settings → Preferences… → Controls**:
 - **Keyboard:** click a field and press a key.

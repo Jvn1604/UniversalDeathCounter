@@ -50,6 +50,16 @@ def test_import_keeps_transparency_and_downscales_huge_images(tmp_path) -> None:
     assert max(QImage(str(huge)).width(), QImage(str(huge)).height()) == MAX_IMAGE_SIDE
 
 
+def test_opaque_image_with_alpha_channel_is_stored_as_jpeg(tmp_path) -> None:
+    """Regression: opaque screenshots with an alpha channel were kept as huge PNGs."""
+    path = tmp_path / "screenshot.png"
+    image = QImage(400, 200, QImage.Format.Format_ARGB32)
+    image.fill(QColor(30, 60, 90, 255))  # alpha channel, but fully opaque
+    assert image.save(str(path))
+    copy = import_background(path, tmp_path / "backgrounds")
+    assert copy.suffix == ".jpg"
+
+
 def test_import_rejects_non_images(tmp_path) -> None:
     bogus = tmp_path / "notes.png"
     bogus.write_text("not an image", encoding="utf-8")

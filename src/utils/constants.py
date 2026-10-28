@@ -20,7 +20,7 @@ APP_BRAND: str = "DePhantom"  # big header text; APP_SUBTITLE goes underneath
 APP_SUBTITLE: str = "Universal Death Counter (DUDC)"
 # APP_ORG (below), the exe name and the data folder intentionally keep the
 # old internal name, so existing installs upgrade in place and keep data.
-APP_VERSION: str = "2.3.0"
+APP_VERSION: str = "2.4.0"
 APP_ORG: str = "UniversalDeathCounter"
 
 # GitHub repository ("owner/repo") used by the update checker. Edit this
@@ -93,6 +93,12 @@ DEFAULT_HOTKEY_CALIBRATE: str = "f8"
 DEFAULT_HOTKEY_PAUSE_DETECTION: str = "ctrl+f8"
 DEFAULT_HOTKEY_PREV_BOSS: str = "ctrl+f9"
 DEFAULT_HOTKEY_NEXT_BOSS: str = "ctrl+f10"
+# Speedrun timer: LiveSplit's numpad layout (needs Num Lock on).
+DEFAULT_HOTKEY_TIMER_SPLIT: str = "num+1"
+DEFAULT_HOTKEY_TIMER_PAUSE: str = "num+5"
+DEFAULT_HOTKEY_TIMER_RESET: str = "num+3"
+DEFAULT_HOTKEY_TIMER_UNDO: str = "num+8"
+DEFAULT_HOTKEY_TIMER_SKIP: str = "num+2"
 
 # --------------------------------------------------------------------------
 # Settings keys (used in the `settings` table)
@@ -144,6 +150,13 @@ SETTING_HOTKEY_CALIBRATE: str = "hotkey_calibrate"
 SETTING_HOTKEY_PAUSE_DETECTION: str = "hotkey_pause_detection"
 SETTING_HOTKEY_PREV_BOSS: str = "hotkey_prev_boss"
 SETTING_HOTKEY_NEXT_BOSS: str = "hotkey_next_boss"
+SETTING_HOTKEY_TIMER_SPLIT: str = "hotkey_timer_split"
+SETTING_HOTKEY_TIMER_PAUSE: str = "hotkey_timer_pause"
+SETTING_HOTKEY_TIMER_RESET: str = "hotkey_timer_reset"
+SETTING_HOTKEY_TIMER_UNDO: str = "hotkey_timer_undo"
+SETTING_HOTKEY_TIMER_SKIP: str = "hotkey_timer_skip"
+SETTING_TIMER_GEOMETRY: str = "timer_geometry"
+SETTING_TIMER_VISIBLE: str = "timer_visible"
 
 
 # Every bindable action: (action name, label, keyboard setting, default key).
@@ -168,6 +181,16 @@ CONTROL_ACTIONS: tuple[tuple[str, str, str, str], ...] = (
     ),
     ("prev_boss", "Previous Boss", SETTING_HOTKEY_PREV_BOSS, DEFAULT_HOTKEY_PREV_BOSS),
     ("next_boss", "Next Boss", SETTING_HOTKEY_NEXT_BOSS, DEFAULT_HOTKEY_NEXT_BOSS),
+    (
+        "timer_split",
+        "Timer: Start / Split",
+        SETTING_HOTKEY_TIMER_SPLIT,
+        DEFAULT_HOTKEY_TIMER_SPLIT,
+    ),
+    ("timer_pause", "Timer: Pause", SETTING_HOTKEY_TIMER_PAUSE, DEFAULT_HOTKEY_TIMER_PAUSE),
+    ("timer_reset", "Timer: Reset", SETTING_HOTKEY_TIMER_RESET, DEFAULT_HOTKEY_TIMER_RESET),
+    ("timer_undo", "Timer: Undo Split", SETTING_HOTKEY_TIMER_UNDO, DEFAULT_HOTKEY_TIMER_UNDO),
+    ("timer_skip", "Timer: Skip Split", SETTING_HOTKEY_TIMER_SKIP, DEFAULT_HOTKEY_TIMER_SKIP),
 )
 
 
