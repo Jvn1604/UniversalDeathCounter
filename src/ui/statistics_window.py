@@ -165,30 +165,51 @@ class StatisticsWindow(QDialog):
         return self._make_view(chart)
 
     def _build_timeline_tab(self) -> QChartView:
-        daily = self._database.get_deaths_per_day(self._game_id)
+        # One point per change (not per day): with all deaths on one day, a
+        # per-day series had a single point, and Qt draws no line for that.
+        events = self._database.get_total_timeline(self._game_id)
 
         series = QLineSeries()
         series.setColor(_ACCENT)
+        series.setPointsVisible(True)
         cumulative = 0
         max_value = 1
-        for row in daily:
-            cumulative += int(row["deaths"])
+        times: list[float] = []
+        for row in events:
+            moment = QDateTime.fromString(row["timestamp"], Qt.DateFormat.ISODate)
+            if not moment.isValid():
+                continue
+            msecs = float(moment.toMSecsSinceEpoch())
+            if not times:
+                series.append(msecs, 0.0)  # start the line at zero
+                times.append(msecs)
+            cumulative += int(row["delta"])
             max_value = max(max_value, cumulative)
-            moment = QDateTime.fromString(f"{row['day']}T00:00:00", Qt.DateFormat.ISODate)
-            series.append(float(moment.toMSecsSinceEpoch()), float(cumulative))
+            series.append(msecs, float(cumulative))
+            times.append(msecs)
 
         chart = QChart()
-        chart.setTitle("Cumulative Deaths over Time")
+        chart.setTitle(
+            "Total Deaths over Time" if times else "Total Deaths over Time (no deaths yet)"
+        )
         chart.addSeries(series)
 
         axis_x = QDateTimeAxis()
-        axis_x.setFormat("MMM d")
+        span_hours = (times[-1] - times[0]) / 3_600_000 if times else 0
+        axis_x.setFormat("HH:mm:ss" if span_hours < 1 else "HH:mm" if span_hours < 24 else "MMM d")
+        if times:
+            pad = max((times[-1] - times[0]) * 0.05, 60_000.0)  # at least a minute
+            axis_x.setRange(
+                QDateTime.fromMSecsSinceEpoch(int(times[0] - pad)),
+                QDateTime.fromMSecsSinceEpoch(int(times[-1] + pad)),
+            )
         axis_x.setLabelsColor(_TEXT_COLOR)
         chart.addAxis(axis_x, Qt.AlignmentFlag.AlignBottom)
         series.attachAxis(axis_x)
 
         axis_y = QValueAxis()
         axis_y.setRange(0, max_value * 1.1)
+        axis_y.applyNiceNumbers()  # whole-number ticks
         axis_y.setLabelFormat("%d")
         axis_y.setLabelsColor(_TEXT_COLOR)
         chart.addAxis(axis_y, Qt.AlignmentFlag.AlignLeft)

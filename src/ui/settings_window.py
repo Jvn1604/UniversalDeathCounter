@@ -57,6 +57,8 @@ from src.utils.constants import (
     SETTING_OVERLAY_SHOW_STATS,
     SETTING_OVERLAY_TEXT_COLOR,
     SETTING_THEME,
+    SETTING_UI_COUNTER_COLOR,
+    SETTING_UI_TEXT_COLOR,
     pad_setting,
 )
 from src.utils.logger import get_logger
@@ -65,6 +67,42 @@ logger = get_logger(__name__)
 
 _BG_MODES = ["dark", "chroma"]
 _COUNTER_SOURCES = ["session", "boss", "total"]
+
+
+class _ColorChoice(QWidget):
+    """A color swatch button plus "Default"; :meth:`color` is "" for the default."""
+
+    def __init__(self, title: str, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._title = title
+        self._color = ""
+        row = QHBoxLayout(self)
+        row.setContentsMargins(0, 0, 0, 0)
+        self._button = QPushButton()
+        self._button.setFixedWidth(90)
+        self._button.clicked.connect(self._pick)
+        reset = QPushButton("Default")
+        reset.clicked.connect(lambda: self.set_color(""))
+        row.addWidget(self._button)
+        row.addWidget(reset)
+        row.addStretch()
+        self.set_color("")
+
+    def color(self) -> str:
+        return self._color
+
+    def set_color(self, color: str) -> None:
+        self._color = color
+        self._button.setText(color or "Theme")
+        self._button.setStyleSheet(
+            f"background-color: {color}; color: #ffffff; font-weight: 600;" if color else ""
+        )
+
+    def _pick(self) -> None:
+        start = QColor(self._color or "#e8e8e8")
+        chosen = QColorDialog.getColor(start, self, self._title)
+        if chosen.isValid():
+            self.set_color(chosen.name())
 
 
 class SettingsWindow(QDialog):
@@ -115,6 +153,10 @@ class SettingsWindow(QDialog):
         self._theme_combo = QComboBox()
         self._theme_combo.addItems(AVAILABLE_THEMES)
         general_form.addRow("Theme", self._theme_combo)
+        self._ui_text_color = _ColorChoice("Text Color")
+        general_form.addRow("Text color", self._ui_text_color)
+        self._ui_counter_color = _ColorChoice("Death Number Color")
+        general_form.addRow("Death number color", self._ui_counter_color)
         self._minimize_tray_check = QCheckBox("Minimize to system tray on close")
         general_form.addRow(self._minimize_tray_check)
         self._start_with_windows_check = QCheckBox("Start with Windows")
@@ -138,6 +180,7 @@ class SettingsWindow(QDialog):
 
         self._counter_source_combo = QComboBox()
         self._counter_source_combo.addItems(_COUNTER_SOURCES)
+        self._counter_source_combo.setToolTip("Used by the main window and the overlay.")
         overlay_form.addRow("Big number shows", self._counter_source_combo)
 
         color_row = QHBoxLayout()
@@ -396,6 +439,8 @@ class SettingsWindow(QDialog):
         settings = self._database.get_all_settings()
 
         self._theme_combo.setCurrentText(settings.get(SETTING_THEME, "dark"))
+        self._ui_text_color.set_color(settings.get(SETTING_UI_TEXT_COLOR, ""))
+        self._ui_counter_color.set_color(settings.get(SETTING_UI_COUNTER_COLOR, ""))
         self._minimize_tray_check.setChecked(
             settings.get(SETTING_MINIMIZE_TO_TRAY, "false") == "true"
         )
@@ -444,6 +489,8 @@ class SettingsWindow(QDialog):
             return
         db = self._database
         db.set_setting(SETTING_THEME, self._theme_combo.currentText())
+        db.set_setting(SETTING_UI_TEXT_COLOR, self._ui_text_color.color())
+        db.set_setting(SETTING_UI_COUNTER_COLOR, self._ui_counter_color.color())
         db.set_setting(
             SETTING_MINIMIZE_TO_TRAY,
             "true" if self._minimize_tray_check.isChecked() else "false",

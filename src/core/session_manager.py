@@ -68,10 +68,13 @@ class SessionManager:
         return self._database.get_session_death_count(self._current_session_id)
 
     def reset_session(self) -> None:
-        """Clear all death events for the current session, keeping it open."""
-        if self._current_session_id is not None:
-            self._database.reset_session(self._current_session_id)
-            logger.info("Session reset: id=%s", self._current_session_id)
+        """
+        Start the session count over at zero by beginning a fresh session.
+
+        The old session's deaths stay in history and in the game's total.
+        """
+        if self._current_game_id is not None:
+            self.start_new_session(self._current_game_id)
 
     def ensure_session(self, game_id: int) -> int:
         """

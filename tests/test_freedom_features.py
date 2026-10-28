@@ -67,7 +67,7 @@ def test_set_total_death_count(db: Database) -> None:
     db.add_death_event(game_id, None, session_id, +1)
     db.add_death_event(game_id, None, session_id, +1)
 
-    db.set_total_death_count(game_id, None, 100)
+    db.set_total_death_count(game_id, 100)
     assert db.get_total_deaths(game_id) == 100
 
 
