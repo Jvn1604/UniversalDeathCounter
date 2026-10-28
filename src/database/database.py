@@ -119,16 +119,26 @@ class Database:
                 value TEXT NOT NULL
             )
             """,
-            # Per-game auto-detection config. Kept out of `games` because the
-            # exe path is machine-specific and the template is a BLOB, so
-            # neither belongs in JSON backups.
+            # Per-game auto-detection config and its calibrated death screens.
+            # Kept out of `games` because the exe path is machine-specific and
+            # templates are BLOBs, so neither belongs in JSON backups.
             """
             CREATE TABLE IF NOT EXISTS game_detection (
                 game_id INTEGER PRIMARY KEY,
                 exe_path TEXT,
                 mode TEXT NOT NULL DEFAULT 'off',
-                region TEXT,
-                template BLOB,
+                FOREIGN KEY (game_id) REFERENCES games (id) ON DELETE CASCADE
+            )
+            """,
+            # A game can have several death screens (variants, or extra
+            # captures added after a missed death); any one matching counts.
+            """
+            CREATE TABLE IF NOT EXISTS death_templates (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                game_id INTEGER NOT NULL,
+                region TEXT NOT NULL,
+                template BLOB NOT NULL,
+                created_at TEXT NOT NULL,
                 FOREIGN KEY (game_id) REFERENCES games (id) ON DELETE CASCADE
             )
             """,
@@ -282,18 +292,41 @@ class Database:
             )
         logger.info("Set detection for game_id=%s: mode=%s exe=%s", game_id, mode, exe_path)
 
-    def set_game_death_template(self, game_id: int, region: str, template: bytes) -> None:
-        """Store a calibrated death-screen template for a game."""
+    def get_all_game_detections(self) -> list[sqlite3.Row]:
+        """Return every game's detection config that has an executable set."""
+        with self._cursor() as cursor:
+            cursor.execute(
+                "SELECT * FROM game_detection WHERE exe_path IS NOT NULL AND mode != 'off'"
+            )
+            return cursor.fetchall()
+
+    def add_death_template(self, game_id: int, region: str, template: bytes) -> int:
+        """Store one more calibrated death screen for a game; returns its id."""
         with self._cursor() as cursor:
             cursor.execute(
                 """
-                INSERT INTO game_detection (game_id, region, template) VALUES (?, ?, ?)
-                ON CONFLICT (game_id) DO UPDATE
-                SET region = excluded.region, template = excluded.template
+                INSERT INTO death_templates (game_id, region, template, created_at)
+                VALUES (?, ?, ?, ?)
                 """,
-                (game_id, region, sqlite3.Binary(template)),
+                (game_id, region, sqlite3.Binary(template), _utc_now_iso()),
             )
-        logger.info("Stored death-screen template for game_id=%s", game_id)
+            template_id = cursor.lastrowid
+        logger.info("Stored death-screen template id=%s for game_id=%s", template_id, game_id)
+        return int(template_id)
+
+    def get_death_templates(self, game_id: int) -> list[sqlite3.Row]:
+        """Return a game's calibrated death screens, oldest first."""
+        with self._cursor() as cursor:
+            cursor.execute(
+                "SELECT * FROM death_templates WHERE game_id = ? ORDER BY id", (game_id,)
+            )
+            return cursor.fetchall()
+
+    def clear_death_templates(self, game_id: int) -> None:
+        """Delete all of a game's calibrated death screens."""
+        with self._cursor() as cursor:
+            cursor.execute("DELETE FROM death_templates WHERE game_id = ?", (game_id,))
+        logger.info("Cleared death-screen templates for game_id=%s", game_id)
 
     # ----------------------------------------------------------------
     # Bosses
