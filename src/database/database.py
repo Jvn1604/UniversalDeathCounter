@@ -21,6 +21,7 @@ aggregating this event log. This gives us:
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -127,6 +128,7 @@ class Database:
                 game_id INTEGER PRIMARY KEY,
                 exe_path TEXT,
                 mode TEXT NOT NULL DEFAULT 'off',
+                options TEXT NOT NULL DEFAULT '{}',
                 FOREIGN KEY (game_id) REFERENCES games (id) ON DELETE CASCADE
             )
             """,
@@ -171,6 +173,14 @@ class Database:
             if "note" not in event_columns:
                 cursor.execute("ALTER TABLE death_events ADD COLUMN note TEXT")
                 logger.info("Migrated schema: added note column to death_events")
+
+            cursor.execute("PRAGMA table_info(game_detection)")
+            detection_columns = {row["name"] for row in cursor.fetchall()}
+            if "options" not in detection_columns:
+                cursor.execute(
+                    "ALTER TABLE game_detection ADD COLUMN options TEXT NOT NULL DEFAULT '{}'"
+                )
+                logger.info("Migrated schema: added options column to game_detection")
 
     def _seed_default_settings(self) -> None:
         """Insert default settings for any keys not already present."""
@@ -291,6 +301,33 @@ class Database:
                 (game_id, exe_path, mode),
             )
         logger.info("Set detection for game_id=%s: mode=%s exe=%s", game_id, mode, exe_path)
+
+    def get_detection_options(self, game_id: int) -> dict[str, Any]:
+        """Return a game's mode-specific detection options (health bar, log file…)."""
+        row = self.get_game_detection(game_id)
+        try:
+            options = json.loads(row["options"]) if row is not None else {}
+        except (TypeError, ValueError):
+            logger.warning("Ignoring corrupt detection options for game_id=%s", game_id)
+            return {}
+        return options if isinstance(options, dict) else {}
+
+    def update_detection_options(self, game_id: int, **changes: Any) -> None:
+        """Merge ``changes`` into a game's detection options (None removes a key)."""
+        options = self.get_detection_options(game_id)
+        for key, value in changes.items():
+            if value is None:
+                options.pop(key, None)
+            else:
+                options[key] = value
+        with self._cursor() as cursor:
+            cursor.execute(
+                """
+                INSERT INTO game_detection (game_id, options) VALUES (?, ?)
+                ON CONFLICT (game_id) DO UPDATE SET options = excluded.options
+                """,
+                (game_id, json.dumps(options)),
+            )
 
     def get_all_game_detections(self) -> list[sqlite3.Row]:
         """Return every game's detection config that has an executable set."""
