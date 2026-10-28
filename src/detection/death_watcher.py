@@ -92,7 +92,7 @@ class WatchConfig:
     # Boss kills: saved victory screens, watched while a boss is selected.
     victory_matcher: Matcher | None = None
     required_frames: int = 3
-    setup_hint: str = "after you die, click 📷 Capture Screen to teach it"
+    setup_hint: str = "after you die, click Capture Screen (Detection page) to teach it"
 
 
 class DeathWatcher(QObject):

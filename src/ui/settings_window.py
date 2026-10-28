@@ -2,18 +2,18 @@
 Settings dialog: theme, overlay appearance & behavior, streaming output,
 hotkeys, tray, and updates.
 
-All changes are persisted immediately to the `settings` table via
-:class:`~src.database.database.Database`, consistent with the app's
-"no manual save button" philosophy (the Save button here commits the
-whole form at once).
+Nothing is saved until Apply or Save. Looks (theme, colors, fonts,
+backgrounds, the overlay) preview live while you change them: the dialog
+sends ``preview_changed`` and the main window shows the unsaved values, then
+goes back to the saved look if the dialog is cancelled.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QColor, QFontDatabase, QKeySequence
+from PySide6.QtCore import Qt, QTimer, Signal
+from PySide6.QtGui import QColor, QFont, QFontDatabase, QKeySequence
 from PySide6.QtWidgets import (
     QCheckBox,
     QColorDialog,
@@ -38,14 +38,17 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from src.core.counter_manager import CounterSnapshot
 from src.database.database import Database
 from src.hotkeys.conflicts import ERROR, WARNING, Conflict, find_conflicts, has_errors
 from src.hotkeys.gamepad import GamepadManager, combo_label
 from src.hotkeys.hotkey_manager import HotkeyManager
+from src.overlay.overlay_window import OverlayWindow
+from src.ui import icons
+from src.ui.theme_picker import ThemeGallery
 from src.utils import startup
 from src.utils.backgrounds import IMAGE_FILTER, import_background
 from src.utils.constants import (
-    AVAILABLE_THEMES,
     CONTROL_ACTIONS,
     SETTING_BOSS_AUTO_ADVANCE,
     SETTING_BOSS_AUTO_SPLIT,
@@ -95,7 +98,11 @@ _BG_MODES: tuple[tuple[str, str], ...] = (
     ("chroma", "Green screen (for OBS Chroma Key)"),
     ("image", "Image"),
 )
-_COUNTER_SOURCES = ["session", "boss", "total"]
+_COUNTER_SOURCE_LABELS: tuple[tuple[str, str], ...] = (
+    ("session", "Deaths this session"),
+    ("boss", "Deaths on this boss"),
+    ("total", "All-time deaths"),
+)
 
 
 def _readable_on(background: str) -> str:
@@ -105,6 +112,8 @@ def _readable_on(background: str) -> str:
 
 class _ColorChoice(QWidget):
     """A color swatch button plus "Default"; :meth:`color` is "" for the default."""
+
+    changed = Signal()
 
     def __init__(
         self, title: str, default_label: str = "Theme", parent: QWidget | None = None
@@ -130,7 +139,9 @@ class _ColorChoice(QWidget):
         return self._color
 
     def set_color(self, color: str) -> None:
-        self._color = color
+        if color != self._color:
+            self._color = color
+            self.changed.emit()
         self._button.setText(color or self._default_label)
         self._button.setStyleSheet(
             f"background-color: {color}; color: {_readable_on(color)}; font-weight: 600;"
@@ -150,9 +161,12 @@ def _font_combo(default_label: str) -> QComboBox:
     combo = QComboBox()
     combo.addItem(default_label, userData="")
     for family in QFontDatabase.families():
-        if not family.startswith("@"):  # vertical-text variants of CJK fonts
-            combo.addItem(family, userData=family)
-    combo.setMaxVisibleItems(20)
+        if family.startswith("@"):  # vertical-text variants of CJK fonts
+            continue
+        combo.addItem(family, userData=family)
+        if not QFontDatabase.isPrivateFamily(family):
+            combo.setItemData(combo.count() - 1, QFont(family, 11), Qt.ItemDataRole.FontRole)
+    combo.setMaxVisibleItems(16)
     return combo
 
 
@@ -197,6 +211,8 @@ _TIMER_PAUSE_OPTIONS: tuple[tuple[str, str], ...] = (
 class _ImageChoice(QWidget):
     """Shows the chosen background image's name, with Choose… and Remove."""
 
+    changed = Signal()
+
     def __init__(self, title: str, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._title = title
@@ -217,7 +233,9 @@ class _ImageChoice(QWidget):
         return self._path
 
     def set_path(self, path: str) -> None:
-        self._path = path
+        if path != self._path:
+            self._path = path
+            self.changed.emit()
         self._label.setText(Path(path).name if path else "None")
         self._label.setToolTip(path)
         self._remove.setEnabled(bool(path))
@@ -239,9 +257,12 @@ class SettingsWindow(QDialog):
     Signals:
         settings_changed: Emitted whenever settings are saved, so the
             main window can refresh theme/overlay/hotkeys/stream output live.
+        preview_changed: Unsaved look settings to show now ({} = the saved look).
     """
 
     settings_changed = Signal()
+    preview_changed = Signal(dict)
+    TAB_GENERAL, TAB_APPEARANCE, TAB_OVERLAY, TAB_SPEEDRUN, TAB_CONTROLS = range(5)
 
     def __init__(
         self,
@@ -249,6 +270,7 @@ class SettingsWindow(QDialog):
         gamepad: GamepadManager | None = None,
         hotkeys: HotkeyManager | None = None,
         parent=None,
+        tab: int = 0,
     ) -> None:
         super().__init__(parent)
         self._database = database
@@ -257,24 +279,37 @@ class SettingsWindow(QDialog):
         self._availability: dict[str, bool] = {}
         self._recording_action: str | None = None
         self._text_color = "#ff4d4d"
+        self.previewed = False  # True once the main window showed unsaved looks
+        self._preview_timer = QTimer(self)
+        self._preview_timer.setSingleShot(True)
+        self._preview_timer.setInterval(120)  # one restyle per burst of changes
+        self._preview_timer.timeout.connect(self._send_preview)
         self.setWindowTitle("Settings")
-        self.setMinimumWidth(460)
+        self.setMinimumSize(720, 620)  # all five tabs fit side by side
         self._build_ui()
         self._load_current_values()
+        self._connect_preview()
+        self._tabs.setCurrentIndex(tab)
 
     # ----------------------------------------------------------------
     # UI construction
     # ----------------------------------------------------------------
     def _build_ui(self) -> None:
         outer = QVBoxLayout(self)
-        tabs = QTabWidget()
+        outer.setContentsMargins(16, 16, 16, 14)
+        tabs = self._tabs = QTabWidget()
+        tabs.setDocumentMode(True)
         outer.addWidget(tabs)
         general_page = QWidget()
         layout = QVBoxLayout(general_page)
-        tabs.addTab(general_page, "General")
-        tabs.addTab(self._build_appearance_page(), "Appearance")
-        tabs.addTab(self._build_speedrun_page(), "Speedrun")
-        tabs.addTab(self._build_controls_page(), "Controls")
+        for page, title, icon_name in (
+            (general_page, "General", "settings"),
+            (self._build_appearance_page(), "Appearance", "palette"),
+            (self._build_overlay_page(), "Overlay", "layers"),
+            (self._build_speedrun_page(), "Speedrun", "timer"),
+            (self._build_controls_page(), "Controls", "gamepad-2"),
+        ):
+            tabs.addTab(page, icons.icon(icon_name, icons.color(icons.NORMAL), size=16), title)
 
         # --- General ---
         general_group = QGroupBox("General")
@@ -300,7 +335,7 @@ class SettingsWindow(QDialog):
             boss_layout.addWidget(check)
             self._boss_checks[key] = check
         boss_note = QLabel(
-            "Teach a game its victory banner with 📷 Capture Screen after a boss "
+            "Teach a game its victory banner with Capture Screen (Detection page) after a boss "
             "fight. The Boss Defeated key (Controls) does the same by hand."
         )
         boss_note.setWordWrap(True)
@@ -335,32 +370,56 @@ class SettingsWindow(QDialog):
         layout.addStretch()
 
         buttons = QHBoxLayout()
+        hint = QLabel("Looks change live as you edit; nothing is kept until you save.")
+        hint.setObjectName("Muted")
+        cancel_button = QPushButton("Cancel")
+        cancel_button.setObjectName("GhostButton")
+        cancel_button.clicked.connect(self.reject)
         apply_button = QPushButton("Apply")
-        apply_button.setToolTip("Save and see the changes without closing Settings.")
+        apply_button.setToolTip("Save without closing Settings.")
         apply_button.clicked.connect(self._apply)
-        save_button = QPushButton("Save")
+        save_button = QPushButton(" Save")
         save_button.setObjectName("AccentButton")
+        icons.set_icon(save_button, "check", icons.ACCENT, size=16)
+        save_button.setMinimumWidth(120)
         save_button.clicked.connect(self._save)
+        buttons.addWidget(hint, 1)
+        buttons.addWidget(cancel_button)
         buttons.addWidget(apply_button)
-        buttons.addWidget(save_button, 1)
+        buttons.addWidget(save_button)
         outer.addLayout(buttons)
 
     def _build_appearance_page(self) -> QWidget:
-        """Main-window and overlay looks: colors, fonts, background images."""
+        """Main window look: theme, colors, font, background image."""
         page = QWidget()
         layout = QVBoxLayout(page)
 
-        window_group = QGroupBox("Main window")
+        theme_group = QGroupBox("Theme")
+        theme_layout = QVBoxLayout(theme_group)
+        self._gallery = ThemeGallery()
+        theme_layout.addWidget(self._gallery)
+        theme_note = QLabel(
+            "Glass and Clay are downloaded when you pick them (a few KB) and can be "
+            "uninstalled again. Click a theme to try it."
+        )
+        theme_note.setObjectName("Muted")
+        theme_note.setWordWrap(True)
+        theme_layout.addWidget(theme_note)
+        layout.addWidget(theme_group)
+
+        window_group = QGroupBox("Text and background")
         window_form = QFormLayout(window_group)
-        self._theme_combo = QComboBox()
-        self._theme_combo.addItems(AVAILABLE_THEMES)
-        window_form.addRow("Theme", self._theme_combo)
         self._ui_font_combo = _font_combo("Theme font (Segoe UI)")
         window_form.addRow("Font", self._ui_font_combo)
         self._ui_text_color = _ColorChoice("Text Color")
         window_form.addRow("Text color", self._ui_text_color)
         self._ui_counter_color = _ColorChoice("Death Number Color")
         window_form.addRow("Death number color", self._ui_counter_color)
+        self._counter_source_combo = QComboBox()
+        for value, label in _COUNTER_SOURCE_LABELS:
+            self._counter_source_combo.addItem(label, userData=value)
+        self._counter_source_combo.setToolTip("Used by this window, the overlay and mini mode.")
+        window_form.addRow("Big number shows", self._counter_source_combo)
         self._ui_bg_image = _ImageChoice("Main Window Background")
         window_form.addRow("Background image", self._ui_bg_image)
         dim_row = QWidget()
@@ -378,8 +437,36 @@ class SettingsWindow(QDialog):
         dim_layout.addWidget(dim_value)
         window_form.addRow("Image dimming", dim_row)
         layout.addWidget(window_group)
+        layout.addStretch()
+        return self._scrolling(page)
 
-        overlay_group = QGroupBox("Overlay")
+    def _build_overlay_page(self) -> QWidget:
+        """The overlay (and timer / mini windows): background, text, what's shown."""
+        page = QWidget()
+        layout = QVBoxLayout(page)
+
+        preview_group = QGroupBox("Preview")
+        preview_layout = QHBoxLayout(preview_group)
+        self._overlay_preview = OverlayWindow(parent=preview_group)
+        self._overlay_preview.setWindowFlags(Qt.WindowType.Widget)  # inside the dialog
+        self._overlay_preview.set_locked(True)
+        self._overlay_preview._size_grip.hide()
+        self._overlay_preview.setFixedSize(280, 150)
+        self._overlay_preview.update_counters(
+            CounterSnapshot("Elden Ring", "Margit, the Fell Omen", 12, 348, 27)
+        )
+        preview_tip = QLabel(
+            "The real overlay changes too while you edit.\n\n"
+            "Tip: right-click the overlay for quick options; double-click it to come here."
+        )
+        preview_tip.setObjectName("Muted")
+        preview_tip.setWordWrap(True)
+        preview_layout.addWidget(self._overlay_preview)
+        preview_layout.addSpacing(10)
+        preview_layout.addWidget(preview_tip, 1)
+        layout.addWidget(preview_group)
+
+        overlay_group = QGroupBox("Background")
         overlay_form = QFormLayout(overlay_group)
         self._bg_mode_combo = QComboBox()
         for mode, label in _BG_MODES:
@@ -398,44 +485,129 @@ class SettingsWindow(QDialog):
         self._radius_spin.setRange(0, 40)
         self._radius_spin.setSuffix(" px")
         overlay_form.addRow("Corner roundness", self._radius_spin)
+        layout.addWidget(overlay_group)
 
-        self._counter_source_combo = QComboBox()
-        self._counter_source_combo.addItems(_COUNTER_SOURCES)
-        self._counter_source_combo.setToolTip("Used by the main window and the overlay.")
-        overlay_form.addRow("Big number shows", self._counter_source_combo)
+        text_group = QGroupBox("Text")
+        text_form = QFormLayout(text_group)
         self._overlay_font_combo = _font_combo("Default font")
-        overlay_form.addRow("Font", self._overlay_font_combo)
+        text_form.addRow("Font", self._overlay_font_combo)
         self._font_size_spin = QSpinBox()
         self._font_size_spin.setRange(10, 96)
-        overlay_form.addRow("Number size", self._font_size_spin)
+        text_form.addRow("Number size", self._font_size_spin)
         color_row = QHBoxLayout()
         self._color_button = QPushButton()
-        self._color_button.setFixedWidth(80)
+        self._color_button.setFixedWidth(90)
         self._color_button.clicked.connect(self._pick_color)
         color_row.addWidget(self._color_button)
         color_row.addStretch()
-        overlay_form.addRow("Number color", color_row)
+        text_form.addRow("Number color", color_row)
         self._secondary_color = _ColorChoice("Overlay Text Color", default_label="Auto")
-        overlay_form.addRow("Other text color", self._secondary_color)
+        text_form.addRow("Other text color", self._secondary_color)
         self._outline_check = QCheckBox("Shadow behind text (readable over images)")
-        overlay_form.addRow(self._outline_check)
+        text_form.addRow(self._outline_check)
+        layout.addWidget(text_group)
 
-        self._show_game_check = QCheckBox("Show game name")
-        overlay_form.addRow(self._show_game_check)
-        self._show_boss_check = QCheckBox("Show boss name")
-        overlay_form.addRow(self._show_boss_check)
-        self._show_stats_check = QCheckBox("Show Session • All-time line")
-        overlay_form.addRow(self._show_stats_check)
-        self._always_on_top_check = QCheckBox("Always on top")
-        overlay_form.addRow(self._always_on_top_check)
-        layout.addWidget(overlay_group)
+        show_group = QGroupBox("Show")
+        show_layout = QVBoxLayout(show_group)
+        self._show_game_check = QCheckBox("Game name")
+        self._show_boss_check = QCheckBox("Boss name")
+        self._show_stats_check = QCheckBox("Session • All-time line")
+        self._always_on_top_check = QCheckBox("Always on top of other windows")
+        for check in (
+            self._show_game_check,
+            self._show_boss_check,
+            self._show_stats_check,
+            self._always_on_top_check,
+        ):
+            show_layout.addWidget(check)
+        layout.addWidget(show_group)
         layout.addStretch()
+        return self._scrolling(page)
 
+    @staticmethod
+    def _scrolling(page: QWidget) -> QScrollArea:
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QScrollArea.Shape.NoFrame)
         scroll.setWidget(page)
         return scroll
+
+    # ----------------------------------------------------------------
+    # Live preview
+    # ----------------------------------------------------------------
+    def _connect_preview(self) -> None:
+        """Every look control previews on change (connected after loading the values)."""
+        self._gallery.theme_changed.connect(self._schedule_preview)
+        for combo in (
+            self._ui_font_combo,
+            self._counter_source_combo,
+            self._bg_mode_combo,
+            self._overlay_font_combo,
+        ):
+            combo.currentIndexChanged.connect(self._schedule_preview)
+        for choice in (
+            self._ui_text_color,
+            self._ui_counter_color,
+            self._card_color,
+            self._secondary_color,
+            self._ui_bg_image,
+            self._overlay_image,
+        ):
+            choice.changed.connect(self._schedule_preview)
+        self._ui_bg_dim.valueChanged.connect(self._schedule_preview)
+        self._opacity_spin.valueChanged.connect(self._schedule_preview)
+        self._radius_spin.valueChanged.connect(self._schedule_preview)
+        self._font_size_spin.valueChanged.connect(self._schedule_preview)
+        for check in (
+            self._outline_check,
+            self._show_game_check,
+            self._show_boss_check,
+            self._show_stats_check,
+        ):
+            check.toggled.connect(self._schedule_preview)
+        self._update_overlay_preview()
+
+    def _schedule_preview(self, *_args) -> None:
+        self._update_overlay_preview()
+        self._preview_timer.start()
+
+    def _send_preview(self) -> None:
+        self.previewed = True
+        self.preview_changed.emit(self._look_values())
+
+    def _update_overlay_preview(self) -> None:
+        settings = self._database.get_all_settings()
+        settings.update(self._look_values())
+        self._overlay_preview.apply_display_settings(settings)
+
+    def _look_values(self) -> dict[str, str]:
+        """The look settings as the form has them now (strings, like the settings table)."""
+
+        def flag(check: QCheckBox) -> str:
+            return "true" if check.isChecked() else "false"
+
+        return {
+            SETTING_THEME: self._gallery.theme(),
+            SETTING_UI_TEXT_COLOR: self._ui_text_color.color(),
+            SETTING_UI_COUNTER_COLOR: self._ui_counter_color.color(),
+            SETTING_UI_FONT: self._ui_font_combo.currentData() or "",
+            SETTING_UI_BG_IMAGE: self._ui_bg_image.path(),
+            SETTING_UI_BG_DIM: str(self._ui_bg_dim.value()),
+            SETTING_OVERLAY_CARD_COLOR: self._card_color.color(),
+            SETTING_OVERLAY_BG_IMAGE: self._overlay_image.path(),
+            SETTING_OVERLAY_CORNER_RADIUS: str(self._radius_spin.value()),
+            SETTING_OVERLAY_FONT: self._overlay_font_combo.currentData() or "",
+            SETTING_OVERLAY_SECONDARY_COLOR: self._secondary_color.color(),
+            SETTING_OVERLAY_TEXT_OUTLINE: flag(self._outline_check),
+            SETTING_OVERLAY_BG_MODE: self._bg_mode_combo.currentData(),
+            SETTING_OVERLAY_COUNTER_SOURCE: self._counter_source_combo.currentData(),
+            SETTING_OVERLAY_TEXT_COLOR: self._text_color,
+            SETTING_OVERLAY_FONT_SIZE: str(self._font_size_spin.value()),
+            SETTING_OVERLAY_OPACITY: str(self._opacity_spin.value()),
+            SETTING_OVERLAY_SHOW_GAME: flag(self._show_game_check),
+            SETTING_OVERLAY_SHOW_BOSS: flag(self._show_boss_check),
+            SETTING_OVERLAY_SHOW_STATS: flag(self._show_stats_check),
+        }
 
     def _build_speedrun_page(self) -> QWidget:
         """Speedrun timer: timing method, comparison, precision and auto-pause."""
@@ -468,7 +640,7 @@ class SettingsWindow(QDialog):
         note = QLabel(
             "Only the first one stops the whole timer. The others stop game time only; "
             "real time keeps running, as speedrun rules expect. Mark pause, loading and "
-            "cutscene screens in Manage → Auto Death Detection. Needs the game's .exe set."
+            "cutscene screens on the Detection page. Needs the game's .exe set."
         )
         note.setWordWrap(True)
         note.setStyleSheet("color: #999999; font-size: 11px;")
@@ -508,7 +680,8 @@ class SettingsWindow(QDialog):
             key_edit.keySequenceChanged.connect(self._refresh_conflicts)
             self._key_edits[action] = key_edit
             grid.addWidget(key_edit, row, 1)
-            clear_key = QPushButton("✕")
+            clear_key = QPushButton()
+            icons.set_icon(clear_key, "x", size=14)
             clear_key.setToolTip("Clear keyboard binding")
             clear_key.setFixedWidth(36)
             clear_key.setStyleSheet("padding: 0;")
@@ -524,7 +697,8 @@ class SettingsWindow(QDialog):
             record.clicked.connect(lambda _=False, a=action: self._start_recording(a))
             self._record_buttons[action] = record
             grid.addWidget(record, row, 4)
-            clear_pad = QPushButton("✕")
+            clear_pad = QPushButton()
+            icons.set_icon(clear_pad, "x", size=14)
             clear_pad.setToolTip("Clear controller binding")
             clear_pad.setFixedWidth(36)
             clear_pad.setStyleSheet("padding: 0;")
@@ -660,6 +834,7 @@ class SettingsWindow(QDialog):
         if color.isValid():
             self._text_color = color.name()
             self._update_color_button()
+            self._schedule_preview()
 
     def _browse_deaths_txt(self) -> None:
         path, _ = QFileDialog.getSaveFileName(
@@ -674,7 +849,7 @@ class SettingsWindow(QDialog):
     def _load_current_values(self) -> None:
         settings = self._database.get_all_settings()
 
-        self._theme_combo.setCurrentText(settings.get(SETTING_THEME, "dark"))
+        self._gallery.set_theme(settings.get(SETTING_THEME, "dark"))
         self._ui_text_color.set_color(settings.get(SETTING_UI_TEXT_COLOR, ""))
         self._ui_counter_color.set_color(settings.get(SETTING_UI_COUNTER_COLOR, ""))
         _select_data(self._ui_font_combo, settings.get(SETTING_UI_FONT, ""))
@@ -699,8 +874,8 @@ class SettingsWindow(QDialog):
             check.setChecked(settings.get(key, "true") == "true")
 
         _select_data(self._bg_mode_combo, settings.get(SETTING_OVERLAY_BG_MODE, "dark"))
-        self._counter_source_combo.setCurrentText(
-            settings.get(SETTING_OVERLAY_COUNTER_SOURCE, "session")
+        _select_data(
+            self._counter_source_combo, settings.get(SETTING_OVERLAY_COUNTER_SOURCE, "session")
         )
         self._text_color = settings.get(SETTING_OVERLAY_TEXT_COLOR, "#ff4d4d") or "#ff4d4d"
         self._update_color_button()
@@ -751,20 +926,8 @@ class SettingsWindow(QDialog):
             )
             return False
         db = self._database
-        db.set_setting(SETTING_THEME, self._theme_combo.currentText())
-        db.set_setting(SETTING_UI_TEXT_COLOR, self._ui_text_color.color())
-        db.set_setting(SETTING_UI_COUNTER_COLOR, self._ui_counter_color.color())
-        db.set_setting(SETTING_UI_FONT, self._ui_font_combo.currentData())
-        db.set_setting(SETTING_UI_BG_IMAGE, self._ui_bg_image.path())
-        db.set_setting(SETTING_UI_BG_DIM, self._ui_bg_dim.value())
-        db.set_setting(SETTING_OVERLAY_CARD_COLOR, self._card_color.color())
-        db.set_setting(SETTING_OVERLAY_BG_IMAGE, self._overlay_image.path())
-        db.set_setting(SETTING_OVERLAY_CORNER_RADIUS, self._radius_spin.value())
-        db.set_setting(SETTING_OVERLAY_FONT, self._overlay_font_combo.currentData())
-        db.set_setting(SETTING_OVERLAY_SECONDARY_COLOR, self._secondary_color.color())
-        db.set_setting(
-            SETTING_OVERLAY_TEXT_OUTLINE, "true" if self._outline_check.isChecked() else "false"
-        )
+        for key, value in self._look_values().items():
+            db.set_setting(key, value)
         db.set_setting(
             SETTING_MINIMIZE_TO_TRAY,
             "true" if self._minimize_tray_check.isChecked() else "false",
@@ -781,23 +944,6 @@ class SettingsWindow(QDialog):
         for key, check in self._boss_checks.items():
             db.set_setting(key, "true" if check.isChecked() else "false")
 
-        db.set_setting(SETTING_OVERLAY_BG_MODE, self._bg_mode_combo.currentData())
-        db.set_setting(SETTING_OVERLAY_COUNTER_SOURCE, self._counter_source_combo.currentText())
-        db.set_setting(SETTING_OVERLAY_TEXT_COLOR, self._text_color)
-        db.set_setting(SETTING_OVERLAY_FONT_SIZE, self._font_size_spin.value())
-        db.set_setting(SETTING_OVERLAY_OPACITY, self._opacity_spin.value())
-        db.set_setting(
-            SETTING_OVERLAY_SHOW_GAME,
-            "true" if self._show_game_check.isChecked() else "false",
-        )
-        db.set_setting(
-            SETTING_OVERLAY_SHOW_BOSS,
-            "true" if self._show_boss_check.isChecked() else "false",
-        )
-        db.set_setting(
-            SETTING_OVERLAY_SHOW_STATS,
-            "true" if self._show_stats_check.isChecked() else "false",
-        )
         db.set_setting(
             SETTING_OVERLAY_ALWAYS_ON_TOP,
             "true" if self._always_on_top_check.isChecked() else "false",
@@ -824,4 +970,9 @@ class SettingsWindow(QDialog):
 
         logger.info("Settings saved")
         self.settings_changed.emit()
+        self.previewed = False  # what's shown is what's saved now
         return True
+
+    def reject(self) -> None:  # noqa: D102 - stop a pending preview first
+        self._preview_timer.stop()
+        super().reject()

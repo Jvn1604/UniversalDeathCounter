@@ -54,8 +54,10 @@ def test_timer_keys_besides_split_only_register_during_a_run(window) -> None:
 # ---------------------------------------------------------------- 4. keys on the Timer page
 def test_timer_page_buttons_show_their_keys(window) -> None:
     buttons = window._timer_buttons
-    assert buttons["split"].text().endswith("\nNum+1")
-    assert buttons["pause"].text().endswith("\nNum+5")
+    assert buttons["split"].text() == "Start / Split"
+    assert buttons["split"].key_text() == "Num+1"
+    assert buttons["pause"].key_text() == "Num+5"
+    assert window._plus_btn.key_text() == "F9"
     assert "while a run is going" in buttons["reset"].toolTip()
     assert "Ctrl+F11" in window._defeated_btn.toolTip()
 
