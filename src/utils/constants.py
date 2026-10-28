@@ -20,7 +20,7 @@ APP_BRAND: str = "DePhantom"  # big header text; APP_SUBTITLE goes underneath
 APP_SUBTITLE: str = "Universal Death Counter (DUDC)"
 # APP_ORG (below), the exe name and the data folder intentionally keep the
 # old internal name, so existing installs upgrade in place and keep data.
-APP_VERSION: str = "2.5.0"
+APP_VERSION: str = "2.6.0"
 APP_ORG: str = "UniversalDeathCounter"
 
 # GitHub repository ("owner/repo") used by the update checker. Edit this
@@ -93,6 +93,7 @@ DEFAULT_HOTKEY_CALIBRATE: str = "f8"
 DEFAULT_HOTKEY_PAUSE_DETECTION: str = "ctrl+f8"
 DEFAULT_HOTKEY_PREV_BOSS: str = "ctrl+f9"
 DEFAULT_HOTKEY_NEXT_BOSS: str = "ctrl+f10"
+DEFAULT_HOTKEY_BOSS_DEFEATED: str = "ctrl+f11"
 # Speedrun timer: LiveSplit's numpad layout (needs Num Lock on).
 DEFAULT_HOTKEY_TIMER_SPLIT: str = "num+1"
 DEFAULT_HOTKEY_TIMER_PAUSE: str = "num+5"
@@ -150,6 +151,11 @@ SETTING_HOTKEY_CALIBRATE: str = "hotkey_calibrate"
 SETTING_HOTKEY_PAUSE_DETECTION: str = "hotkey_pause_detection"
 SETTING_HOTKEY_PREV_BOSS: str = "hotkey_prev_boss"
 SETTING_HOTKEY_NEXT_BOSS: str = "hotkey_next_boss"
+SETTING_HOTKEY_BOSS_DEFEATED: str = "hotkey_boss_defeated"
+# Boss kills: detected from saved victory screens, or the Boss Defeated key.
+SETTING_BOSS_DETECTION: str = "boss_detection"
+SETTING_BOSS_AUTO_ADVANCE: str = "boss_auto_advance"  # select the next boss
+SETTING_BOSS_AUTO_SPLIT: str = "boss_auto_split"  # split a running speedrun
 SETTING_HOTKEY_TIMER_SPLIT: str = "hotkey_timer_split"
 SETTING_HOTKEY_TIMER_PAUSE: str = "hotkey_timer_pause"
 SETTING_HOTKEY_TIMER_RESET: str = "hotkey_timer_reset"
@@ -194,6 +200,12 @@ CONTROL_ACTIONS: tuple[tuple[str, str, str, str], ...] = (
     ),
     ("prev_boss", "Previous Boss", SETTING_HOTKEY_PREV_BOSS, DEFAULT_HOTKEY_PREV_BOSS),
     ("next_boss", "Next Boss", SETTING_HOTKEY_NEXT_BOSS, DEFAULT_HOTKEY_NEXT_BOSS),
+    (
+        "boss_defeated",
+        "Boss Defeated",
+        SETTING_HOTKEY_BOSS_DEFEATED,
+        DEFAULT_HOTKEY_BOSS_DEFEATED,
+    ),
     (
         "timer_split",
         "Timer: Start / Split",
@@ -248,6 +260,9 @@ DEFAULT_SETTINGS: dict[str, str] = {
     SETTING_HOTKEY_CALIBRATE: DEFAULT_HOTKEY_CALIBRATE,
     SETTING_HOTKEY_PAUSE_DETECTION: DEFAULT_HOTKEY_PAUSE_DETECTION,
     SETTING_DETECTION_COOLDOWN: "8",
+    SETTING_BOSS_DETECTION: "true",
+    SETTING_BOSS_AUTO_ADVANCE: "true",
+    SETTING_BOSS_AUTO_SPLIT: "true",
     SETTING_TIMER_METHOD: "real",
     SETTING_TIMER_COMPARISON: "pb",
     SETTING_TIMER_DIGITS: "2",

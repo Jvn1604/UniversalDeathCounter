@@ -38,7 +38,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from src.database.database import SCREEN_PAUSE, Database
+from src.database.database import SCREEN_DEATH, SCREEN_PAUSE, SCREEN_VICTORY, Database
 from src.detection.game_window import detection_available
 from src.detection.log_watcher import compile_death_pattern, scan_log
 from src.detection.matchers import SOULS_PRESET_EXES, DeathTemplate, HealthBar, Region
@@ -208,6 +208,18 @@ class PauseScreenDialog(CalibrationDialog):
     _SAVE_LABEL = "Save Screen"
 
 
+class VictoryScreenDialog(CalibrationDialog):
+    """Marks a boss-kill banner, so defeating a boss is detected."""
+
+    _TITLE = "Mark Boss Victory Screen"
+    _INSTRUCTIONS = (
+        'Drag a box tightly around the victory text (e.g. "GREAT ENEMY FELLED" or '
+        '"VICTORY ACHIEVED").\n'
+        "Box only the words, so other banners in the same style don't count."
+    )
+    _SAVE_LABEL = "Save Victory Screen"
+
+
 class HealthBarDialog(CalibrationDialog):
     """
     Lets the player mark their health bar on a full-health screenshot.
@@ -236,34 +248,46 @@ def first_death_hint(hotkey: str) -> str:
     return (
         "Detection starts once the app knows this game's death screen. The next time "
         f"you die, either press {hotkey} while the death screen shows, or click "
-        "📷 Death Screen on the main window afterwards and pick it from the last few "
+        "📷 Capture Screen on the main window afterwards and pick it from the last few "
         "seconds."
     )
 
 
 class DeathScreenDialog(QDialog):
     """
-    Add a death screen after the fact ("that death wasn't counted").
+    Add a death or boss-victory screen after the fact.
 
     Offers the watcher's recent frames as thumbnails (newest first), a
     screenshot file, or the clipboard (e.g. after Win+Shift+S). Once the
-    player marks the death text, :attr:`template` holds the result and
-    :attr:`count_death` says whether to also add +1.
+    player marks the text, :attr:`template` holds the result, :attr:`kind`
+    says which kind of screen it is, and :attr:`count_death` whether to
+    also add the missed +1 death / boss defeat now.
     """
 
     def __init__(
         self, recent_frames: list[tuple[float, np.ndarray]], parent: QWidget | None = None
     ) -> None:
         super().__init__(parent)
-        self.setWindowTitle("Add a Death Screen")
+        self.setWindowTitle("Capture a Death or Victory Screen")
         self.setMinimumWidth(640)
         self.template: DeathTemplate | None = None
+        self.kind = SCREEN_DEATH
         self.count_death = False
         self._frames = list(reversed(recent_frames))  # newest first
 
         layout = QVBoxLayout(self)
+        self._kind_combo = QComboBox()
+        self._kind_combo.addItem("A death screen (e.g. YOU DIED)", userData=SCREEN_DEATH)
+        self._kind_combo.addItem(
+            "A boss victory screen (e.g. GREAT ENEMY FELLED)", userData=SCREEN_VICTORY
+        )
+        self._kind_combo.currentIndexChanged.connect(self._on_kind_changed)
+        kind_row = QHBoxLayout()
+        kind_row.addWidget(QLabel("This shows:"))
+        kind_row.addWidget(self._kind_combo, 1)
+        layout.addLayout(kind_row)
         if self._frames:
-            layout.addWidget(QLabel("Pick the frame that shows the death screen:"))
+            layout.addWidget(QLabel("Pick the frame that shows it:"))
             self._list = QListWidget()
             self._list.setViewMode(QListWidget.ViewMode.IconMode)
             self._list.setIconSize(QSize(240, 135))
@@ -310,10 +334,19 @@ class DeathScreenDialog(QDialog):
             buttons.addWidget(use_button)
         layout.addLayout(buttons)
 
+    def _on_kind_changed(self) -> None:
+        if self._kind_combo.currentData() == SCREEN_VICTORY:
+            self._count_check.setText("Also mark the selected boss defeated now")
+        else:
+            self._count_check.setText("That death wasn't counted: add +1 death too")
+
     def _calibrate(self, frame: np.ndarray) -> None:
-        dialog = CalibrationDialog(frame, parent=self)
+        kind = self._kind_combo.currentData()
+        dialog_class = VictoryScreenDialog if kind == SCREEN_VICTORY else CalibrationDialog
+        dialog = dialog_class(frame, parent=self)
         if dialog.exec() == QDialog.DialogCode.Accepted and dialog.template is not None:
             self.template = dialog.template
+            self.kind = kind
             self.count_death = self._count_check.isChecked()
             self.accept()
 
@@ -436,7 +469,7 @@ class AutoDetectWindow(QDialog):
         hotkey = self._database.get_setting(SETTING_HOTKEY_CALIBRATE, "f8").upper()
         self._screens_hint = self._hint(
             f"Press {hotkey} in-game while the death screen is showing, or after a death "
-            "click 📷 Death Screen on the main window and pick the frame. Add more than "
+            "click 📷 Capture Screen on the main window and pick the frame. Add more than "
             "one if some deaths are missed: any saved death screen counts."
         )
         form.addRow("", self._screens_hint)
@@ -514,6 +547,31 @@ class AutoDetectWindow(QDialog):
             ),
         )
 
+        # Boss kills: victory banners (any detection method).
+        self._victory_label = QLabel()
+        victory_file_button = QPushButton("From Screenshot…")
+        victory_file_button.clicked.connect(self._victory_from_file)
+        self._victory_clear_button = QPushButton("Clear")
+        self._victory_clear_button.clicked.connect(self._clear_victory_screens)
+        form.addRow(
+            "Boss victory screens",
+            self._row(
+                self._victory_label,
+                victory_file_button,
+                self._victory_clear_button,
+                stretch_after=0,
+            ),
+        )
+        form.addRow(
+            "",
+            self._hint(
+                "After beating a boss, click 📷 Capture Screen on the main window, pick "
+                "the frame with the victory banner and choose \"A boss victory screen\". "
+                "From then on, beating the selected boss marks it defeated, moves to the "
+                "next boss and can split the timer (Settings → General)."
+            ),
+        )
+
         self._cooldown_spin = QSpinBox()
         self._cooldown_spin.setRange(3, 120)
         self._cooldown_spin.setSuffix(" s")
@@ -560,6 +618,7 @@ class AutoDetectWindow(QDialog):
         self._update_calibration_label()
         self._update_health_label()
         self._update_pause_label()
+        self._update_victory_label()
         self._health_frame_button.setEnabled(bool(self._recent_frames and self._recent_frames()))
         self._cooldown_spin.setValue(
             int(self._database.get_setting(SETTING_DETECTION_COOLDOWN, "8") or 8)
@@ -619,6 +678,34 @@ class AutoDetectWindow(QDialog):
         if confirm == QMessageBox.StandardButton.Yes:
             self._database.clear_death_templates(self._game_id, SCREEN_PAUSE)
             self._update_pause_label()
+
+    def _update_victory_label(self) -> None:
+        count = len(self._database.get_death_templates(self._game_id, SCREEN_VICTORY))
+        self._victory_label.setText("None saved" if count == 0 else f"{count} saved ✓")
+        self._victory_clear_button.setEnabled(count > 0)
+
+    def _victory_from_file(self) -> None:
+        frame = self._open_image(self, "Boss Victory Screenshot")
+        if frame is None:
+            return
+        dialog = VictoryScreenDialog(frame, parent=self)
+        if dialog.exec() != QDialog.DialogCode.Accepted or dialog.template is None:
+            return
+        self._database.add_death_template(
+            self._game_id,
+            dialog.template.region_json(),
+            dialog.template.patch_bytes(),
+            SCREEN_VICTORY,
+        )
+        self._update_victory_label()
+
+    def _clear_victory_screens(self) -> None:
+        confirm = QMessageBox.question(
+            self, "Clear Victory Screens", "Delete all saved boss victory screens for this game?"
+        )
+        if confirm == QMessageBox.StandardButton.Yes:
+            self._database.clear_death_templates(self._game_id, SCREEN_VICTORY)
+            self._update_victory_label()
 
     def _update_health_label(self) -> None:
         bar = self._health_bar()

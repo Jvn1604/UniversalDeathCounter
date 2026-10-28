@@ -55,7 +55,7 @@ from src.core.speedrun import (
     format_time,
 )
 from src.core.statistics import StatisticsService
-from src.database.database import SCREEN_PAUSE, Database
+from src.database.database import SCREEN_PAUSE, SCREEN_VICTORY, Database
 from src.detection.death_watcher import (
     ACTIVITY_BACKGROUND,
     ACTIVITY_CLOSED,
@@ -111,6 +111,9 @@ from src.utils.constants import (
     DETECTION_MODE_TEMPLATE,
     ICONS_DIR,
     SAVES_DIR,
+    SETTING_BOSS_AUTO_ADVANCE,
+    SETTING_BOSS_AUTO_SPLIT,
+    SETTING_BOSS_DETECTION,
     SETTING_CHECK_UPDATES,
     SETTING_DEATHS_TXT_ENABLED,
     SETTING_DEATHS_TXT_PATH,
@@ -397,7 +400,7 @@ class MainWindow(QMainWindow):
         root_layout.addWidget(self._detect_status_label)
         root_layout.addWidget(self._detect_last_label)
         detect_layout = QHBoxLayout()
-        death_screen_button = QPushButton("📷 Death Screen…")
+        death_screen_button = QPushButton("📷 Capture Screen…")
         death_screen_button.setToolTip(
             "A death wasn't counted? Pick the death screen from the last few seconds "
             "(or a screenshot) so the app recognizes it next time."
@@ -586,6 +589,7 @@ class MainWindow(QMainWindow):
             "pause_detection": self._toggle_detection_pause,
             "prev_boss": lambda: self._select_adjacent_boss(-1),
             "next_boss": lambda: self._select_adjacent_boss(+1),
+            "boss_defeated": lambda: self._defeat_current_boss(detected=False),
             "timer_split": lambda: self._timer_action("split"),
             "timer_pause": lambda: self._timer_action("pause"),
             "timer_reset": lambda: self._timer_action("reset"),
@@ -631,6 +635,7 @@ class MainWindow(QMainWindow):
         self._death_watcher.status_changed.connect(self._detect_status_label.setText)
         self._death_watcher.death_detected.connect(self._on_death_detected)
         self._death_watcher.activity_changed.connect(self._on_game_activity)
+        self._death_watcher.boss_defeated.connect(self._on_boss_victory_detected)
         self._log_watcher.status_changed.connect(self._detect_status_label.setText)
         self._log_watcher.death_detected.connect(self._on_death_detected)
         self._death_watcher.start()
@@ -681,18 +686,92 @@ class MainWindow(QMainWindow):
                 watch_activity=True,
                 pause_matcher=build_screen_matcher(pause_screens),
             )
+        victory = self._victory_matcher(game_id, row)
+        if victory is not None:
+            if screen_config is None:
+                screen_config = WatchConfig(
+                    game_id=game_id,
+                    exe_path=row["exe_path"],
+                    matcher=None,
+                    setup_hint="watching for the boss victory screen",
+                )
+            screen_config = dataclasses.replace(screen_config, victory_matcher=victory)
         cooldown = float(self._database.get_setting(SETTING_DETECTION_COOLDOWN, "8") or 8)
         self._death_watcher.configure(screen_config, cooldown_seconds=cooldown)
         self._log_watcher.configure(log_config)
         if status is not None:
             self._detect_status_label.setText(status)
 
+    def _victory_matcher(self, game_id: int | None, row):
+        """The saved victory screens to watch for, while an undefeated boss is selected."""
+        boss_id = self._counter_manager.current_boss_id
+        if (
+            game_id is None
+            or boss_id is None
+            or row is None
+            or not row["exe_path"]
+            or self._detection_paused
+            or not detection_available()
+            or self._database.get_setting(SETTING_BOSS_DETECTION, "true") != "true"
+        ):
+            return None
+        boss = self._database.get_boss(boss_id)
+        if boss is None or boss["defeated"]:
+            return None
+        screens = self._database.get_death_templates(game_id, SCREEN_VICTORY)
+        return build_screen_matcher([(t["region"], t["template"]) for t in screens])
+
+    def _on_boss_victory_detected(self, game_id: int) -> None:
+        if game_id == self._counter_manager.current_game_id:
+            self._defeat_current_boss(detected=True)
+
+    def _defeat_current_boss(self, detected: bool) -> None:
+        """
+        Mark the selected boss defeated (saving its deaths until victory), then
+        optionally split a running speedrun and select the next boss.
+        """
+        game_id = self._counter_manager.current_game_id
+        boss_id = self._counter_manager.current_boss_id
+        if game_id is None or boss_id is None:
+            if not detected:
+                self._notify("Select the boss you're fighting first.")
+            return
+        boss = self._database.get_boss(boss_id)
+        if boss is None or boss["defeated"]:
+            return
+        self._database.set_boss_defeated(boss_id, True)
+        deaths = self._database.get_boss_deaths(boss_id)
+        settings = self._database.get_all_settings()
+
+        split = (
+            settings.get(SETTING_BOSS_AUTO_SPLIT, "true") == "true"
+            and self._speedrun is not None
+            and self._speedrun.game_id == game_id
+            and self._speedrun.timer.state == RUNNING
+        )
+        if split:
+            self._timer_action("split")
+
+        self._reload_bosses(game_id)  # show the ✓, still on this boss
+        if settings.get(SETTING_BOSS_AUTO_ADVANCE, "true") == "true":
+            self._select_adjacent_boss(+1)
+
+        plural = "" if deaths == 1 else "s"
+        message = f"⚔ {boss['name']} defeated after {deaths} death{plural}!"
+        if split:
+            message += " Split recorded."
+        self._detect_last_label.setText(
+            message + (" Wrong? Unmark it in Manage → Games & Bosses." if detected else "")
+        )
+        self._notify(message, 6000)
+        self._configure_detection()  # watch for the next boss's victory instead
+
     def _screen_watch_config(self, game_id: int, mode: str, exe_path: str) -> WatchConfig:
         templates = [
             (t["region"], t["template"]) for t in self._database.get_death_templates(game_id)
         ]
         # A None matcher still watches the window, buffering recent frames so
-        # the player can pick their first death screen with 📷 Death Screen.
+        # the player can pick their first death screen with 📷 Capture Screen.
         matcher = build_matcher(mode, templates, self._database.get_detection_options(game_id))
         if mode != DETECTION_MODE_HEALTH:
             return WatchConfig(game_id=game_id, exe_path=exe_path, matcher=matcher)
@@ -830,6 +909,15 @@ class MainWindow(QMainWindow):
             return
         dialog = DeathScreenDialog(self._death_watcher.recent_frames(), parent=self)
         if dialog.exec() != DeathScreenDialog.DialogCode.Accepted or dialog.template is None:
+            return
+        if dialog.kind == SCREEN_VICTORY:
+            template = dialog.template
+            self._database.add_death_template(
+                game_id, template.region_json(), template.patch_bytes(), SCREEN_VICTORY
+            )
+            if dialog.count_death:
+                self._defeat_current_boss(detected=False)
+            self._configure_detection()
             return
         self._save_death_template(game_id, dialog.template)
         if dialog.count_death:
@@ -1078,6 +1166,7 @@ class MainWindow(QMainWindow):
             self._database.set_setting(SETTING_LAST_BOSS_ID, "")  # "(No Boss)" is a choice too
         self._counter_manager.set_current_boss(boss_id, boss_name)
         self._refresh_counters()
+        self._configure_detection()  # victory watching follows the selected boss
 
     # ----------------------------------------------------------------
     # Counter actions
