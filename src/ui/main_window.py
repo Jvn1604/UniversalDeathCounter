@@ -12,7 +12,7 @@ import dataclasses
 import json
 import time
 from collections.abc import Callable
-from datetime import UTC, datetime
+from datetime import datetime
 from pathlib import Path
 
 from PySide6.QtCore import QByteArray, Qt, QTimer
@@ -260,6 +260,11 @@ class MainWindow(QMainWindow):
         self._log_watcher = LogWatcher(parent=self)
         self._detection_paused = False  # not persisted: every launch starts active
         self._quitting = False
+        self._closed = False  # cleanup ran; a second close must not touch the database
+        # True once this session has written a crash-recovery snapshot. Until
+        # then a snapshot in the settings belongs to a crashed earlier run,
+        # waiting for the recovery prompt, and must not be cleared.
+        self._autosave_written = False
 
         self._update_window_title()
         self._build_menu()
@@ -782,7 +787,7 @@ class MainWindow(QMainWindow):
             self._page_timer.stop()
             return
         controller = self._speedrun
-        if controller is None:
+        if controller is None or controller.game_id is None:
             self._timer_page_time.setText("0:00.00")
             self._timer_page_split.setText("SELECT A GAME")
             self._timer_page_info.setText("")
@@ -825,7 +830,7 @@ class MainWindow(QMainWindow):
                 tiles[key].set_value("–")
             return
         tiles["total"].set_value(str(db.get_total_deaths(game_id)))
-        today = datetime.now(UTC).date().isoformat()
+        today = datetime.now().date().isoformat()  # local, like the per-day query
         per_day = {row["day"]: row["deaths"] for row in db.get_deaths_per_day(game_id)}
         tiles["today"].set_value(str(per_day.get(today, 0)))
         tiles["sessions"].set_value(str(db.get_total_sessions(game_id)))
@@ -1504,6 +1509,7 @@ class MainWindow(QMainWindow):
             self._reload_bosses(None)
             self._refresh_counters()
             self._configure_detection()
+            self._load_speedrun()  # drops a run of a game that was just deleted
 
     def _saved_id(self, setting_key: str) -> int | None:
         """Read an id stored in the settings table (empty/invalid -> None)."""
@@ -1856,7 +1862,11 @@ class MainWindow(QMainWindow):
         game_id = self._counter_manager.current_game_id
         current = self._speedrun
         if current is not None and not force:
-            if current.game_id == game_id or current.running:
+            orphaned = (
+                current.game_id is not None
+                and self._database.get_game(current.game_id) is None
+            )
+            if not orphaned and (current.game_id == game_id or current.running):
                 return
         self._end_speedrun()
         names = self._database.get_speedrun_splits(game_id) if game_id else []
@@ -1866,7 +1876,7 @@ class MainWindow(QMainWindow):
             split_names=names,
             runs=[],
             attempts=self._database.count_speedrun_attempts(game_id) if game_id else 0,
-            store=lambda gid, run: self._database.add_speedrun_run(gid, run),
+            store=self._store_speedrun_run,
         )
         if game_id is not None:
             # Same split names as the controller resolved ("Finish" if none).
@@ -1895,7 +1905,20 @@ class MainWindow(QMainWindow):
             self._speedrun.reset()
             self._speedrun = None
             self._timer_window.set_controller(None)
-        self._database.set_setting(SETTING_TIMER_AUTOSAVE, "")  # saved properly
+        self._clear_autosave()
+
+    def _clear_autosave(self) -> None:
+        """Drop this session's crash snapshot (the run was stored properly)."""
+        if self._autosave_written:
+            self._database.set_setting(SETTING_TIMER_AUTOSAVE, "")
+            self._autosave_written = False
+
+    def _store_speedrun_run(self, game_id: int, run) -> None:
+        """Save an attempt, unless its game was deleted meanwhile."""
+        if self._database.get_game(game_id) is None:
+            logger.info("Not saving a run of deleted game id=%s", game_id)
+            return
+        self._database.add_speedrun_run(game_id, run)
 
     def _timer_needs_watching(self, game_id: int | None, row) -> bool:
         """Whether a run in progress needs the game window watched for auto-pause."""
@@ -1956,8 +1979,9 @@ class MainWindow(QMainWindow):
                 **controller.timer.snapshot(),
             }
             self._database.set_setting(SETTING_TIMER_AUTOSAVE, json.dumps(data))
-        elif self._database.get_setting(SETTING_TIMER_AUTOSAVE, ""):
-            self._database.set_setting(SETTING_TIMER_AUTOSAVE, "")
+            self._autosave_written = True
+        else:
+            self._clear_autosave()
 
     def _offer_run_recovery(self) -> None:
         """After a crash, offer the run that was in progress back."""
@@ -2141,6 +2165,9 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event) -> None:  # noqa: N802
         """Minimize to tray if configured; otherwise clean up and exit."""
+        if self._closed:  # e.g. Quit from the tray while already closing
+            super().closeEvent(event)
+            return
         minimize = (
             self._database.get_setting(SETTING_MINIMIZE_TO_TRAY, "false") == "true"
         )
@@ -2165,6 +2192,8 @@ class MainWindow(QMainWindow):
         self._gamepad_manager.stop()
         self._autosave_timer.stop()
         self._recovery_timer.stop()
+        self._game_launch_timer.stop()  # it reads the database being closed
+        self._page_timer.stop()
         self._death_watcher.stop()
         self._log_watcher.stop()
         self._overlay.close()
@@ -2172,5 +2201,6 @@ class MainWindow(QMainWindow):
         if self._tray is not None:
             self._tray.hide()
         self._database.close()
+        self._closed = True
         logger.info("Application closed cleanly")
         super().closeEvent(event)

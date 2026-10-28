@@ -21,6 +21,7 @@ aggregating this event log. This gives us:
 
 from __future__ import annotations
 
+import base64
 import json
 import sqlite3
 from collections.abc import Iterator
@@ -546,8 +547,14 @@ class Database:
         return int(boss_id)
 
     def delete_boss(self, boss_id: int) -> None:
-        """Delete a boss and (via cascade) its associated death events."""
+        """
+        Delete a boss, keeping its deaths in the game's totals (as "No boss").
+
+        The schema's ON DELETE CASCADE would otherwise erase those deaths and
+        silently lower the session and all-time counts.
+        """
         with self._cursor() as cursor:
+            cursor.execute("UPDATE death_events SET boss_id = NULL WHERE boss_id = ?", (boss_id,))
             cursor.execute("DELETE FROM bosses WHERE id = ?", (boss_id,))
         logger.info("Deleted boss id=%s", boss_id)
 
@@ -695,6 +702,7 @@ class Database:
         delta: int,
         note: str | None = None,
         kind: str = EVENT_DEATH,
+        timestamp: str | None = None,
     ) -> int:
         """
         Record a death-count change.
@@ -707,6 +715,8 @@ class Database:
             note: Optional free-text note attached to this event.
             kind: ``EVENT_DEATH``, or ``EVENT_TOTAL_ADJUST`` for a correction
                 that changes only the game's total.
+            timestamp: When it happened (ISO 8601); now if omitted. Backups
+                pass the original time.
 
         Returns:
             The id of the newly inserted event (used for fine-grained undo).
@@ -718,7 +728,7 @@ class Database:
                     (game_id, boss_id, session_id, delta, timestamp, note, kind)
                 VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
-                (game_id, boss_id, session_id, delta, _utc_now_iso(), note, kind),
+                (game_id, boss_id, session_id, delta, timestamp or _utc_now_iso(), note, kind),
             )
             event_id = cursor.lastrowid
         return int(event_id)
@@ -764,11 +774,11 @@ class Database:
             return cursor.fetchall()
 
     def get_deaths_per_day(self, game_id: int) -> list[sqlite3.Row]:
-        """Return (day, deaths) rows for a game, oldest first (for graphs)."""
+        """Return (local day, deaths) rows for a game, oldest first (for graphs)."""
         with self._cursor() as cursor:
             cursor.execute(
                 """
-                SELECT date(timestamp) AS day, SUM(delta) AS deaths
+                SELECT date(timestamp, 'localtime') AS day, SUM(delta) AS deaths
                 FROM death_events
                 WHERE game_id = ?
                 GROUP BY day
@@ -972,7 +982,11 @@ class Database:
     # ----------------------------------------------------------------
     def export_data(self) -> dict[str, Any]:
         """
-        Export every game, boss, session, and death event as plain dicts.
+        Export everything a restore needs as plain dicts.
+
+        Games, bosses, sessions and death events, plus (since format 2) each
+        game's detection setup and saved screens, speedrun splits and runs.
+        Settings and profiles are not included.
 
         Returns:
             A JSON-serializable dict suitable for :meth:`import_data`.
@@ -986,12 +1000,28 @@ class Database:
             sessions = [dict(row) for row in cursor.fetchall()]
             cursor.execute("SELECT * FROM death_events")
             death_events = [dict(row) for row in cursor.fetchall()]
+            # v2: everything else a restore needs on another PC.
+            cursor.execute("SELECT game_id, exe_path, mode, options FROM game_detection")
+            detection = [dict(row) for row in cursor.fetchall()]
+            cursor.execute("SELECT * FROM death_templates")
+            screens = [
+                {**dict(row), "template": base64.b64encode(bytes(row["template"])).decode()}
+                for row in cursor.fetchall()
+            ]
+            cursor.execute("SELECT * FROM speedrun_splits ORDER BY game_id, position")
+            splits = [dict(row) for row in cursor.fetchall()]
+            cursor.execute("SELECT * FROM speedrun_runs ORDER BY id")
+            runs = [dict(row) for row in cursor.fetchall()]
         return {
-            "format_version": 1,
+            "format_version": 2,
             "games": games,
             "bosses": bosses,
             "sessions": sessions,
             "death_events": death_events,
+            "game_detection": detection,
+            "screens": screens,
+            "speedrun_splits": splits,
+            "speedrun_runs": runs,
         }
 
     def import_data(self, data: dict[str, Any], mode: str = "merge") -> None:
@@ -1051,10 +1081,16 @@ class Database:
             new_game_id = game_id_map.get(session["game_id"])
             if new_game_id is None:
                 continue
-            new_id = self.start_session(new_game_id)
-            if session.get("ended_at"):
-                self.end_session(new_id)
-            session_id_map[session["id"]] = new_id
+            with self._cursor() as cursor:  # keep the original dates
+                cursor.execute(
+                    "INSERT INTO sessions (game_id, started_at, ended_at) VALUES (?, ?, ?)",
+                    (
+                        new_game_id,
+                        session.get("started_at") or _utc_now_iso(),
+                        session.get("ended_at"),
+                    ),
+                )
+                session_id_map[session["id"]] = int(cursor.lastrowid)
 
         for event in data["death_events"]:
             new_game_id = game_id_map.get(event["game_id"])
@@ -1069,11 +1105,70 @@ class Database:
                 event["delta"],
                 event.get("note"),
                 kind=event.get("kind") or EVENT_DEATH,
+                timestamp=event.get("timestamp"),
             )
 
+        self._import_extras(data, game_id_map)
         logger.info(
             "Imported %d game(s) in '%s' mode", len(data["games"]), mode
         )
+
+    def _import_extras(self, data: dict[str, Any], game_id_map: dict[int, int]) -> None:
+        """Format-2 parts of a backup: detection setup, screens, splits and runs."""
+        with self._cursor() as cursor:
+            for row in data.get("game_detection", []):
+                game_id = game_id_map.get(row["game_id"])
+                if game_id is not None:
+                    cursor.execute(
+                        "INSERT OR REPLACE INTO game_detection (game_id, exe_path, mode, options) "
+                        "VALUES (?, ?, ?, ?)",
+                        (
+                            game_id,
+                            row.get("exe_path"),
+                            row.get("mode") or "off",
+                            row.get("options") or "{}",
+                        ),
+                    )
+            for row in data.get("screens", []):
+                game_id = game_id_map.get(row["game_id"])
+                if game_id is not None:
+                    cursor.execute(
+                        "INSERT INTO death_templates (game_id, region, template, created_at, kind) "
+                        "VALUES (?, ?, ?, ?, ?)",
+                        (
+                            game_id,
+                            row["region"],
+                            sqlite3.Binary(base64.b64decode(row["template"])),
+                            row.get("created_at") or _utc_now_iso(),
+                            row.get("kind") or SCREEN_DEATH,
+                        ),
+                    )
+            for row in data.get("speedrun_splits", []):
+                game_id = game_id_map.get(row["game_id"])
+                if game_id is not None:
+                    cursor.execute(
+                        "INSERT OR REPLACE INTO speedrun_splits (game_id, position, name) "
+                        "VALUES (?, ?, ?)",
+                        (game_id, row["position"], row["name"]),
+                    )
+            for row in data.get("speedrun_runs", []):
+                game_id = game_id_map.get(row["game_id"])
+                if game_id is not None:
+                    cursor.execute(
+                        "INSERT INTO speedrun_runs (game_id, started_at, ended_at, finished, "
+                        "deaths, split_names, split_times, game_times) "
+                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                        (
+                            game_id,
+                            row["started_at"],
+                            row["ended_at"],
+                            row["finished"],
+                            row.get("deaths", 0),
+                            row["split_names"],
+                            row["split_times"],
+                            row.get("game_times") or "[]",
+                        ),
+                    )
 
     def clear_all_data(self) -> None:
         """

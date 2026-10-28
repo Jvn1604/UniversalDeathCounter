@@ -15,6 +15,7 @@ from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication, QMessageBox
 
 from src.ui.main_window import MainWindow
+from src.utils import single_instance
 from src.utils.constants import APP_NAME, APP_ORG, ICONS_DIR, LOG_DIR
 from src.utils.logger import get_logger
 from src.utils.startup import refresh_registration
@@ -57,6 +58,17 @@ def main() -> int:
     icon_path = ICONS_DIR / "app_icon.ico"
     if icon_path.exists():
         app.setWindowIcon(QIcon(str(icon_path)))
+
+    if not single_instance.acquire():
+        logger.info("Another copy is already running; handing over to it")
+        if not single_instance.bring_existing_to_front(APP_NAME):
+            QMessageBox.information(
+                None,
+                APP_NAME,
+                f"{APP_NAME} is already running. Open it from its icon in the "
+                "system tray.",
+            )
+        return 0
 
     try:
         window = MainWindow()
