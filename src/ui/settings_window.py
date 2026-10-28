@@ -33,6 +33,7 @@ from PySide6.QtWidgets import (
     QScrollArea,
     QSlider,
     QSpinBox,
+    QStyledItemDelegate,
     QTabWidget,
     QVBoxLayout,
     QWidget,
@@ -156,16 +157,37 @@ class _ColorChoice(QWidget):
             self.set_color(chosen.name())
 
 
+class _FontPreviewDelegate(QStyledItemDelegate):
+    """
+    Draws each font's name in that font, but only for the rows on screen.
+
+    Giving every item its own font instead (Qt.FontRole) makes Qt load all
+    installed fonts whenever the window restyles, which froze the app for
+    seconds on each Settings change.
+    """
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._fonts: dict[str, QFont] = {}
+
+    def initStyleOption(self, option, index) -> None:  # noqa: N802 - Qt override
+        super().initStyleOption(option, index)
+        family = index.data(Qt.ItemDataRole.UserRole)
+        if family:
+            font = self._fonts.get(family)
+            if font is None:
+                font = self._fonts[family] = QFont(family, option.font.pointSize())
+            option.font = font
+
+
 def _font_combo(default_label: str) -> QComboBox:
     """Installed font families, with ``default_label`` (value "") first."""
     combo = QComboBox()
     combo.addItem(default_label, userData="")
     for family in QFontDatabase.families():
-        if family.startswith("@"):  # vertical-text variants of CJK fonts
-            continue
-        combo.addItem(family, userData=family)
-        if not QFontDatabase.isPrivateFamily(family):
-            combo.setItemData(combo.count() - 1, QFont(family, 11), Qt.ItemDataRole.FontRole)
+        if not family.startswith("@"):  # vertical-text variants of CJK fonts
+            combo.addItem(family, userData=family)
+    combo.setItemDelegate(_FontPreviewDelegate(combo))
     combo.setMaxVisibleItems(16)
     return combo
 

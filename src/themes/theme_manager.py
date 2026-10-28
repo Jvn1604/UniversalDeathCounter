@@ -266,5 +266,7 @@ def apply_theme(
         font_family,
         see_through,
     )
+    if widget.styleSheet() == stylesheet:
+        return  # restyling every widget is slow: skip it when nothing changed
     widget.setStyleSheet(stylesheet)
     logger.info("Applied theme '%s'", theme_name)
