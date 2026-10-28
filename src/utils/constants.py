@@ -76,12 +76,12 @@ THEMES_DIR: Path = PROJECT_ROOT / "src" / "themes"
 ICONS_DIR: Path = PROJECT_ROOT / "assets" / "icons"
 
 # --------------------------------------------------------------------------
-# Default hotkeys (keyboard library syntax)
+# Default hotkeys (lower-cased QKeySequence text, e.g. "ctrl+f12")
 # --------------------------------------------------------------------------
 DEFAULT_HOTKEY_INCREMENT: str = "f9"
 DEFAULT_HOTKEY_DECREMENT: str = "f10"
 DEFAULT_HOTKEY_UNDO: str = "f11"
-DEFAULT_HOTKEY_TOGGLE_OVERLAY: str = "f12"
+DEFAULT_HOTKEY_TOGGLE_OVERLAY: str = "ctrl+f12"  # plain F12 is often taken (Steam, debuggers)
 
 # --------------------------------------------------------------------------
 # Settings keys (used in the `settings` table)
@@ -94,8 +94,6 @@ SETTING_HOTKEY_INCREMENT: str = "hotkey_increment"
 SETTING_HOTKEY_DECREMENT: str = "hotkey_decrement"
 SETTING_HOTKEY_UNDO: str = "hotkey_undo"
 SETTING_HOTKEY_TOGGLE_OVERLAY: str = "hotkey_toggle_overlay"
-SETTING_AUTOSAVE: str = "autosave"
-SETTING_LAUNCH_ON_STARTUP: str = "launch_on_startup"
 SETTING_LAST_GAME_ID: str = "last_game_id"
 SETTING_LAST_BOSS_ID: str = "last_boss_id"
 SETTING_OVERLAY_GEOMETRY: str = "overlay_geometry"
@@ -127,8 +125,6 @@ DEFAULT_SETTINGS: dict[str, str] = {
     SETTING_HOTKEY_DECREMENT: DEFAULT_HOTKEY_DECREMENT,
     SETTING_HOTKEY_UNDO: DEFAULT_HOTKEY_UNDO,
     SETTING_HOTKEY_TOGGLE_OVERLAY: DEFAULT_HOTKEY_TOGGLE_OVERLAY,
-    SETTING_AUTOSAVE: "true",
-    SETTING_LAUNCH_ON_STARTUP: "false",
     SETTING_LAST_GAME_ID: "",
     SETTING_LAST_BOSS_ID: "",
     SETTING_OVERLAY_GEOMETRY: "",
