@@ -3,41 +3,57 @@ Transparent, always-on-top overlay window for OBS capture.
 
 The overlay is a frameless, drag-movable widget showing the game name,
 boss name, a large configurable counter, and a "Session • Total" stats
-line. It supports two background modes:
+line. It supports three background modes:
 
-* ``dark``   — semi-transparent dark card (for OBS Window Capture)
+* ``dark``   — semi-transparent card in the player's color (default near-black)
 * ``chroma`` — solid chroma-key green (#00ff00) for OBS color-key filters
+* ``image``  — the player's own picture, filling the card
 
-Every visual aspect (text color, counter source, which lines are shown,
-font size, opacity) is user-configurable via Settings and applied live
-through :meth:`apply_display_settings`.
+Every visual aspect (colors, font, counter source, which lines are shown,
+font size, opacity, corner roundness, text outline) is user-configurable
+via Settings and applied live through :meth:`apply_display_settings`.
 """
 
 from __future__ import annotations
 
-from PySide6.QtCore import QPoint, QRect, QRectF, Qt
+from PySide6.QtCore import QPoint, QRect, QRectF, QSize, Qt
 from PySide6.QtGui import (
     QColor,
     QGuiApplication,
     QMouseEvent,
     QPainter,
+    QPainterPath,
     QPaintEvent,
     QPen,
+    QPixmap,
     QScreen,
 )
-from PySide6.QtWidgets import QLabel, QSizeGrip, QVBoxLayout, QWidget
+from PySide6.QtWidgets import (
+    QGraphicsDropShadowEffect,
+    QLabel,
+    QSizeGrip,
+    QVBoxLayout,
+    QWidget,
+)
 
 from src.core.counter_manager import CounterSnapshot
+from src.utils.backgrounds import cover, load_background
 from src.utils.constants import (
     ACCENT_COLOR,
+    SETTING_OVERLAY_BG_IMAGE,
     SETTING_OVERLAY_BG_MODE,
+    SETTING_OVERLAY_CARD_COLOR,
+    SETTING_OVERLAY_CORNER_RADIUS,
     SETTING_OVERLAY_COUNTER_SOURCE,
+    SETTING_OVERLAY_FONT,
     SETTING_OVERLAY_FONT_SIZE,
     SETTING_OVERLAY_OPACITY,
+    SETTING_OVERLAY_SECONDARY_COLOR,
     SETTING_OVERLAY_SHOW_BOSS,
     SETTING_OVERLAY_SHOW_GAME,
     SETTING_OVERLAY_SHOW_STATS,
     SETTING_OVERLAY_TEXT_COLOR,
+    SETTING_OVERLAY_TEXT_OUTLINE,
 )
 from src.utils.logger import get_logger
 from src.utils.screens import fit_to_screens, place_in_corner
@@ -45,6 +61,7 @@ from src.utils.screens import fit_to_screens, place_in_corner
 logger = get_logger(__name__)
 
 CHROMA_GREEN = "#00ff00"
+DEFAULT_CARD_COLOR = "#141416"
 _CAPTIONS = {"session": "SESSION DEATHS", "boss": "BOSS DEATHS", "total": "ALL-TIME DEATHS"}
 OVERLAY_WINDOW_TITLE = "DUDC Overlay"
 
@@ -73,6 +90,13 @@ class OverlayWindow(QWidget):
         self._show_game = True
         self._show_boss = True
         self._show_stats = True
+        self._font_family = ""
+        self._card_color = QColor(DEFAULT_CARD_COLOR)
+        self._secondary_color = ""  # "" = automatic for the background
+        self._bg_image: QPixmap | None = None
+        self._bg_scaled: QPixmap | None = None  # cache, rescaled only on resize
+        self._corner_radius = 12
+        self._text_outline = False
 
         self._last_snapshot: CounterSnapshot | None = None
 
@@ -116,23 +140,54 @@ class OverlayWindow(QWidget):
 
     def _restyle(self) -> None:
         """Re-apply all label styles and the background for current config."""
-        # Background itself is drawn in paintEvent; here only text colors.
-        secondary = "#101113" if self._bg_mode == "chroma" else "#dddddd"
+        # Background itself is drawn in paintEvent; here only text styling.
+        automatic = "#101113" if self._bg_mode == "chroma" else "#dddddd"
+        secondary = self._secondary_color or automatic
+        family = self._font_family.replace('"', "")
+        font = f'font-family: "{family}";' if family else ""
         self.update()
 
-        self._game_label.setStyleSheet(f"color: {secondary}; font-size: 13px; font-weight: 500;")
-        self._boss_label.setStyleSheet(f"color: {secondary}; font-size: 12px;")
+        self._game_label.setStyleSheet(
+            f"color: {secondary}; font-size: 13px; font-weight: 500; {font}"
+        )
+        self._boss_label.setStyleSheet(f"color: {secondary}; font-size: 12px; {font}")
         self._death_label.setStyleSheet(
-            f"color: {self._text_color}; font-size: {self._font_size}px; font-weight: 800;"
+            f"color: {self._text_color}; font-size: {self._font_size}px; font-weight: 800; "
+            f"{font}"
         )
         self._caption_label.setStyleSheet(
-            f"color: {secondary}; font-size: 10px; letter-spacing: 2px;"
+            f"color: {secondary}; font-size: 10px; letter-spacing: 2px; {font}"
         )
-        self._stats_label.setStyleSheet(f"color: {secondary}; font-size: 11px;")
+        self._stats_label.setStyleSheet(f"color: {secondary}; font-size: 11px; {font}")
+
+        # A soft shadow keeps text readable over busy images or game footage.
+        for label in self._text_labels():
+            if not self._text_outline:
+                label.setGraphicsEffect(None)
+            elif label.graphicsEffect() is None:
+                label.setGraphicsEffect(self._make_outline(label))
 
         self._game_label.setVisible(self._show_game)
         self._boss_label.setVisible(self._show_boss)
         self._stats_label.setVisible(self._show_stats)
+
+    def _text_labels(self) -> tuple[QLabel, ...]:
+        return (
+            self._game_label,
+            self._boss_label,
+            self._death_label,
+            self._caption_label,
+            self._stats_label,
+        )
+
+    @staticmethod
+    def _make_outline(label: QLabel) -> QGraphicsDropShadowEffect:
+        # Parented to the label: without a parent, Python frees it right away.
+        effect = QGraphicsDropShadowEffect(label)
+        effect.setBlurRadius(6)
+        effect.setOffset(0, 0)
+        effect.setColor(QColor(0, 0, 0, 230))
+        return effect
 
     # ----------------------------------------------------------------
     # Public API
@@ -152,6 +207,18 @@ class OverlayWindow(QWidget):
         self._show_game = settings.get(SETTING_OVERLAY_SHOW_GAME, "true") == "true"
         self._show_boss = settings.get(SETTING_OVERLAY_SHOW_BOSS, "true") == "true"
         self._show_stats = settings.get(SETTING_OVERLAY_SHOW_STATS, "true") == "true"
+        self._font_family = settings.get(SETTING_OVERLAY_FONT, "")
+        card = QColor(settings.get(SETTING_OVERLAY_CARD_COLOR, "") or DEFAULT_CARD_COLOR)
+        self._card_color = card if card.isValid() else QColor(DEFAULT_CARD_COLOR)
+        self._secondary_color = settings.get(SETTING_OVERLAY_SECONDARY_COLOR, "")
+        self._bg_image = load_background(settings.get(SETTING_OVERLAY_BG_IMAGE, ""))
+        self._bg_scaled = None
+        try:
+            radius = int(settings.get(SETTING_OVERLAY_CORNER_RADIUS, "12"))
+        except ValueError:
+            radius = 12
+        self._corner_radius = min(max(radius, 0), 60)
+        self._text_outline = settings.get(SETTING_OVERLAY_TEXT_OUTLINE, "false") == "true"
         self._restyle()
         if self._last_snapshot is not None:
             self.update_counters(self._last_snapshot)
@@ -196,17 +263,29 @@ class OverlayWindow(QWidget):
         logger.info("Overlay visibility toggled to %s", self.isVisible())
 
     def paintEvent(self, event: QPaintEvent) -> None:  # noqa: N802
-        """Draw the background: solid chroma green, or the translucent dark card."""
+        """Draw the background: chroma green, the player's image, or the translucent card."""
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        opacity = max(0.0, min(1.0, self._opacity))
+        card_rect = QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
+        radius = self._corner_radius
         if self._bg_mode == "chroma":
             # Solid keyable green, square corners so OBS's Chroma Key is clean.
             painter.fillRect(self.rect(), QColor(CHROMA_GREEN))
+        elif self._bg_mode == "image" and self._bg_image is not None:
+            if self._bg_scaled is None or self._bg_scaled.size() != self.size():
+                self._bg_scaled = cover(self._bg_image, QSize(self.width(), self.height()))
+            path = QPainterPath()
+            path.addRoundedRect(card_rect, radius, radius)
+            painter.setClipPath(path)
+            painter.setOpacity(opacity)
+            painter.drawPixmap(0, 0, self._bg_scaled)
         else:
-            alpha = max(0, min(255, int(self._opacity * 255)))
-            painter.setBrush(QColor(20, 20, 22, alpha))
+            color = QColor(self._card_color)
+            color.setAlphaF(opacity)
+            painter.setBrush(color)
             painter.setPen(QPen(QColor(255, 77, 77, 120), 1))
-            painter.drawRoundedRect(QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5), 12, 12)
+            painter.drawRoundedRect(card_rect, radius, radius)
         painter.end()
         super().paintEvent(event)
 

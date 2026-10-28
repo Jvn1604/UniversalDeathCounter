@@ -10,8 +10,10 @@ whole form at once).
 
 from __future__ import annotations
 
-from PySide6.QtCore import Signal
-from PySide6.QtGui import QColor, QKeySequence
+from pathlib import Path
+
+from PySide6.QtCore import Qt, Signal
+from PySide6.QtGui import QColor, QFontDatabase, QKeySequence
 from PySide6.QtWidgets import (
     QCheckBox,
     QColorDialog,
@@ -28,6 +30,8 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QMessageBox,
     QPushButton,
+    QScrollArea,
+    QSlider,
     QSpinBox,
     QTabWidget,
     QVBoxLayout,
@@ -39,6 +43,7 @@ from src.hotkeys.conflicts import ERROR, WARNING, Conflict, find_conflicts, has_
 from src.hotkeys.gamepad import GamepadManager, combo_label
 from src.hotkeys.hotkey_manager import HotkeyManager
 from src.utils import startup
+from src.utils.backgrounds import IMAGE_FILTER, import_background
 from src.utils.constants import (
     AVAILABLE_THEMES,
     CONTROL_ACTIONS,
@@ -48,16 +53,25 @@ from src.utils.constants import (
     SETTING_DEATHS_TXT_TEMPLATE,
     SETTING_MINIMIZE_TO_TRAY,
     SETTING_OVERLAY_ALWAYS_ON_TOP,
+    SETTING_OVERLAY_BG_IMAGE,
     SETTING_OVERLAY_BG_MODE,
+    SETTING_OVERLAY_CARD_COLOR,
+    SETTING_OVERLAY_CORNER_RADIUS,
     SETTING_OVERLAY_COUNTER_SOURCE,
+    SETTING_OVERLAY_FONT,
     SETTING_OVERLAY_FONT_SIZE,
     SETTING_OVERLAY_OPACITY,
+    SETTING_OVERLAY_SECONDARY_COLOR,
     SETTING_OVERLAY_SHOW_BOSS,
     SETTING_OVERLAY_SHOW_GAME,
     SETTING_OVERLAY_SHOW_STATS,
     SETTING_OVERLAY_TEXT_COLOR,
+    SETTING_OVERLAY_TEXT_OUTLINE,
     SETTING_THEME,
+    SETTING_UI_BG_DIM,
+    SETTING_UI_BG_IMAGE,
     SETTING_UI_COUNTER_COLOR,
+    SETTING_UI_FONT,
     SETTING_UI_TEXT_COLOR,
     pad_setting,
 )
@@ -65,23 +79,36 @@ from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
-_BG_MODES = ["dark", "chroma"]
+_BG_MODES: tuple[tuple[str, str], ...] = (
+    ("dark", "Card (solid color)"),
+    ("chroma", "Green screen (for OBS Chroma Key)"),
+    ("image", "Image"),
+)
 _COUNTER_SOURCES = ["session", "boss", "total"]
+
+
+def _readable_on(background: str) -> str:
+    """Black or white, whichever reads better on ``background``."""
+    return "#000000" if QColor(background).lightness() > 150 else "#ffffff"
 
 
 class _ColorChoice(QWidget):
     """A color swatch button plus "Default"; :meth:`color` is "" for the default."""
 
-    def __init__(self, title: str, parent: QWidget | None = None) -> None:
+    def __init__(
+        self, title: str, default_label: str = "Theme", parent: QWidget | None = None
+    ) -> None:
         super().__init__(parent)
         self._title = title
+        self._default_label = default_label
         self._color = ""
         row = QHBoxLayout(self)
         row.setContentsMargins(0, 0, 0, 0)
         self._button = QPushButton()
         self._button.setFixedWidth(90)
         self._button.clicked.connect(self._pick)
-        reset = QPushButton("Default")
+        reset = QPushButton("Reset")
+        reset.setToolTip(f"Back to {default_label.lower()}")
         reset.clicked.connect(lambda: self.set_color(""))
         row.addWidget(self._button)
         row.addWidget(reset)
@@ -93,9 +120,11 @@ class _ColorChoice(QWidget):
 
     def set_color(self, color: str) -> None:
         self._color = color
-        self._button.setText(color or "Theme")
+        self._button.setText(color or self._default_label)
         self._button.setStyleSheet(
-            f"background-color: {color}; color: #ffffff; font-weight: 600;" if color else ""
+            f"background-color: {color}; color: {_readable_on(color)}; font-weight: 600;"
+            if color
+            else ""
         )
 
     def _pick(self) -> None:
@@ -103,6 +132,59 @@ class _ColorChoice(QWidget):
         chosen = QColorDialog.getColor(start, self, self._title)
         if chosen.isValid():
             self.set_color(chosen.name())
+
+
+def _font_combo(default_label: str) -> QComboBox:
+    """Installed font families, with ``default_label`` (value "") first."""
+    combo = QComboBox()
+    combo.addItem(default_label, userData="")
+    for family in QFontDatabase.families():
+        if not family.startswith("@"):  # vertical-text variants of CJK fonts
+            combo.addItem(family, userData=family)
+    combo.setMaxVisibleItems(20)
+    return combo
+
+
+def _select_data(combo: QComboBox, value: str) -> None:
+    combo.setCurrentIndex(max(combo.findData(value), 0))
+
+
+class _ImageChoice(QWidget):
+    """Shows the chosen background image's name, with Choose… and Remove."""
+
+    def __init__(self, title: str, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._title = title
+        self._path = ""
+        row = QHBoxLayout(self)
+        row.setContentsMargins(0, 0, 0, 0)
+        self._label = QLabel()
+        choose = QPushButton("Choose…")
+        choose.clicked.connect(self._choose)
+        self._remove = QPushButton("Remove")
+        self._remove.clicked.connect(lambda: self.set_path(""))
+        row.addWidget(self._label, 1)
+        row.addWidget(choose)
+        row.addWidget(self._remove)
+        self.set_path("")
+
+    def path(self) -> str:
+        return self._path
+
+    def set_path(self, path: str) -> None:
+        self._path = path
+        self._label.setText(Path(path).name if path else "None")
+        self._label.setToolTip(path)
+        self._remove.setEnabled(bool(path))
+
+    def _choose(self) -> None:
+        source, _ = QFileDialog.getOpenFileName(self, self._title, "", IMAGE_FILTER)
+        if not source:
+            return
+        try:
+            self.set_path(str(import_background(Path(source))))
+        except (ValueError, OSError) as exc:
+            QMessageBox.warning(self, "Couldn't Use That Image", str(exc))
 
 
 class SettingsWindow(QDialog):
@@ -145,18 +227,12 @@ class SettingsWindow(QDialog):
         general_page = QWidget()
         layout = QVBoxLayout(general_page)
         tabs.addTab(general_page, "General")
+        tabs.addTab(self._build_appearance_page(), "Appearance")
         tabs.addTab(self._build_controls_page(), "Controls")
 
         # --- General ---
         general_group = QGroupBox("General")
         general_form = QFormLayout(general_group)
-        self._theme_combo = QComboBox()
-        self._theme_combo.addItems(AVAILABLE_THEMES)
-        general_form.addRow("Theme", self._theme_combo)
-        self._ui_text_color = _ColorChoice("Text Color")
-        general_form.addRow("Text color", self._ui_text_color)
-        self._ui_counter_color = _ColorChoice("Death Number Color")
-        general_form.addRow("Death number color", self._ui_counter_color)
         self._minimize_tray_check = QCheckBox("Minimize to system tray on close")
         general_form.addRow(self._minimize_tray_check)
         self._start_with_windows_check = QCheckBox("Start with Windows")
@@ -169,47 +245,6 @@ class SettingsWindow(QDialog):
         self._check_updates_check = QCheckBox("Check for updates on startup")
         general_form.addRow(self._check_updates_check)
         layout.addWidget(general_group)
-
-        # --- Overlay ---
-        overlay_group = QGroupBox("Overlay")
-        overlay_form = QFormLayout(overlay_group)
-
-        self._bg_mode_combo = QComboBox()
-        self._bg_mode_combo.addItems(_BG_MODES)
-        overlay_form.addRow("Background", self._bg_mode_combo)
-
-        self._counter_source_combo = QComboBox()
-        self._counter_source_combo.addItems(_COUNTER_SOURCES)
-        self._counter_source_combo.setToolTip("Used by the main window and the overlay.")
-        overlay_form.addRow("Big number shows", self._counter_source_combo)
-
-        color_row = QHBoxLayout()
-        self._color_button = QPushButton()
-        self._color_button.setFixedWidth(80)
-        self._color_button.clicked.connect(self._pick_color)
-        color_row.addWidget(self._color_button)
-        color_row.addStretch()
-        overlay_form.addRow("Counter color", color_row)
-
-        self._font_size_spin = QSpinBox()
-        self._font_size_spin.setRange(10, 96)
-        overlay_form.addRow("Font size", self._font_size_spin)
-
-        self._opacity_spin = QDoubleSpinBox()
-        self._opacity_spin.setRange(0.1, 1.0)
-        self._opacity_spin.setSingleStep(0.05)
-        overlay_form.addRow("Opacity (dark mode)", self._opacity_spin)
-
-        self._show_game_check = QCheckBox("Show game name")
-        overlay_form.addRow(self._show_game_check)
-        self._show_boss_check = QCheckBox("Show boss name")
-        overlay_form.addRow(self._show_boss_check)
-        self._show_stats_check = QCheckBox("Show Session • Total line")
-        overlay_form.addRow(self._show_stats_check)
-
-        self._always_on_top_check = QCheckBox("Always on top")
-        overlay_form.addRow(self._always_on_top_check)
-        layout.addWidget(overlay_group)
 
         # --- Streaming (deaths.txt) ---
         stream_group = QGroupBox("Streaming — deaths.txt for OBS Text Source")
@@ -237,10 +272,108 @@ class SettingsWindow(QDialog):
 
         layout.addStretch()
 
+        buttons = QHBoxLayout()
+        apply_button = QPushButton("Apply")
+        apply_button.setToolTip("Save and see the changes without closing Settings.")
+        apply_button.clicked.connect(self._apply)
         save_button = QPushButton("Save")
         save_button.setObjectName("AccentButton")
         save_button.clicked.connect(self._save)
-        outer.addWidget(save_button)
+        buttons.addWidget(apply_button)
+        buttons.addWidget(save_button, 1)
+        outer.addLayout(buttons)
+
+    def _build_appearance_page(self) -> QWidget:
+        """Main-window and overlay looks: colors, fonts, background images."""
+        page = QWidget()
+        layout = QVBoxLayout(page)
+
+        window_group = QGroupBox("Main window")
+        window_form = QFormLayout(window_group)
+        self._theme_combo = QComboBox()
+        self._theme_combo.addItems(AVAILABLE_THEMES)
+        window_form.addRow("Theme", self._theme_combo)
+        self._ui_font_combo = _font_combo("Theme font (Segoe UI)")
+        window_form.addRow("Font", self._ui_font_combo)
+        self._ui_text_color = _ColorChoice("Text Color")
+        window_form.addRow("Text color", self._ui_text_color)
+        self._ui_counter_color = _ColorChoice("Death Number Color")
+        window_form.addRow("Death number color", self._ui_counter_color)
+        self._ui_bg_image = _ImageChoice("Main Window Background")
+        window_form.addRow("Background image", self._ui_bg_image)
+        dim_row = QWidget()
+        dim_layout = QHBoxLayout(dim_row)
+        dim_layout.setContentsMargins(0, 0, 0, 0)
+        self._ui_bg_dim = QSlider(Qt.Orientation.Horizontal)
+        self._ui_bg_dim.setRange(0, 90)
+        self._ui_bg_dim.setToolTip(
+            "How much of the theme color covers the image. Higher keeps text easier to read."
+        )
+        dim_value = QLabel()
+        dim_value.setMinimumWidth(36)
+        self._ui_bg_dim.valueChanged.connect(lambda v: dim_value.setText(f"{v}%"))
+        dim_layout.addWidget(self._ui_bg_dim, 1)
+        dim_layout.addWidget(dim_value)
+        window_form.addRow("Image dimming", dim_row)
+        layout.addWidget(window_group)
+
+        overlay_group = QGroupBox("Overlay")
+        overlay_form = QFormLayout(overlay_group)
+        self._bg_mode_combo = QComboBox()
+        for mode, label in _BG_MODES:
+            self._bg_mode_combo.addItem(label, userData=mode)
+        overlay_form.addRow("Background", self._bg_mode_combo)
+        self._card_color = _ColorChoice("Overlay Card Color", default_label="Default")
+        overlay_form.addRow("Card color", self._card_color)
+        self._overlay_image = _ImageChoice("Overlay Background")
+        overlay_form.addRow("Image", self._overlay_image)
+        self._opacity_spin = QDoubleSpinBox()
+        self._opacity_spin.setRange(0.1, 1.0)
+        self._opacity_spin.setSingleStep(0.05)
+        self._opacity_spin.setToolTip("Of the card or image. Green screen is always solid.")
+        overlay_form.addRow("Opacity", self._opacity_spin)
+        self._radius_spin = QSpinBox()
+        self._radius_spin.setRange(0, 40)
+        self._radius_spin.setSuffix(" px")
+        overlay_form.addRow("Corner roundness", self._radius_spin)
+
+        self._counter_source_combo = QComboBox()
+        self._counter_source_combo.addItems(_COUNTER_SOURCES)
+        self._counter_source_combo.setToolTip("Used by the main window and the overlay.")
+        overlay_form.addRow("Big number shows", self._counter_source_combo)
+        self._overlay_font_combo = _font_combo("Default font")
+        overlay_form.addRow("Font", self._overlay_font_combo)
+        self._font_size_spin = QSpinBox()
+        self._font_size_spin.setRange(10, 96)
+        overlay_form.addRow("Number size", self._font_size_spin)
+        color_row = QHBoxLayout()
+        self._color_button = QPushButton()
+        self._color_button.setFixedWidth(80)
+        self._color_button.clicked.connect(self._pick_color)
+        color_row.addWidget(self._color_button)
+        color_row.addStretch()
+        overlay_form.addRow("Number color", color_row)
+        self._secondary_color = _ColorChoice("Overlay Text Color", default_label="Auto")
+        overlay_form.addRow("Other text color", self._secondary_color)
+        self._outline_check = QCheckBox("Shadow behind text (readable over images)")
+        overlay_form.addRow(self._outline_check)
+
+        self._show_game_check = QCheckBox("Show game name")
+        overlay_form.addRow(self._show_game_check)
+        self._show_boss_check = QCheckBox("Show boss name")
+        overlay_form.addRow(self._show_boss_check)
+        self._show_stats_check = QCheckBox("Show Session • All-time line")
+        overlay_form.addRow(self._show_stats_check)
+        self._always_on_top_check = QCheckBox("Always on top")
+        overlay_form.addRow(self._always_on_top_check)
+        layout.addWidget(overlay_group)
+        layout.addStretch()
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+        scroll.setWidget(page)
+        return scroll
 
     def _build_controls_page(self) -> QWidget:
         """Keyboard + controller binding per action, with record/clear buttons."""
@@ -416,7 +549,8 @@ class SettingsWindow(QDialog):
     def _update_color_button(self) -> None:
         self._color_button.setText(self._text_color)
         self._color_button.setStyleSheet(
-            f"background-color: {self._text_color}; color: #ffffff; font-weight: 600;"
+            f"background-color: {self._text_color}; "
+            f"color: {_readable_on(self._text_color)}; font-weight: 600;"
         )
 
     def _pick_color(self) -> None:
@@ -441,6 +575,17 @@ class SettingsWindow(QDialog):
         self._theme_combo.setCurrentText(settings.get(SETTING_THEME, "dark"))
         self._ui_text_color.set_color(settings.get(SETTING_UI_TEXT_COLOR, ""))
         self._ui_counter_color.set_color(settings.get(SETTING_UI_COUNTER_COLOR, ""))
+        _select_data(self._ui_font_combo, settings.get(SETTING_UI_FONT, ""))
+        self._ui_bg_image.set_path(settings.get(SETTING_UI_BG_IMAGE, ""))
+        self._ui_bg_dim.setValue(int(settings.get(SETTING_UI_BG_DIM, "60") or 60))
+        self._card_color.set_color(settings.get(SETTING_OVERLAY_CARD_COLOR, ""))
+        self._overlay_image.set_path(settings.get(SETTING_OVERLAY_BG_IMAGE, ""))
+        self._radius_spin.setValue(int(settings.get(SETTING_OVERLAY_CORNER_RADIUS, "12") or 12))
+        _select_data(self._overlay_font_combo, settings.get(SETTING_OVERLAY_FONT, ""))
+        self._secondary_color.set_color(settings.get(SETTING_OVERLAY_SECONDARY_COLOR, ""))
+        self._outline_check.setChecked(
+            settings.get(SETTING_OVERLAY_TEXT_OUTLINE, "false") == "true"
+        )
         self._minimize_tray_check.setChecked(
             settings.get(SETTING_MINIMIZE_TO_TRAY, "false") == "true"
         )
@@ -449,7 +594,7 @@ class SettingsWindow(QDialog):
             settings.get(SETTING_CHECK_UPDATES, "true") == "true"
         )
 
-        self._bg_mode_combo.setCurrentText(settings.get(SETTING_OVERLAY_BG_MODE, "dark"))
+        _select_data(self._bg_mode_combo, settings.get(SETTING_OVERLAY_BG_MODE, "dark"))
         self._counter_source_combo.setCurrentText(
             settings.get(SETTING_OVERLAY_COUNTER_SOURCE, "session")
         )
@@ -481,16 +626,32 @@ class SettingsWindow(QDialog):
             self._set_pad(action, settings.get(pad_setting(action), ""))
 
     def _save(self) -> None:
+        if self._apply():
+            self.accept()
+
+    def _apply(self) -> bool:
+        """Save every setting and notify the main window; False if Controls has errors."""
         errors = [c for c in self._current_conflicts() if c.severity == ERROR]
         if errors:
             QMessageBox.warning(
                 self, "Fix Controls First", "\n".join(c.message for c in errors)
             )
-            return
+            return False
         db = self._database
         db.set_setting(SETTING_THEME, self._theme_combo.currentText())
         db.set_setting(SETTING_UI_TEXT_COLOR, self._ui_text_color.color())
         db.set_setting(SETTING_UI_COUNTER_COLOR, self._ui_counter_color.color())
+        db.set_setting(SETTING_UI_FONT, self._ui_font_combo.currentData())
+        db.set_setting(SETTING_UI_BG_IMAGE, self._ui_bg_image.path())
+        db.set_setting(SETTING_UI_BG_DIM, self._ui_bg_dim.value())
+        db.set_setting(SETTING_OVERLAY_CARD_COLOR, self._card_color.color())
+        db.set_setting(SETTING_OVERLAY_BG_IMAGE, self._overlay_image.path())
+        db.set_setting(SETTING_OVERLAY_CORNER_RADIUS, self._radius_spin.value())
+        db.set_setting(SETTING_OVERLAY_FONT, self._overlay_font_combo.currentData())
+        db.set_setting(SETTING_OVERLAY_SECONDARY_COLOR, self._secondary_color.color())
+        db.set_setting(
+            SETTING_OVERLAY_TEXT_OUTLINE, "true" if self._outline_check.isChecked() else "false"
+        )
         db.set_setting(
             SETTING_MINIMIZE_TO_TRAY,
             "true" if self._minimize_tray_check.isChecked() else "false",
@@ -505,7 +666,7 @@ class SettingsWindow(QDialog):
             "true" if self._check_updates_check.isChecked() else "false",
         )
 
-        db.set_setting(SETTING_OVERLAY_BG_MODE, self._bg_mode_combo.currentText())
+        db.set_setting(SETTING_OVERLAY_BG_MODE, self._bg_mode_combo.currentData())
         db.set_setting(SETTING_OVERLAY_COUNTER_SOURCE, self._counter_source_combo.currentText())
         db.set_setting(SETTING_OVERLAY_TEXT_COLOR, self._text_color)
         db.set_setting(SETTING_OVERLAY_FONT_SIZE, self._font_size_spin.value())
@@ -542,4 +703,4 @@ class SettingsWindow(QDialog):
 
         logger.info("Settings saved")
         self.settings_changed.emit()
-        self.accept()
+        return True
