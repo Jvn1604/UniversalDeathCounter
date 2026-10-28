@@ -10,14 +10,18 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import sqlite3
+import tempfile
+import threading
 import time
 from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
 
-from PySide6.QtCore import QByteArray, Qt, QTimer
+from PySide6.QtCore import QByteArray, QObject, Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import (
     QColor,
+    QDesktopServices,
     QGuiApplication,
     QIcon,
     QKeySequence,
@@ -40,6 +44,7 @@ from PySide6.QtWidgets import (
     QMenu,
     QMenuBar,
     QMessageBox,
+    QProgressDialog,
     QPushButton,
     QScrollArea,
     QStackedWidget,
@@ -100,10 +105,12 @@ from src.ui.auto_detect_window import (
 )
 from src.ui.boss_window import BossWindow
 from src.ui.death_log_window import DeathLogWindow
+from src.ui.mini_window import MiniWindow
 from src.ui.obs_guide_window import ObsGuideWindow
 from src.ui.settings_window import SettingsWindow
 from src.ui.statistics_window import StatisticsWindow
 from src.ui.timer_window import RunHistoryDialog, SplitsDialog, TimerWindow
+from src.ui.welcome_dialog import CHOICE_EXE, CHOICE_OBS, CHOICE_TEMPLATE, WelcomeDialog
 from src.ui.widgets import (
     StatTile,
     StatusPill,
@@ -143,6 +150,7 @@ from src.utils.constants import (
     SETTING_LAST_BOSS_ID,
     SETTING_LAST_GAME_ID,
     SETTING_MAIN_WINDOW_GEOMETRY,
+    SETTING_MINI_GEOMETRY,
     SETTING_MINIMIZE_TO_TRAY,
     SETTING_OVERLAY_ALWAYS_ON_TOP,
     SETTING_OVERLAY_BG_MODE,
@@ -165,14 +173,23 @@ from src.utils.constants import (
     SETTING_UI_COUNTER_COLOR,
     SETTING_UI_FONT,
     SETTING_UI_TEXT_COLOR,
+    SETTING_WELCOME_SHOWN,
     pad_setting,
 )
 from src.utils.exporters import write_csv_summary
+from src.utils.game_templates import add_template_bosses, get_template
 from src.utils.logger import get_logger
 from src.utils.profiles import DEFAULT_PROFILE_NAME, ProfileManager
 from src.utils.screens import display_name, fit_to_screens, screen_index_at
 from src.utils.stream_writer import render_template, write_deaths_file
 from src.utils.update_checker import UpdateChecker
+from src.utils.updater import (
+    INSTALLER_NAME,
+    UpdateError,
+    download_installer,
+    is_installed_copy,
+    launch_installer,
+)
 
 logger = get_logger(__name__)
 
@@ -188,6 +205,45 @@ _GAME_TIME_PAUSES = {
     ACTIVITY_NOT_RESPONDING: ("Game not responding", SETTING_TIMER_PAUSE_NOT_RESPONDING),
     ACTIVITY_BACKGROUND: ("Game in background", SETTING_TIMER_PAUSE_BACKGROUND),
 }
+# Timer keys besides Start/Split are only registered while a run is going:
+# a registered hotkey is swallowed system-wide, and these default to number-
+# pad digits, which would otherwise stop typing in every other app.
+_RUN_ONLY_ACTIONS = ("timer_pause", "timer_reset", "timer_undo", "timer_skip")
+_TIMER_BUTTON_TEXT = {
+    "split": "▶  Start / Split",
+    "pause": "❚❚  Pause",
+    "undo": "↶  Undo",
+    "skip": "⤼  Skip",
+    "reset": "⟲  Reset",
+}
+
+
+class _UpdateDownload(QObject):
+    """Downloads the update installer on a worker thread and reports back by signal."""
+
+    progress = Signal(int, int)
+    succeeded = Signal(str)
+    failed = Signal(str)
+
+    def __init__(self, url: str, size: int, destination: Path) -> None:
+        super().__init__()
+        self._url, self._size, self._destination = url, size, destination
+        self.cancelled = threading.Event()
+
+    def start(self) -> None:
+        threading.Thread(target=self._run, name="UpdateDownload", daemon=True).start()
+
+    def _run(self) -> None:
+        try:
+            path = download_installer(
+                self._url, self._destination, self._size, self.progress.emit, self.cancelled
+            )
+        except UpdateError as exc:
+            self.failed.emit(str(exc))
+            return
+        self.succeeded.emit(str(path))
+
+
 # Sidebar pages, in stack order.
 _PAGE_HOME, _PAGE_TIMER, _PAGE_STATS, _PAGE_DETECTION = range(4)
 _TIMER_STATUS_COLORS = {AHEAD: "#3ad07a", BEHIND: "#ff5c5c", GOLD: "#ffd24a"}
@@ -253,6 +309,8 @@ class MainWindow(QMainWindow):
         self._counter_manager = CounterManager(self._database, self._session_manager)
         self._statistics_service = StatisticsService(self._database)
         self._overlay = OverlayWindow()
+        self._mini = MiniWindow()
+        self._mini.action_requested.connect(self._on_mini_action)
         self._timer_window = TimerWindow()
         self._timer_window.action_requested.connect(self._on_timer_window_action)
         self._speedrun: SpeedrunController | None = None
@@ -261,6 +319,9 @@ class MainWindow(QMainWindow):
         self._detection_paused = False  # not persisted: every launch starts active
         self._quitting = False
         self._closed = False  # cleanup ran; a second close must not touch the database
+        self._run_keys_active = False  # see _RUN_ONLY_ACTIONS
+        self._update_page_url = ""
+        self._update_version = ""
         # True once this session has written a crash-recovery snapshot. Until
         # then a snapshot in the settings belongs to a crashed earlier run,
         # waiting for the recovery prompt, and must not be cleared.
@@ -334,6 +395,8 @@ class MainWindow(QMainWindow):
         timer_action.triggered.connect(self._toggle_timer_window)
         history_action = view_menu.addAction("Run History && Records…")
         history_action.triggered.connect(self._open_run_history)
+        mini_action = view_menu.addAction("Mini Mode")
+        mini_action.triggered.connect(self._toggle_mini_mode)
         stats_action = view_menu.addAction("Statistics && Graphs…")
         stats_action.triggered.connect(self._show_statistics)
         log_action = view_menu.addAction("Death Log…")
@@ -346,6 +409,8 @@ class MainWindow(QMainWindow):
         help_menu = menu_bar.addMenu("&Help")
         obs_action = help_menu.addAction("Set Up OBS Overlay…")
         obs_action.triggered.connect(self._open_obs_guide)
+        welcome_action = help_menu.addAction("Welcome Guide…")
+        welcome_action.triggered.connect(lambda: self.maybe_show_welcome(force=True))
         help_menu.addSeparator()
         about_action = help_menu.addAction("About")
         about_action.triggered.connect(self._open_about_window)
@@ -446,6 +511,13 @@ class MainWindow(QMainWindow):
         settings_button.setObjectName("IconButton")
         settings_button.setToolTip("Settings")
         settings_button.clicked.connect(self._open_settings_window)
+        self._update_btn = QPushButton()
+        self._update_btn.setObjectName("AccentButton")
+        self._update_btn.setToolTip("Download and install the new version")
+        self._update_btn.clicked.connect(self._start_update)
+        self._update_btn.hide()
+        layout.addWidget(self._update_btn)
+        layout.addSpacing(8)
         layout.addWidget(profile_caption)
         layout.addWidget(self._profile_combo)
         layout.addWidget(settings_button)
@@ -471,6 +543,7 @@ class MainWindow(QMainWindow):
             layout.addWidget(button)
         layout.addStretch()
         for text, handler in (
+            ("◱   Mini Mode", self._toggle_mini_mode),
             ("▣   Overlay", self._toggle_overlay),
             ("◉   OBS Setup", self._open_obs_guide),
             ("≡   Settings", self._open_settings_window),
@@ -500,6 +573,13 @@ class MainWindow(QMainWindow):
         self._game_combo.currentIndexChanged.connect(self._on_game_changed)
         self._boss_combo = QComboBox()
         self._boss_combo.currentIndexChanged.connect(self._on_boss_changed)
+        for combo, handler in (
+            (self._game_combo, self._game_context_menu),
+            (self._boss_combo, self._boss_context_menu),
+        ):
+            combo.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+            combo.customContextMenuRequested.connect(handler)
+            combo.setToolTip("Right-click to rename")
         self._prev_boss_btn = QPushButton("◀")
         self._prev_boss_btn.clicked.connect(lambda: self._select_adjacent_boss(-1))
         self._next_boss_btn = QPushButton("▶")
@@ -539,6 +619,13 @@ class MainWindow(QMainWindow):
         self._counter_caption.setAlignment(Qt.AlignmentFlag.AlignCenter)
         hero_layout.addWidget(self._counter_label)
         hero_layout.addWidget(self._counter_caption)
+        # Empty state: one obvious first step instead of a lonely 0.
+        self._first_game_btn = QPushButton("+   Add Your First Game")
+        self._first_game_btn.setObjectName("AccentButton")
+        self._first_game_btn.setMinimumHeight(44)
+        self._first_game_btn.clicked.connect(lambda: self.maybe_show_welcome(force=True))
+        self._first_game_btn.hide()
+        hero_layout.addWidget(self._first_game_btn, 0, Qt.AlignmentFlag.AlignHCenter)
         hero_layout.addSpacing(8)
         self._tile_session = StatTile("This session")
         self._tile_boss = StatTile("This boss")
@@ -634,20 +721,16 @@ class MainWindow(QMainWindow):
         hero_layout.addWidget(self._timer_page_info)
         layout.addWidget(hero)
 
-        split_button = QPushButton("▶  Start / Split")
-        split_button.setObjectName("AccentButton")
-        buttons = [split_button]
-        for text in ("❚❚  Pause", "↶  Undo", "⤼  Skip"):
-            buttons.append(QPushButton(text))
-        reset_button = QPushButton("⟲  Reset")
-        reset_button.setObjectName("DangerButton")
-        buttons.append(reset_button)
-        for button, action in zip(
-            buttons, ("split", "pause", "undo", "skip", "reset"), strict=True
-        ):
-            button.setMinimumHeight(44)
+        # Labels (with their hotkeys) come from _update_hotkey_labels().
+        self._timer_buttons = {
+            action: QPushButton(text) for action, text in _TIMER_BUTTON_TEXT.items()
+        }
+        self._timer_buttons["split"].setObjectName("AccentButton")
+        self._timer_buttons["reset"].setObjectName("DangerButton")
+        for action, button in self._timer_buttons.items():
+            button.setMinimumHeight(54)  # two lines: action, then its key
             button.clicked.connect(lambda _=False, a=action: self._timer_action(a))
-        layout.addLayout(row(*buttons, stretch=(2, 1, 1, 1, 1)))
+        layout.addLayout(row(*self._timer_buttons.values(), stretch=(2, 1, 1, 1, 1)))
 
         self._timer_tiles = {
             "pb": StatTile("Personal best"),
@@ -913,6 +996,18 @@ class MainWindow(QMainWindow):
         minus_action.triggered.connect(self._on_decrement)
         undo_action = menu.addAction("Undo")
         undo_action.triggered.connect(self._on_undo)
+        defeated_action = menu.addAction("Boss Defeated")
+        defeated_action.triggered.connect(lambda: self._defeat_current_boss(detected=False))
+        pause_action = menu.addAction("Pause / Resume Auto-Detect")
+        pause_action.triggered.connect(self._toggle_detection_pause)
+        menu.addSeparator()
+        split_action = menu.addAction("Timer: Start / Split")
+        split_action.triggered.connect(lambda: self._timer_action("split"))
+        timer_window_action = menu.addAction("Show / Hide Timer Window")
+        timer_window_action.triggered.connect(self._toggle_timer_window)
+        mini_action = menu.addAction("Mini Mode")
+        mini_action.triggered.connect(self._toggle_mini_mode)
+        menu.addSeparator()
         overlay_action = menu.addAction("Toggle Overlay")
         overlay_action.triggered.connect(self._toggle_overlay)
         self._add_display_menu(menu)
@@ -946,6 +1041,22 @@ class MainWindow(QMainWindow):
             f"{action}_key": settings.get(setting_key, default)
             for action, _label, setting_key, default in CONTROL_ACTIONS
         }
+
+    def _registered_bindings(self) -> dict[str, str]:
+        """The keyboard combos to register now: run-only timer keys only during a run."""
+        bindings = self._hotkey_bindings()
+        if not self._run_keys_active:
+            for action in _RUN_ONLY_ACTIONS:
+                bindings[f"{action}_key"] = ""
+        return bindings
+
+    def _sync_run_hotkeys(self) -> None:
+        """Register the run-only timer keys while a run is going (or just finished)."""
+        controller = self._speedrun
+        active = controller is not None and controller.timer.state != IDLE
+        if active != self._run_keys_active:
+            self._run_keys_active = active
+            self._hotkey_manager.update_bindings(**self._registered_bindings())
 
     def _pad_bindings(self) -> dict[str, str]:
         """Controller combos from settings, keyed by action ("" = unbound)."""
@@ -983,6 +1094,17 @@ class MainWindow(QMainWindow):
         )
         self._prev_boss_btn.setToolTip(tooltip("prev_boss", "Previous boss"))
         self._next_boss_btn.setToolTip(tooltip("next_boss", "Next boss not yet defeated"))
+        self._defeated_btn.setToolTip(
+            tooltip("boss_defeated", "Boss defeated: mark it ✓ and move to the next boss")
+        )
+        for action, button in self._timer_buttons.items():
+            text, hotkey = _TIMER_BUTTON_TEXT[action], key(f"timer_{action}")
+            # Key on its own line: five buttons with "(Num+1)" don't fit side by side.
+            button.setText(f"{text}\n{hotkey}" if hotkey else text)
+            what = text.split("  ", 1)[-1]
+            if f"timer_{action}" in _RUN_ONLY_ACTIONS:
+                what += "\nThe key works in-game while a run is going."
+            button.setToolTip(tooltip(f"timer_{action}", what))
 
     def _setup_hotkeys(self) -> None:
         self._action_handlers = {
@@ -1002,7 +1124,7 @@ class MainWindow(QMainWindow):
             "timer_skip": lambda: self._timer_action("skip"),
         }
         bindings = self._hotkey_bindings()
-        self._hotkey_manager = HotkeyManager(**bindings, parent=self)
+        self._hotkey_manager = HotkeyManager(**self._registered_bindings(), parent=self)
         self._hotkey_manager.action_triggered.connect(
             lambda action: self._action_handlers[action]()
         )
@@ -1378,6 +1500,7 @@ class MainWindow(QMainWindow):
         )
         self._overlay.apply_display_settings(settings)
         self._timer_window.apply_display_settings(settings)
+        self._mini.apply_display_settings(settings)
         self._timer_window.restore_geometry_string(settings.get(SETTING_TIMER_GEOMETRY, ""))
         self._timer_window.setVisible(settings.get(SETTING_TIMER_VISIBLE, "false") == "true")
         self._overlay.set_always_on_top(
@@ -1393,10 +1516,13 @@ class MainWindow(QMainWindow):
         self._update_checker.check_async()
 
     def _on_update_available(self, latest: str, url: str) -> None:
+        self._update_version, self._update_page_url = latest, url
+        self._update_btn.setText(f"↑  Update to {latest}")
+        self._update_btn.show()
         if self._tray is not None:
             self._tray.showMessage(
                 APP_BRAND,
-                f"Version {latest} is available! Get it at:\n{url}",
+                f"Version {latest} is available. Click \"Update\" at the top of the window.",
                 QSystemTrayIcon.MessageIcon.Information,
                 8000,
             )
@@ -1404,6 +1530,185 @@ class MainWindow(QMainWindow):
             QMessageBox.information(
                 self, "Update Available", f"Version {latest} is available:\n{url}"
             )
+
+    def _start_update(self) -> None:
+        """Download the new installer, run it silently and quit (installed copies)."""
+        checker = getattr(self, "_update_checker", None)
+        url = checker.installer_url if checker is not None else ""
+        size = checker.installer_size if checker is not None else 0
+        if not is_installed_copy() or not url:
+            # Portable or source copies can't replace themselves: open the release.
+            QDesktopServices.openUrl(QUrl(self._update_page_url))
+            return
+        confirm = QMessageBox.question(
+            self,
+            "Update",
+            f"Download and install {self._update_version} now?\n\n"
+            f"{APP_SHORT_NAME} closes, updates and opens again in a moment. Your games, "
+            "deaths and settings are kept.",
+        )
+        if confirm != QMessageBox.StandardButton.Yes:
+            return
+        progress = QProgressDialog("Downloading the update…", "Cancel", 0, 100, self)
+        progress.setWindowTitle("Update")
+        progress.setMinimumDuration(0)
+        destination = Path(tempfile.gettempdir()) / "DUDC-update" / INSTALLER_NAME
+        download = self._update_download = _UpdateDownload(url, size, destination)
+        download.progress.connect(
+            lambda done, total: progress.setValue(int(done * 100 / max(total, 1)))
+        )
+        progress.canceled.connect(download.cancelled.set)
+
+        def failed(message: str) -> None:
+            progress.close()
+            if not download.cancelled.is_set():
+                QMessageBox.warning(self, "Update Failed", message)
+
+        def succeeded(path: str) -> None:
+            progress.close()
+            try:
+                launch_installer(Path(path))
+            except OSError as exc:
+                QMessageBox.warning(self, "Update Failed", f"Couldn't start the installer: {exc}")
+                return
+            self._quit_app()  # the installer replaces the files and reopens the app
+
+        download.failed.connect(failed)
+        download.succeeded.connect(succeeded)
+        download.start()
+
+    # ----------------------------------------------------------------
+    # Welcome guide, mini mode, quick renames
+    # ----------------------------------------------------------------
+    def maybe_show_welcome(self, force: bool = False) -> None:
+        """The first-run guide: on a fresh install once, or on request."""
+        if not force and (
+            self._database.get_games()
+            or self._database.get_setting(SETTING_WELCOME_SHOWN, "") == "true"
+        ):
+            return
+        bindings = self._hotkey_bindings()
+        keys = {
+            action: QKeySequence(bindings.get(f"{action}_key", "")).toString(
+                QKeySequence.SequenceFormat.NativeText
+            )
+            for action in ("increment", "decrement", "undo", "calibrate", "toggle_overlay")
+        }
+        dialog = WelcomeDialog(keys, parent=self)
+        dialog.exec()
+        self._database.set_setting(SETTING_WELCOME_SHOWN, "false" if dialog.show_again else "true")
+        if dialog.choice == CHOICE_EXE:
+            self._add_game_from_exe()
+        elif dialog.choice == CHOICE_TEMPLATE:
+            self._add_template_game(dialog.template_name)
+        elif dialog.choice == CHOICE_OBS:
+            self._open_obs_guide()
+
+    def _add_template_game(self, name: str) -> None:
+        template = get_template(name)
+        if template is None:
+            return
+        game_id, _added = add_template_bosses(self._database, template)
+        self._reload_games(select_game_id=game_id)
+        if self._boss_combo.count() > 1:
+            self._boss_combo.setCurrentIndex(1)  # the first boss, in story order
+
+    def _toggle_mini_mode(self) -> None:
+        if self._mini.isVisible():
+            self._exit_mini_mode()
+        else:
+            self._enter_mini_mode()
+
+    def _enter_mini_mode(self) -> None:
+        """Swap the full window for the small always-on-top one."""
+        saved = self._database.get_setting(SETTING_MINI_GEOMETRY, "")
+        if saved:
+            self._mini.restore_geometry_string(saved)
+        else:
+            corner = self.frameGeometry().topRight()
+            self._mini.move(corner.x() - self._mini.width(), corner.y() + 40)
+            self._mini.keep_on_screen()
+        self._refresh_counters()
+        self._mini.show()
+        self._mini.raise_()
+        self.hide()
+
+    def _exit_mini_mode(self) -> None:
+        self._database.set_setting(SETTING_MINI_GEOMETRY, self._mini.geometry_string())
+        self._mini.hide()
+        self.show()
+        self.raise_()
+        self.activateWindow()
+
+    def _on_mini_action(self, action: str) -> None:
+        if action == "increment":
+            self._on_increment()
+        elif action == "undo":
+            self._on_undo()
+        elif action == "expand":
+            self._exit_mini_mode()
+
+    def _game_context_menu(self, position) -> None:
+        game_id = self._counter_manager.current_game_id
+        if game_id is None:
+            return
+        menu = QMenu(self)
+        menu.addAction("Rename Game…", self._rename_current_game)
+        menu.addAction("Games && Bosses…", self._open_boss_window)
+        menu.exec(self._game_combo.mapToGlobal(position))
+
+    def _boss_context_menu(self, position) -> None:
+        boss_id = self._counter_manager.current_boss_id
+        menu = QMenu(self)
+        if boss_id is not None:
+            boss = self._database.get_boss(boss_id)
+            menu.addAction("Rename Boss…", self._rename_current_boss)
+            if boss is not None and boss["defeated"]:
+                menu.addAction("Mark Not Defeated", lambda: self._set_boss_defeated(False))
+            else:
+                menu.addAction("Mark Defeated ✓", lambda: self._set_boss_defeated(True))
+            menu.addSeparator()
+        menu.addAction("Games && Bosses…", self._open_boss_window)
+        menu.exec(self._boss_combo.mapToGlobal(position))
+
+    def _rename_current_game(self) -> None:
+        game_id = self._counter_manager.current_game_id
+        if game_id is None:
+            return
+        name, ok = QInputDialog.getText(
+            self, "Rename Game", "New name:", text=self._game_combo.currentText()
+        )
+        if not ok or not name.strip() or name.strip() == self._game_combo.currentText():
+            return
+        try:
+            self._database.rename_game(game_id, name.strip())
+        except (ValueError, sqlite3.Error) as exc:
+            QMessageBox.warning(self, "Could Not Rename", f"{exc}\n\nIs the name already used?")
+            return
+        self._reload_games(select_game_id=game_id)
+
+    def _rename_current_boss(self) -> None:
+        boss_id = self._counter_manager.current_boss_id
+        boss = self._database.get_boss(boss_id) if boss_id is not None else None
+        if boss is None:
+            return
+        name, ok = QInputDialog.getText(self, "Rename Boss", "New name:", text=boss["name"])
+        if not ok or not name.strip() or name.strip() == boss["name"]:
+            return
+        try:
+            self._database.rename_boss(boss_id, name.strip())
+        except (ValueError, sqlite3.Error) as exc:
+            QMessageBox.warning(self, "Could Not Rename", f"{exc}\n\nIs the name already used?")
+            return
+        self._reload_bosses(self._counter_manager.current_game_id)
+
+    def _set_boss_defeated(self, defeated: bool) -> None:
+        boss_id = self._counter_manager.current_boss_id
+        if boss_id is None:
+            return
+        self._database.set_boss_defeated(boss_id, defeated)
+        self._reload_bosses(self._counter_manager.current_game_id)
+        self._configure_detection()  # victory watching follows defeated state
 
     # ----------------------------------------------------------------
     # Profiles
@@ -1500,6 +1805,7 @@ class MainWindow(QMainWindow):
             self._game_combo.blockSignals(True)
             self._game_combo.setCurrentIndex(index)
             self._game_combo.blockSignals(False)
+            self._first_game_btn.hide()
             self._on_game_changed(index)
         else:
             self._game_combo.blockSignals(True)
@@ -1510,6 +1816,7 @@ class MainWindow(QMainWindow):
             self._refresh_counters()
             self._configure_detection()
             self._load_speedrun()  # drops a run of a game that was just deleted
+            self._first_game_btn.show()
 
     def _saved_id(self, setting_key: str) -> int | None:
         """Read an id stored in the settings table (empty/invalid -> None)."""
@@ -1672,6 +1979,7 @@ class MainWindow(QMainWindow):
         if self._pages.currentIndex() == _PAGE_STATS:
             self._refresh_stats_page()
         self._overlay.update_counters(snapshot)
+        self._mini.update_counters(snapshot)
         self._write_deaths_txt(snapshot)
 
     def _deaths_txt_path(self) -> Path:
@@ -1831,7 +2139,7 @@ class MainWindow(QMainWindow):
     def _on_settings_changed_hotkeys(self) -> None:
         bindings = self._hotkey_bindings()
         pads = self._pad_bindings()
-        self._hotkey_manager.update_bindings(**bindings)
+        self._hotkey_manager.update_bindings(**self._registered_bindings())
         self._gamepad_manager.update_bindings(pads)
         self._update_hotkey_labels(bindings, pads)
 
@@ -1886,6 +2194,7 @@ class MainWindow(QMainWindow):
         self._apply_timer_options(controller)
         self._speedrun = controller
         self._timer_window.set_controller(controller)
+        self._sync_run_hotkeys()
 
     def _apply_timer_options(self, controller: SpeedrunController) -> None:
         settings = self._database.get_all_settings()
@@ -2044,6 +2353,7 @@ class MainWindow(QMainWindow):
             self._toggle_timer_window()
         self._timer_window.refresh()
         self._configure_detection()
+        self._sync_run_hotkeys()
 
     def _timer_action(self, action: str) -> None:
         controller = self._speedrun
@@ -2071,6 +2381,7 @@ class MainWindow(QMainWindow):
         self._autosave()
         self._timer_window.refresh()
         self._refresh_timer_page()
+        self._sync_run_hotkeys()
 
     def _on_timer_window_action(self, action: str) -> None:
         if action == "edit_splits":
@@ -2158,6 +2469,7 @@ class MainWindow(QMainWindow):
             self.move(fitted.topLeft())
         self._overlay.keep_on_screen()
         self._timer_window.keep_on_screen()
+        self._mini.keep_on_screen()
 
     def _on_screen_removed(self, _screen: QScreen) -> None:
         # Let Qt finish re-laying out the remaining displays first.
@@ -2184,6 +2496,7 @@ class MainWindow(QMainWindow):
 
         self._end_speedrun()
         self._database.set_setting(SETTING_OVERLAY_GEOMETRY, self._overlay.geometry_string())
+        self._database.set_setting(SETTING_MINI_GEOMETRY, self._mini.geometry_string())
         self._database.set_setting(
             SETTING_MAIN_WINDOW_GEOMETRY, bytes(self.saveGeometry().toBase64()).decode("ascii")
         )
@@ -2198,6 +2511,7 @@ class MainWindow(QMainWindow):
         self._log_watcher.stop()
         self._overlay.close()
         self._timer_window.close()
+        self._mini.close()
         if self._tray is not None:
             self._tray.hide()
         self._database.close()

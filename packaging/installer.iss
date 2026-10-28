@@ -56,3 +56,5 @@ Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExeName}"; Tasks: deskto
 
 [Run]
 Filename: "{app}\{#AppExeName}"; Description: "Launch {#AppName}"; Flags: nowait postinstall skipifsilent
+; In-app updates run the installer silently: reopen the app afterwards.
+Filename: "{app}\{#AppExeName}"; Flags: nowait skipifnotsilent

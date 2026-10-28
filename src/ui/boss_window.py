@@ -24,12 +24,19 @@ from PySide6.QtWidgets import (
 
 from src.database.database import Database
 from src.ui.session_history_window import SessionHistoryWindow
-from src.utils.game_templates import get_template, get_template_names
+from src.utils.game_templates import add_template_bosses, get_template, get_template_names
 from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
 _USER_ROLE = 256  # Qt.ItemDataRole.UserRole
+
+
+def _plural(count: int, noun: str) -> str:
+    """'1 death', '3 deaths', '2 bosses'."""
+    if count == 1:
+        return f"1 {noun}"
+    return f"{count} {noun}es" if noun.endswith("s") else f"{count} {noun}s"
 
 
 class BossWindow(QDialog):
@@ -196,17 +203,37 @@ class BossWindow(QDialog):
         item = self._games_list.currentItem()
         if item is None:
             return
-        confirm = QMessageBox.question(
+        game_id = item.data(_USER_ROLE)
+        confirm = QMessageBox.warning(
             self,
             "Delete Game",
-            f"Delete '{item.text()}' and all of its bosses/history? This cannot be undone.",
+            f"Delete '{item.text()}'?\n\n{self._what_goes(game_id)}\n\n"
+            "This can't be undone. Export a backup first (File → Export Backup) "
+            "if you might want them back.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
         )
         if confirm != QMessageBox.StandardButton.Yes:
             return
-        self._database.delete_game(item.data(_USER_ROLE))
+        self._database.delete_game(game_id)
         self._selected_game_id = None
         self._reload_games()
         self._reload_bosses()
+
+    def _what_goes(self, game_id: int) -> str:
+        """What deleting a game removes, in numbers (e.g. "This removes 412 deaths, …")."""
+        db = self._database
+        counts = (
+            (db.get_total_deaths(game_id), "death"),
+            (len(db.get_bosses(game_id)), "boss"),
+            (db.get_total_sessions(game_id), "session"),
+            (db.count_speedrun_attempts(game_id), "speedrun attempt"),
+        )
+        parts = [_plural(count, noun) for count, noun in counts if count]
+        if not parts:
+            return "It has no deaths, bosses or runs yet."
+        listed = ", ".join(parts[:-1]) + (" and " if len(parts) > 1 else "") + parts[-1]
+        return f"This permanently removes {listed}."
 
     def _add_from_template(self) -> None:
         template = get_template(self._template_combo.currentText())
@@ -222,16 +249,7 @@ class BossWindow(QDialog):
             )
             if confirm != QMessageBox.StandardButton.Yes:
                 return
-            game_id = next(g["id"] for g in self._database.get_games() if g["name"] == game_name)
-        else:
-            game_id = self._database.create_game(game_name)
-
-        existing_bosses = {b["name"] for b in self._database.get_bosses(game_id)}
-        added = 0
-        for boss_name in template.bosses:
-            if boss_name not in existing_bosses:
-                self._database.create_boss(game_id, boss_name)
-                added += 1
+        _game_id, added = add_template_bosses(self._database, template)
 
         self._reload_games()
         QMessageBox.information(
