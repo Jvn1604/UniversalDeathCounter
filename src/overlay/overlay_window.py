@@ -15,8 +15,8 @@ through :meth:`apply_display_settings`.
 
 from __future__ import annotations
 
-from PySide6.QtCore import QPoint, Qt
-from PySide6.QtGui import QMouseEvent
+from PySide6.QtCore import QPoint, QRect, Qt
+from PySide6.QtGui import QGuiApplication, QMouseEvent, QScreen
 from PySide6.QtWidgets import QLabel, QSizeGrip, QVBoxLayout, QWidget
 
 from src.core.counter_manager import CounterSnapshot
@@ -32,6 +32,7 @@ from src.utils.constants import (
     SETTING_OVERLAY_TEXT_COLOR,
 )
 from src.utils.logger import get_logger
+from src.utils.screens import fit_to_screens, place_in_corner
 
 logger = get_logger(__name__)
 
@@ -208,11 +209,38 @@ class OverlayWindow(QWidget):
         return f"{g.x()},{g.y()},{g.width()},{g.height()}"
 
     def restore_geometry_string(self, value: str) -> None:
-        """Restore geometry from a 'x,y,w,h' string, ignoring invalid input."""
+        """
+        Restore geometry from a 'x,y,w,h' string, ignoring invalid input.
+
+        If that spot is no longer on a connected display (monitor unplugged,
+        laptop undocked), the overlay is moved onto the primary display.
+        """
         if not value:
             return
         try:
             x, y, w, h = (int(part) for part in value.split(","))
-            self.setGeometry(x, y, w, h)
         except (ValueError, TypeError):
             logger.warning("Could not parse overlay geometry string: %s", value)
+            return
+        self.setGeometry(fit_to_screens(QRect(x, y, w, h), available_screen_rects()))
+
+    def keep_on_screen(self) -> None:
+        """Pull the overlay back onto a display if it ended up off every screen."""
+        fitted = fit_to_screens(self.geometry(), available_screen_rects())
+        if fitted != self.geometry():
+            logger.info("Overlay was off-screen; moved to the primary display")
+            self.setGeometry(fitted)
+
+    def move_to_screen(self, screen: QScreen) -> None:
+        """Place the overlay in the top-right corner of ``screen`` and show it."""
+        self.setGeometry(place_in_corner(self.geometry(), screen.availableGeometry()))
+        self.show()
+        self.raise_()
+        logger.info("Overlay moved to display %s", screen.name())
+
+
+def available_screen_rects() -> list[QRect]:
+    """Usable area of every connected display, primary first."""
+    primary = QGuiApplication.primaryScreen()
+    screens = sorted(QGuiApplication.screens(), key=lambda s: s is not primary)
+    return [s.availableGeometry() for s in screens]

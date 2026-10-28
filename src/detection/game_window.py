@@ -184,9 +184,38 @@ def window_client_rect(hwnd: int) -> Rect | None:
     return origin.x, origin.y, width, height
 
 
+def clip_to_desktop(rect: Rect, desktop: Rect) -> Rect | None:
+    """
+    Intersect a window rect with the virtual desktop (all displays together).
+
+    Displays left of or above the primary have negative coordinates, which
+    is fine; only parts hanging off every display are cut. Returns None if
+    nothing is visible.
+    """
+    left, top = max(rect[0], desktop[0]), max(rect[1], desktop[1])
+    right = min(rect[0] + rect[2], desktop[0] + desktop[2])
+    bottom = min(rect[1] + rect[3], desktop[1] + desktop[3])
+    if right <= left or bottom <= top:
+        return None
+    return left, top, right - left, bottom - top
+
+
+def monitor_at(monitors: list[dict], x: int, y: int) -> dict:
+    """The monitor containing point (x, y), else the first one (the primary)."""
+    for monitor in monitors:
+        if (monitor["left"] <= x < monitor["left"] + monitor["width"]
+                and monitor["top"] <= y < monitor["top"] + monitor["height"]):
+            return monitor
+    return monitors[0]
+
+
 def grab_rect(sct: mss.base.MSSBase, rect: Rect) -> np.ndarray:
     """Capture a screen rectangle as an ``(H, W, 3)`` RGB uint8 array."""
-    left, top, width, height = rect
+    desktop = sct.monitors[0]  # bounding box of every display
+    clipped = clip_to_desktop(
+        rect, (desktop["left"], desktop["top"], desktop["width"], desktop["height"])
+    )
+    left, top, width, height = clipped or rect
     shot = sct.grab({"left": left, "top": top, "width": width, "height": height})
     bgra = np.asarray(shot)
     return np.ascontiguousarray(bgra[..., 2::-1])
@@ -195,7 +224,8 @@ def grab_rect(sct: mss.base.MSSBase, rect: Rect) -> np.ndarray:
 def capture_game_frame(exe_path: str | None) -> np.ndarray | None:
     """
     One-off capture for calibration: the game's window if it is running,
-    otherwise the primary monitor. Returns None if capture is unavailable.
+    otherwise the display under the mouse cursor (where the player is
+    looking). Returns None if capture is unavailable.
     """
     if not detection_available():
         return None
@@ -205,7 +235,9 @@ def capture_game_frame(exe_path: str | None) -> np.ndarray | None:
             rect = window_client_rect(hwnd) if hwnd is not None else None
             if rect is not None:
                 return grab_rect(sct, rect)
-        monitor = sct.monitors[1]
+        cursor = wintypes.POINT()
+        _user32.GetCursorPos(ctypes.byref(cursor))
+        monitor = monitor_at(sct.monitors[1:], cursor.x, cursor.y)
         return grab_rect(
             sct, (monitor["left"], monitor["top"], monitor["width"], monitor["height"])
         )

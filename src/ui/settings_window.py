@@ -35,7 +35,9 @@ from PySide6.QtWidgets import (
 )
 
 from src.database.database import Database
+from src.hotkeys.conflicts import ERROR, WARNING, Conflict, find_conflicts, has_errors
 from src.hotkeys.gamepad import GamepadManager, combo_label
+from src.hotkeys.hotkey_manager import HotkeyManager
 from src.utils import startup
 from src.utils.constants import (
     AVAILABLE_THEMES,
@@ -77,11 +79,17 @@ class SettingsWindow(QDialog):
     settings_changed = Signal()
 
     def __init__(
-        self, database: Database, gamepad: GamepadManager | None = None, parent=None
+        self,
+        database: Database,
+        gamepad: GamepadManager | None = None,
+        hotkeys: HotkeyManager | None = None,
+        parent=None,
     ) -> None:
         super().__init__(parent)
         self._database = database
         self._gamepad = gamepad
+        self._hotkeys = hotkeys  # probes whether keys are taken by other programs
+        self._availability: dict[str, bool] = {}
         self._recording_action: str | None = None
         self._text_color = "#ff4d4d"
         self.setWindowTitle("Settings")
@@ -219,6 +227,7 @@ class SettingsWindow(QDialog):
 
             key_edit = QKeySequenceEdit()
             key_edit.setMaximumSequenceLength(1)
+            key_edit.keySequenceChanged.connect(self._refresh_conflicts)
             self._key_edits[action] = key_edit
             grid.addWidget(key_edit, row, 1)
             clear_key = QPushButton("✕")
@@ -243,6 +252,10 @@ class SettingsWindow(QDialog):
             clear_pad.clicked.connect(lambda _=False, a=action: self._set_pad(a, ""))
             grid.addWidget(clear_pad, row, 5)
         layout.addLayout(grid)
+
+        self._conflict_label = QLabel()
+        self._conflict_label.setWordWrap(True)
+        layout.addWidget(self._conflict_label)
 
         bottom = QHBoxLayout()
         self._pad_status = QLabel()
@@ -275,6 +288,7 @@ class SettingsWindow(QDialog):
     def _set_pad(self, action: str, combo: str) -> None:
         self._pad_values[action] = combo
         self._pad_labels[action].setText(combo_label(combo) or "Not set")
+        self._refresh_conflicts()
 
     def _start_recording(self, action: str) -> None:
         if self._gamepad is None or not self._gamepad.connected:
@@ -314,26 +328,45 @@ class SettingsWindow(QDialog):
                 pass
         super().done(result)
 
-    def _validate_controls(self) -> str | None:
-        """Return an error message if two actions share a binding."""
-        keys: dict[str, str] = {}
-        pads: dict[str, str] = {}
+    def _key_available(self, key: str) -> bool:
+        """Cached probe: is a keyboard combo free of other programs' hotkeys?"""
+        if self._hotkeys is None:
+            return True
+        if key not in self._availability:
+            self._availability[key] = self._hotkeys.key_available(key)
+        return self._availability[key]
+
+    def _current_conflicts(self) -> list[Conflict]:
+        keys = {a: e.keySequence().toString().lower() for a, e in self._key_edits.items()}
         labels = {action: label for action, label, _s, _d in CONTROL_ACTIONS}
+        return find_conflicts(keys, self._pad_values, labels, self._key_available)
+
+    def _refresh_conflicts(self) -> None:
+        """Highlight problem bindings and explain them under the table, live."""
+        if not hasattr(self, "_conflict_label"):
+            return  # still building the page
+        conflicts = self._current_conflicts()
+        worst: dict[tuple[str, str], str] = {}
+        for c in conflicts:
+            if worst.get((c.action, c.kind)) != ERROR:
+                worst[(c.action, c.kind)] = c.severity
+        colors = {ERROR: "#ff4d4d", WARNING: "#f0a030"}
         for action, edit in self._key_edits.items():
-            key = edit.keySequence().toString().lower()
-            if key and key in keys:
-                return f"{labels[keys[key]]} and {labels[action]} both use {key.upper()}."
-            if key:
-                keys[key] = action
-        for action, combo in self._pad_values.items():
-            if combo and combo in pads:
-                return (
-                    f"{labels[pads[combo]]} and {labels[action]} both use "
-                    f"{combo_label(combo)}."
-                )
-            if combo:
-                pads[combo] = action
-        return None
+            severity = worst.get((action, "keyboard"))
+            edit.setStyleSheet(f"border: 2px solid {colors[severity]};" if severity else "")
+        for action, label in self._pad_labels.items():
+            severity = worst.get((action, "controller"))
+            label.setStyleSheet(f"color: {colors[severity]};" if severity else "")
+        labels = {action: name for action, name, _s, _d in CONTROL_ACTIONS}
+        lines = [
+            f"{'⛔' if c.severity == ERROR else '⚠'} {labels[c.action]}: {c.message}"
+            for c in conflicts
+        ]
+        self._conflict_label.setText("\n".join(lines) or "✓ No conflicts")
+        self._conflict_label.setStyleSheet(
+            "color: #ff4d4d;" if has_errors(conflicts)
+            else "color: #f0a030;" if conflicts else "color: #43b581;"
+        )
 
     def _update_color_button(self) -> None:
         self._color_button.setText(self._text_color)
@@ -401,9 +434,11 @@ class SettingsWindow(QDialog):
             self._set_pad(action, settings.get(pad_setting(action), ""))
 
     def _save(self) -> None:
-        problem = self._validate_controls()
-        if problem:
-            QMessageBox.warning(self, "Duplicate Binding", problem)
+        errors = [c for c in self._current_conflicts() if c.severity == ERROR]
+        if errors:
+            QMessageBox.warning(
+                self, "Fix Controls First", "\n".join(c.message for c in errors)
+            )
             return
         db = self._database
         db.set_setting(SETTING_THEME, self._theme_combo.currentText())

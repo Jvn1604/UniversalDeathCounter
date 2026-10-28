@@ -129,6 +129,7 @@ class _HotkeyThread(threading.Thread):
         self._on_failed = on_failed
         self._thread_id = 0
         self.ready = threading.Event()
+        self.held_combos: set[tuple[int, int]] = set()  # (modifiers, vk) we registered
 
     def run(self) -> None:
         self._thread_id = _kernel32.GetCurrentThreadId()
@@ -137,6 +138,7 @@ class _HotkeyThread(threading.Thread):
         for hotkey_id, (action, modifiers, vk) in enumerate(self._combos, start=1):
             if _user32.RegisterHotKey(None, hotkey_id, modifiers | _MOD_NOREPEAT, vk):
                 registered.append(hotkey_id)
+                self.held_combos.add((modifiers, vk))
             else:
                 failed.append(action)
         self.ready.set()
@@ -284,6 +286,25 @@ class HotkeyManager(QObject):
     def _emit_action(self, action: str) -> None:
         # Called on the listener thread; Qt queues the signal to the main thread.
         self._signals[action].emit()
+
+    def key_available(self, key: str) -> bool:
+        """
+        Whether ``key`` could be registered right now (for the Controls editor).
+
+        Keys this manager already holds count as available. Others are
+        probed by registering and immediately releasing them.
+        """
+        parsed = parse_hotkey(key)
+        if sys.platform != "win32" or parsed is None:
+            return True
+        if self._thread is not None and parsed in self._thread.held_combos:
+            return True
+        modifiers, vk = parsed
+        probe_id = 0xBFFF  # top of the application hotkey id range
+        if not _user32.RegisterHotKey(None, probe_id, modifiers | _MOD_NOREPEAT, vk):
+            return False
+        _user32.UnregisterHotKey(None, probe_id)
+        return True
 
     def _report_taken(self, actions: list[str]) -> None:
         taken = [(action, self._bindings[action]) for action in actions]
