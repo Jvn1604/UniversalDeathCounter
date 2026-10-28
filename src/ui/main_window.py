@@ -242,15 +242,15 @@ class MainWindow(QMainWindow):
         selector_layout.addWidget(self._labeled("Boss", self._boss_combo))
         root_layout.addLayout(selector_layout)
 
-        detect_layout = QHBoxLayout()
-        detect_text_layout = QVBoxLayout()
-        detect_text_layout.setSpacing(2)
+        # Status lines get the full width; the three buttons sit on the row below.
         self._detect_status_label = QLabel("Auto-detect off")
         self._detect_status_label.setWordWrap(True)
         self._detect_last_label = QLabel("")
         self._detect_last_label.setStyleSheet("color: #999999; font-size: 11px;")
-        detect_text_layout.addWidget(self._detect_status_label)
-        detect_text_layout.addWidget(self._detect_last_label)
+        self._detect_last_label.setWordWrap(True)
+        root_layout.addWidget(self._detect_status_label)
+        root_layout.addWidget(self._detect_last_label)
+        detect_layout = QHBoxLayout()
         death_screen_button = QPushButton("📷 Death Screen…")
         death_screen_button.setToolTip(
             "A death wasn't counted? Pick the death screen from the last few seconds "
@@ -261,7 +261,6 @@ class MainWindow(QMainWindow):
         detect_button.clicked.connect(self._open_auto_detect_window)
         self._pause_btn = QPushButton("⏸ Pause")
         self._pause_btn.clicked.connect(self._toggle_detection_pause)
-        detect_layout.addLayout(detect_text_layout, 1)
         detect_layout.addWidget(self._pause_btn)
         detect_layout.addWidget(death_screen_button)
         detect_layout.addWidget(detect_button)
