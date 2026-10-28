@@ -44,6 +44,7 @@ from src.detection.game_window import (
     running_exe_paths,
 )
 from src.detection.matchers import SOULS_PRESET_EXES, DeathTemplate, build_matcher
+from src.hotkeys.gamepad import GamepadManager, combo_label
 from src.hotkeys.hotkey_manager import HotkeyManager
 from src.overlay.overlay_window import OverlayWindow
 from src.themes.theme_manager import apply_theme
@@ -60,8 +61,7 @@ from src.ui.settings_window import SettingsWindow
 from src.ui.statistics_window import StatisticsWindow
 from src.utils.constants import (
     APP_NAME,
-    DEFAULT_HOTKEY_PAUSE_DETECTION,
-    DEFAULT_HOTKEY_TOGGLE_OVERLAY,
+    CONTROL_ACTIONS,
     DETECTION_MODE_OFF,
     DETECTION_MODE_SOULS,
     DETECTION_MODE_TEMPLATE,
@@ -73,10 +73,6 @@ from src.utils.constants import (
     SETTING_DEATHS_TXT_TEMPLATE,
     SETTING_DETECTION_COOLDOWN,
     SETTING_HOTKEY_CALIBRATE,
-    SETTING_HOTKEY_DECREMENT,
-    SETTING_HOTKEY_INCREMENT,
-    SETTING_HOTKEY_PAUSE_DETECTION,
-    SETTING_HOTKEY_TOGGLE_OVERLAY,
     SETTING_HOTKEY_UNDO,
     SETTING_LAST_BOSS_ID,
     SETTING_LAST_GAME_ID,
@@ -85,6 +81,7 @@ from src.utils.constants import (
     SETTING_OVERLAY_COUNTER_SOURCE,
     SETTING_OVERLAY_GEOMETRY,
     SETTING_THEME,
+    pad_setting,
 )
 from src.utils.exporters import write_csv_summary
 from src.utils.logger import get_logger
@@ -354,34 +351,57 @@ class MainWindow(QMainWindow):
     # Hotkeys / settings
     # ----------------------------------------------------------------
     def _hotkey_bindings(self) -> dict[str, str]:
-        """Current hotkey combos from settings, as HotkeyManager keyword args."""
+        """Keyboard combos from settings, as HotkeyManager keyword args ("" = unbound)."""
         settings = self._database.get_all_settings()
         return {
-            "increment_key": settings.get(SETTING_HOTKEY_INCREMENT, "f9"),
-            "decrement_key": settings.get(SETTING_HOTKEY_DECREMENT, "f10"),
-            "undo_key": settings.get(SETTING_HOTKEY_UNDO, "f11"),
-            "toggle_overlay_key": settings.get(
-                SETTING_HOTKEY_TOGGLE_OVERLAY, DEFAULT_HOTKEY_TOGGLE_OVERLAY
-            ),
-            "calibrate_key": settings.get(SETTING_HOTKEY_CALIBRATE, "f8"),
-            "pause_detection_key": settings.get(
-                SETTING_HOTKEY_PAUSE_DETECTION, DEFAULT_HOTKEY_PAUSE_DETECTION
-            ),
+            f"{action}_key": settings.get(setting_key, default)
+            for action, _label, setting_key, default in CONTROL_ACTIONS
         }
 
-    def _update_hotkey_labels(self, bindings: dict[str, str]) -> None:
-        def shown(key: str) -> str:
-            return QKeySequence(key).toString(QKeySequence.SequenceFormat.NativeText) or key
+    def _pad_bindings(self) -> dict[str, str]:
+        """Controller combos from settings, keyed by action ("" = unbound)."""
+        settings = self._database.get_all_settings()
+        return {
+            action: settings.get(pad_setting(action), "")
+            for action, _label, _setting, _default in CONTROL_ACTIONS
+        }
 
-        self._plus_btn.setText(f"+1 Death  ({shown(bindings['increment_key'])})")
-        self._minus_btn.setText(f"-1 Death  ({shown(bindings['decrement_key'])})")
-        self._undo_btn.setText(f"Undo  ({shown(bindings['undo_key'])})")
+    def _update_hotkey_labels(self, bindings: dict[str, str], pads: dict[str, str]) -> None:
+        """Keyboard key on each button; keyboard + controller bindings in its tooltip."""
+
+        def key(action: str) -> str:
+            return QKeySequence(bindings[f"{action}_key"]).toString(
+                QKeySequence.SequenceFormat.NativeText
+            )
+
+        def tooltip(action: str, what: str) -> str:
+            lines = [what]
+            if key(action):
+                lines.append(f"Keyboard: {key(action)}")
+            if pads.get(action):
+                lines.append(f"Controller: {combo_label(pads[action])}")
+            return "\n".join(lines)
+
+        for button, action, text in (
+            (self._plus_btn, "increment", "+1 Death"),
+            (self._minus_btn, "decrement", "-1 Death"),
+            (self._undo_btn, "undo", "Undo"),
+        ):
+            button.setText(f"{text}  ({key(action)})" if key(action) else text)
+            button.setToolTip(tooltip(action, text))
         self._pause_btn.setToolTip(
-            f"Pause/resume auto-detection ({shown(bindings['pause_detection_key'])}), "
-            "e.g. during cutscenes or co-op."
+            tooltip("pause_detection", "Pause/resume auto-detection (cutscenes, co-op…)")
         )
 
     def _setup_hotkeys(self) -> None:
+        self._action_handlers = {
+            "increment": self._on_increment,
+            "decrement": self._on_decrement,
+            "undo": self._on_undo,
+            "toggle_overlay": self._toggle_overlay,
+            "calibrate": self._on_calibrate_hotkey,
+            "pause_detection": self._toggle_detection_pause,
+        }
         bindings = self._hotkey_bindings()
         self._hotkey_manager = HotkeyManager(**bindings, parent=self)
         self._hotkey_manager.increment_triggered.connect(self._on_increment)
@@ -392,7 +412,14 @@ class MainWindow(QMainWindow):
         self._hotkey_manager.pause_detection_triggered.connect(self._toggle_detection_pause)
         self._hotkey_manager.registration_failed.connect(self._on_hotkeys_failed)
         self._hotkey_manager.start()
-        self._update_hotkey_labels(bindings)
+
+        pads = self._pad_bindings()
+        self._gamepad_manager = GamepadManager(pads, parent=self)
+        self._gamepad_manager.action_triggered.connect(
+            lambda action: self._action_handlers[action]()
+        )
+        self._gamepad_manager.start()
+        self._update_hotkey_labels(bindings, pads)
 
     def _on_hotkeys_failed(self, failures: list) -> None:
         labels = {
@@ -471,6 +498,7 @@ class MainWindow(QMainWindow):
         if self._tray is not None:  # the hotkey is usually pressed in-game
             self._tray.showMessage(
                 APP_NAME,
+    CONTROL_ACTIONS,
                 "Auto-detect paused" if self._detection_paused else "Auto-detect resumed",
                 QSystemTrayIcon.MessageIcon.Information,
                 2000,
@@ -505,6 +533,7 @@ class MainWindow(QMainWindow):
                 if self._tray is not None:
                     self._tray.showMessage(
                         APP_NAME,
+    CONTROL_ACTIONS,
                         f"{self._game_combo.itemText(index)} started: now counting its deaths.",
                         QSystemTrayIcon.MessageIcon.Information,
                         4000,
@@ -620,6 +649,7 @@ class MainWindow(QMainWindow):
         if self._tray is not None:
             self._tray.showMessage(
                 APP_NAME,
+    CONTROL_ACTIONS,
                 f"Version {latest} is available! Get it at:\n{url}",
                 QSystemTrayIcon.MessageIcon.Information,
                 8000,
@@ -937,7 +967,7 @@ class MainWindow(QMainWindow):
         dialog.exec()
 
     def _open_settings_window(self) -> None:
-        dialog = SettingsWindow(self._database, parent=self)
+        dialog = SettingsWindow(self._database, gamepad=self._gamepad_manager, parent=self)
         dialog.settings_changed.connect(self._on_settings_changed)
         dialog.exec()
 
@@ -951,8 +981,10 @@ class MainWindow(QMainWindow):
 
     def _on_settings_changed_hotkeys(self) -> None:
         bindings = self._hotkey_bindings()
+        pads = self._pad_bindings()
         self._hotkey_manager.update_bindings(**bindings)
-        self._update_hotkey_labels(bindings)
+        self._gamepad_manager.update_bindings(pads)
+        self._update_hotkey_labels(bindings, pads)
 
     def _toggle_overlay(self) -> None:
         self._overlay.toggle_visibility()
@@ -984,6 +1016,7 @@ class MainWindow(QMainWindow):
             self.hide()
             self._tray.showMessage(
                 APP_NAME,
+    CONTROL_ACTIONS,
                 "Still running in the tray — hotkeys stay active. Right-click to quit.",
                 QSystemTrayIcon.MessageIcon.Information,
                 3000,
@@ -993,6 +1026,7 @@ class MainWindow(QMainWindow):
         self._database.set_setting(SETTING_OVERLAY_GEOMETRY, self._overlay.geometry_string())
         self._session_manager.end_current_session()
         self._hotkey_manager.stop()
+        self._gamepad_manager.stop()
         self._death_watcher.stop()
         self._overlay.close()
         if self._tray is not None:

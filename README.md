@@ -21,7 +21,8 @@ A free, open-source death counter for Soulslike games, challenge runs, speedruns
 - **Session history** — review every past run per game, with per-session death counts and one-click delete
 - **Backup & restore** — export all your data to a single JSON file and import it back (or onto another PC) anytime
 - **Clear all data** — full reset in one confirmed action, with settings preserved
-- **Global hotkeys** — `F9` (+1), `F10` (-1), `F11` (Undo), `Ctrl+F12` (Toggle Overlay), `F8` (Calibrate death screen), `Ctrl+F8` (Pause/resume auto-detect) work even while your game is focused, and the buttons always show your current bindings. They use Windows' own hotkey API (no keyboard hook), so they only ever see their own key combos
+- **Global hotkeys** — `F9` (+1), `F10` (-1), `F11` (Undo), `Ctrl+F12` (Toggle Overlay), `F8` (Calibrate death screen), `Ctrl+F8` (Pause/resume auto-detect) work even while your game is focused, and the buttons always show your current bindings.
+- **Controller bindings (Xbox, PlayStation, and most other gamepads)** — bind any action to a button combo such as View/Share + D-pad Up under **Settings → Controls**: click **Record**, press the combo, done. One binding works on both Xbox and PlayStation pads. No extra drivers or libraries, since it uses Windows' built-in XInput and game-controller APIs They use Windows' own hotkey API (no keyboard hook), so they only ever see their own key combos
 - **OBS-ready overlay** — transparent, frameless, resizable, movable window for Window Capture — **plus a chroma-key green mode** for color-key filters
 - **Overlay customization** — pick the counter color, font size, which number the big counter shows (session / boss / total), and toggle each line (game, boss, stats) on or off
 - **deaths.txt for OBS Text Sources** — writes a fully customizable template like `{game} - {boss}: {deaths}` to a text file on every change, so streamers can skip window capture entirely
@@ -111,7 +112,12 @@ python -m src.app
 8. Check **View → Statistics & Graphs…** for your per-boss breakdown, victories, and three charts (deaths per boss, deaths over time, per-session trend). **View → Death Log…** lets you attach a note to any individual death.
 9. Use the **Profile** menu to create fully separate databases (e.g. a co-op profile) and switch between them instantly.
 10. Use **File → Export Backup (JSON)** to save all your data, **File → Import Backup (JSON)** to restore it, and **File → Export CSV Summary…** for a spreadsheet-friendly report. **File → Clear All Data** wipes the current profile if you want a fresh start.
-11. Customize hotkeys, theme, tray behavior, and every overlay/streaming option under **Settings → Preferences…**. Enable *Minimize to system tray* to keep counting via hotkeys with the window hidden.
+11. Customize theme, tray behavior, and every overlay/streaming option under **Settings → Preferences… → General**. Enable *Minimize to system tray* to keep counting via hotkeys with the window hidden.
+12. Under **Settings → Preferences… → Controls**, rebind every action:
+    - **Keyboard:** click a field and press a key; **✕** unbinds it.
+    - **Controller:** click **Record**, hold a button combo, and release.
+    - Controller presses also reach the game, so use a combo, e.g. View/Share + D-pad Up.
+    - Duplicate bindings are caught when you save, and **Reset to Defaults** restores the original keys.
 
 ## Project Structure
 

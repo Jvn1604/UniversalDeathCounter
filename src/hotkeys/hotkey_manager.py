@@ -234,6 +234,8 @@ class HotkeyManager(QObject):
         combos: list[tuple[str, int, int]] = []
         unknown: list[tuple[str, str]] = []
         for action, key in self._bindings.items():
+            if not key.strip():
+                continue  # cleared in Settings: unbound
             parsed = parse_hotkey(key)
             if parsed is None:
                 unknown.append((action, key))

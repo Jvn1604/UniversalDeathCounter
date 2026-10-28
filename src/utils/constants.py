@@ -118,6 +118,34 @@ SETTING_CHECK_UPDATES: str = "check_updates"
 # --- auto death detection ---
 SETTING_HOTKEY_CALIBRATE: str = "hotkey_calibrate"
 SETTING_HOTKEY_PAUSE_DETECTION: str = "hotkey_pause_detection"
+
+
+# Every bindable action: (action name, label, keyboard setting, default key).
+# Controller bindings are stored under "pad_<action>" (unbound by default,
+# since controller presses also reach the game).
+CONTROL_ACTIONS: tuple[tuple[str, str, str, str], ...] = (
+    ("increment", "+1 Death", SETTING_HOTKEY_INCREMENT, DEFAULT_HOTKEY_INCREMENT),
+    ("decrement", "-1 Death", SETTING_HOTKEY_DECREMENT, DEFAULT_HOTKEY_DECREMENT),
+    ("undo", "Undo", SETTING_HOTKEY_UNDO, DEFAULT_HOTKEY_UNDO),
+    (
+        "toggle_overlay",
+        "Toggle Overlay",
+        SETTING_HOTKEY_TOGGLE_OVERLAY,
+        DEFAULT_HOTKEY_TOGGLE_OVERLAY,
+    ),
+    ("calibrate", "Calibrate Death Screen", SETTING_HOTKEY_CALIBRATE, DEFAULT_HOTKEY_CALIBRATE),
+    (
+        "pause_detection",
+        "Pause Auto-Detect",
+        SETTING_HOTKEY_PAUSE_DETECTION,
+        DEFAULT_HOTKEY_PAUSE_DETECTION,
+    ),
+)
+
+
+def pad_setting(action: str) -> str:
+    """Settings key holding an action's controller combo."""
+    return f"pad_{action}"
 SETTING_DETECTION_COOLDOWN: str = "detection_cooldown"  # seconds between deaths
 
 # Per-game detection modes (stored in the game_detection table)
