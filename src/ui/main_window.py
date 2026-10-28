@@ -43,7 +43,13 @@ from src.detection.game_window import (
     exe_display_name,
     running_exe_paths,
 )
-from src.detection.matchers import SOULS_PRESET_EXES, DeathTemplate, build_matcher
+from src.detection.log_watcher import LogWatchConfig, LogWatcher, compile_death_pattern
+from src.detection.matchers import (
+    SOULS_PRESET_EXES,
+    DeathTemplate,
+    HealthBarMatcher,
+    build_matcher,
+)
 from src.hotkeys.gamepad import GamepadManager, combo_label
 from src.hotkeys.hotkey_manager import HotkeyManager
 from src.overlay.overlay_window import OverlayWindow, available_screen_rects
@@ -53,6 +59,7 @@ from src.ui.auto_detect_window import (
     AutoDetectWindow,
     CalibrationDialog,
     DeathScreenDialog,
+    HealthBarDialog,
     first_death_hint,
 )
 from src.ui.boss_window import BossWindow
@@ -65,6 +72,8 @@ from src.utils.constants import (
     APP_NAME,
     APP_SUBTITLE,
     CONTROL_ACTIONS,
+    DETECTION_MODE_HEALTH,
+    DETECTION_MODE_LOG,
     DETECTION_MODE_OFF,
     DETECTION_MODE_SOULS,
     DETECTION_MODE_TEMPLATE,
@@ -122,6 +131,7 @@ class MainWindow(QMainWindow):
         self._statistics_service = StatisticsService(self._database)
         self._overlay = OverlayWindow()
         self._death_watcher = DeathWatcher(parent=self)
+        self._log_watcher = LogWatcher(parent=self)
         self._detection_paused = False  # not persisted: every launch starts active
         self._quitting = False
 
@@ -476,6 +486,8 @@ class MainWindow(QMainWindow):
     def _setup_death_watcher(self) -> None:
         self._death_watcher.status_changed.connect(self._detect_status_label.setText)
         self._death_watcher.death_detected.connect(self._on_death_detected)
+        self._log_watcher.status_changed.connect(self._detect_status_label.setText)
+        self._log_watcher.death_detected.connect(self._on_death_detected)
         self._death_watcher.start()
         # Switch to a configured game automatically when its exe starts.
         self._running_game_ids: set[int] = set()
@@ -486,36 +498,60 @@ class MainWindow(QMainWindow):
             self._game_launch_timer.start()
 
     def _configure_detection(self) -> None:
-        """Point the watcher at the current game's detection config, if any."""
+        """Point the screen and log watchers at the current game's detection config."""
         game_id = self._counter_manager.current_game_id
         row = self._database.get_game_detection(game_id) if game_id is not None else None
-        if (
-            game_id is None
-            or row is None
-            or not row["exe_path"]
-            or row["mode"] == DETECTION_MODE_OFF
-            or not detection_available()
-        ):
-            self._death_watcher.configure(None)
-            self._detect_status_label.setText(
-                "Auto-detect needs Windows" if not detection_available() else "Auto-detect off"
-            )
-            return
-        if self._detection_paused:
-            self._death_watcher.configure(None)
-            self._detect_status_label.setText("Auto-detect paused")
-            return
+        mode = row["mode"] if row is not None else DETECTION_MODE_OFF
+        screen_config: WatchConfig | None = None
+        log_config: LogWatchConfig | None = None
+        status: str | None = None  # shown when neither watcher reports its own
+        if game_id is None or mode == DETECTION_MODE_OFF:
+            status = "Auto-detect off"
+        elif self._detection_paused:
+            status = "Auto-detect paused"
+        elif mode == DETECTION_MODE_LOG:
+            log_config, status = self._log_watch_config(game_id)
+        elif not detection_available():
+            status = "Auto-detect needs Windows"
+        elif not row["exe_path"]:
+            status = "Auto-detect off"
+        else:
+            screen_config = self._screen_watch_config(game_id, mode, row["exe_path"])
+        cooldown = float(self._database.get_setting(SETTING_DETECTION_COOLDOWN, "8") or 8)
+        self._death_watcher.configure(screen_config, cooldown_seconds=cooldown)
+        self._log_watcher.configure(log_config)
+        if status is not None:
+            self._detect_status_label.setText(status)
+
+    def _screen_watch_config(self, game_id: int, mode: str, exe_path: str) -> WatchConfig:
         templates = [
             (t["region"], t["template"]) for t in self._database.get_death_templates(game_id)
         ]
         # A None matcher still watches the window, buffering recent frames so
         # the player can pick their first death screen with 📷 Death Screen.
-        matcher = build_matcher(row["mode"], templates)
-        cooldown = float(self._database.get_setting(SETTING_DETECTION_COOLDOWN, "8") or 8)
-        self._death_watcher.configure(
-            WatchConfig(game_id=game_id, exe_path=row["exe_path"], matcher=matcher),
-            cooldown_seconds=cooldown,
+        matcher = build_matcher(mode, templates, self._database.get_detection_options(game_id))
+        if mode != DETECTION_MODE_HEALTH:
+            return WatchConfig(game_id=game_id, exe_path=exe_path, matcher=matcher)
+        hotkey = self._database.get_setting(SETTING_HOTKEY_CALIBRATE, "f8").upper()
+        return WatchConfig(
+            game_id=game_id,
+            exe_path=exe_path,
+            matcher=matcher,
+            required_frames=HealthBarMatcher.REQUIRED_FRAMES,
+            setup_hint=f"at full health, press {hotkey} to mark your health bar",
         )
+
+    def _log_watch_config(self, game_id: int) -> tuple[LogWatchConfig | None, str | None]:
+        """The log watcher's config, or ``(None, status)`` explaining what's missing."""
+        options = self._database.get_detection_options(game_id)
+        log_path = str(options.get("log_path") or "")
+        if not log_path:
+            return None, "Log detection: choose the game's log file in Auto-Detect…"
+        try:
+            pattern = compile_death_pattern(str(options.get("log_pattern") or ""))
+        except ValueError:
+            return None, "Log detection: set the death text in Auto-Detect…"
+        return LogWatchConfig(game_id=game_id, log_path=log_path, pattern=pattern), None
 
     def _toggle_detection_pause(self) -> None:
         self._detection_paused = not self._detection_paused
@@ -609,6 +645,15 @@ class MainWindow(QMainWindow):
         self.show()
         self.raise_()
         self.activateWindow()
+        if row is not None and row["mode"] == DETECTION_MODE_HEALTH:
+            bar_dialog = HealthBarDialog(frame, parent=self)
+            accepted = bar_dialog.exec() == HealthBarDialog.DialogCode.Accepted
+            if accepted and bar_dialog.health_bar is not None:
+                self._database.update_detection_options(
+                    game_id, **bar_dialog.health_bar.to_options()
+                )
+                self._configure_detection()
+            return
         dialog = CalibrationDialog(frame, parent=self)
         if dialog.exec() != CalibrationDialog.DialogCode.Accepted or dialog.template is None:
             return
@@ -980,7 +1025,11 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, "Select a Game", "Select a game first.")
             return
         dialog = AutoDetectWindow(
-            self._database, game_id, self._game_combo.currentText(), parent=self
+            self._database,
+            game_id,
+            self._game_combo.currentText(),
+            recent_frames=self._death_watcher.recent_frames,
+            parent=self,
         )
         dialog.exec()
         self._configure_detection()
@@ -1132,6 +1181,7 @@ class MainWindow(QMainWindow):
         self._hotkey_manager.stop()
         self._gamepad_manager.stop()
         self._death_watcher.stop()
+        self._log_watcher.stop()
         self._overlay.close()
         if self._tray is not None:
             self._tray.hide()

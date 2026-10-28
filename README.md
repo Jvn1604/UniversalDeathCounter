@@ -48,6 +48,8 @@ No Python or anything else needed. Windows 10 or 11.
 - **Add a game straight from its `.exe`.** The app watches that game's window and counts a death whenever the death screen appears.
 - **Works with any game.** Teach it the death screen once, either by pressing `F8` on the death screen or afterwards with **📷 Death Screen…**, which lets you pick the frame from the last few seconds.
 - **Zero setup for Souls games.** The built-in preset recognizes Elden Ring, Dark Souls I–III and Sekiro.
+- **No death screen? Use the health bar.** Mark your health bar once at full health, and a death counts when it empties.
+- **Or the game's log file.** For games that log deaths, such as Minecraft, it counts every new line that matches your text. This mode doesn't capture the screen at all.
 - **Missed a death?** Add another death screen in two clicks. Any saved one counts.
 - **Switches to the right game** when you launch it, and starts a fresh session.
 - **Screen capture only:** no memory reading and no injection, so it's safe with anti-cheat.
@@ -107,7 +109,20 @@ Controller presses also reach the game, so use a combo, not a single button.
 
 ## Auto death detection: how it works
 
-DUDC grabs the game's window a few times per second. It compares the area where the death text appears with the death screens you've saved, using a contrast-independent image match, so fade-ins and brightness changes don't matter.
+Pick a method per game in **Manage → Auto Death Detection…**:
+
+| Method | Best for | Setup |
+|---|---|---|
+| **Calibrated death screen** | Any game with a death screen | Press `F8` on the death screen and box the death text |
+| **Souls preset** | Elden Ring, Dark Souls I–III, Sekiro | None |
+| **Health bar empties** | Games without a death screen | At full health, press `F8` and box your health bar |
+| **Game log file** | Games that write deaths to a log (e.g. Minecraft) | Choose the log file and the death text, then click **Test** |
+
+**Death screens:** DUDC grabs the game's window a few times per second. It compares the area where the death text appears with the death screens you've saved, using a contrast-independent image match, so fade-ins and brightness changes don't matter.
+
+**Health bar:** a death counts when the bar stays empty for a second *after your health was already below about 60%*. That's why opening a menu or map, which hides the HUD at full health, never counts. The catch: a one-hit kill from high health is missed, so press `F9` for those. Death screens you add still count in this mode too.
+
+**Log file:** each new line matching your text is one death. Lines already in the file when detection starts are skipped, and a new log from the next game launch is followed automatically. The text is a case-insensitive regular expression, so `|` separates alternatives. In Minecraft, for example, use `latest.log` in `%APPDATA%\.minecraft\logs` with `YourName (was slain|died|fell|drowned|burned|blew up)`. In multiplayer, include your name so other players' deaths don't count.
 
 To keep the count accurate:
 - **No double counting:** a death needs about half a second of death screen, and a long death screen counts once.
@@ -115,11 +130,11 @@ To keep the count accurate:
 - **Pause** with `Ctrl+F8` for cutscenes, co-op, or watching someone else play.
 - **Calibrate tightly:** box just the death text (like "YOU DIED"), not the game world behind it.
 
-**Supported:** any game with a consistent death screen. Elden Ring, Dark Souls I–III and Sekiro work with no setup.
+**Supported:** any game with a consistent death screen, a visible health bar, or a log that records deaths. Elden Ring, Dark Souls I–III and Sekiro work with no setup.
 
 **Limitations:**
 - Exclusive-fullscreen games may capture as black. Switch to borderless or windowed mode; the app tells you if this happens.
-- Games without a recognizable death screen can't be detected. Use the hotkeys there.
+- Games with no death screen, no health bar and no death log can't be detected. Use the hotkeys there.
 - The Souls preset is a color heuristic. If it ever misfires, calibrate that game instead.
 
 ## Troubleshooting
