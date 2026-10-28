@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -72,8 +73,15 @@ def _seed(db) -> tuple[int, int]:
     return game, malenia
 
 
+def _settle() -> None:
+    """Let freshly shown pages finish laying out before grabbing them."""
+    for _ in range(5):
+        QApplication.processEvents()
+        time.sleep(0.05)
+
+
 def _save(widget, name: str) -> None:
-    QApplication.processEvents()
+    _settle()
     widget.grab().save(str(OUT / name))
     print("saved", name)
 
@@ -108,9 +116,12 @@ def main() -> int:
         window._on_increment()
     window._detect_status_label.setText("Watching eldenring.exe for deaths")
     window._detect_last_label.setText("Death auto-counted at 21:04:12 (F11 to undo)")
-    window.resize(560, 600)
+    window.resize(1000, 680)
     window.show()
     _save(window, "main-window.png")
+    window._show_page(2)  # Stats
+    _save(window, "dashboard-stats.png")
+    window._show_page(0)
 
     overlay = window._overlay
     overlay.resize(300, 170)
@@ -140,7 +151,8 @@ def main() -> int:
     settings = SettingsWindow(db, gamepad=None, hotkeys=None, parent=window)
     apply_theme(settings, "dark")
     settings.show()
-    settings.findChild(QTabWidget).setCurrentIndex(1)
+    settings.resize(620, 720)
+    settings.findChild(QTabWidget).setCurrentIndex(3)  # Controls
     _save(settings, "controls.png")
     settings.close()
 

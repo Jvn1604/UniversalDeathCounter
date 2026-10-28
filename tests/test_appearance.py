@@ -81,8 +81,8 @@ def test_stylesheet_font_and_see_through() -> None:
     assert "background-color: transparent;" in first_rule
     assert 'QWidget { font-family: "Consolas"; }' in custom
     # Buttons and the counter card keep their own backgrounds.
-    assert "background-color: #2f3136;" in custom
-    assert "background-color: #27292d;" in custom
+    assert "background-color: #22252e;" in custom  # buttons
+    assert "background-color: #1a1c23;" in custom  # cards
     light = customize_stylesheet(load_stylesheet("light"), "light", see_through=True)
     assert "background-color: transparent;" in light.split("}", 1)[0]
 
