@@ -286,7 +286,10 @@ class BossWindow(QDialog):
         if item is None:
             return
         confirm = QMessageBox.question(
-            self, "Delete Boss", f"Delete '{item.text()}' and its death history?"
+            self,
+            "Delete Boss",
+            f"Delete '{item.text()}'?\n\nIts deaths stay in the game's totals, "
+            "counted as \"No boss\".",
         )
         if confirm != QMessageBox.StandardButton.Yes:
             return
