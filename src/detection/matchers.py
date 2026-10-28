@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import json
 import struct
+from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Protocol
 
@@ -234,20 +235,41 @@ class SoulsPresetMatcher:
         return matched, band
 
 
-def build_matcher(
-    mode: str, region_json: str | None, template_bytes: bytes | None
-) -> Matcher | None:
-    """
-    Build the matcher for a stored detection config.
+class AnyMatcher:
+    """Matches when any of several matchers does (e.g. multiple death screens)."""
 
-    Returns None when detection is off or a calibrated mode has no
-    calibration yet.
+    def __init__(self, matchers: list[Matcher]) -> None:
+        self._matchers = matchers
+
+    def match(self, frame: np.ndarray) -> tuple[bool, float]:
+        best = 0.0
+        for matcher in self._matchers:
+            matched, score = matcher.match(frame)
+            if matched:
+                return True, score
+            best = max(best, score)
+        return False, best
+
+
+def build_matcher(mode: str, templates: Iterable[tuple[str, bytes]]) -> Matcher | None:
     """
+    Build the matcher for a game's detection mode and saved death screens.
+
+    ``templates`` are stored ``(region_json, patch_bytes)`` pairs. In Souls
+    mode they supplement the preset (covering anything it misses). Returns
+    None when detection is off or there is nothing to match yet.
+    """
+    if mode not in (DETECTION_MODE_TEMPLATE, DETECTION_MODE_SOULS):
+        return None
+    matchers: list[Matcher] = [
+        TemplateMatcher(DeathTemplate.from_storage(region, bytes(patch)))
+        for region, patch in templates
+    ]
     if mode == DETECTION_MODE_SOULS:
-        return SoulsPresetMatcher()
-    if mode == DETECTION_MODE_TEMPLATE and region_json and template_bytes:
-        return TemplateMatcher(DeathTemplate.from_storage(region_json, bytes(template_bytes)))
-    return None
+        matchers.append(SoulsPresetMatcher())
+    if not matchers:
+        return None
+    return matchers[0] if len(matchers) == 1 else AnyMatcher(matchers)
 
 
 # ----------------------------------------------------------------

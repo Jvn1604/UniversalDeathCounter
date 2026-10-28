@@ -12,7 +12,7 @@ import json
 from datetime import datetime
 from pathlib import Path
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (
     QComboBox,
@@ -37,13 +37,23 @@ from src.core.session_manager import SessionManager
 from src.core.statistics import StatisticsService
 from src.database.database import Database
 from src.detection.death_watcher import DeathWatcher, WatchConfig
-from src.detection.game_window import capture_game_frame, detection_available
-from src.detection.matchers import build_matcher
+from src.detection.game_window import (
+    capture_game_frame,
+    detection_available,
+    exe_display_name,
+    running_exe_paths,
+)
+from src.detection.matchers import SOULS_PRESET_EXES, DeathTemplate, build_matcher
 from src.hotkeys.hotkey_manager import HotkeyManager
 from src.overlay.overlay_window import OverlayWindow
 from src.themes.theme_manager import apply_theme
 from src.ui.about_window import AboutWindow
-from src.ui.auto_detect_window import AutoDetectWindow, CalibrationDialog
+from src.ui.auto_detect_window import (
+    AutoDetectWindow,
+    CalibrationDialog,
+    DeathScreenDialog,
+    first_death_hint,
+)
 from src.ui.boss_window import BossWindow
 from src.ui.death_log_window import DeathLogWindow
 from src.ui.settings_window import SettingsWindow
@@ -51,6 +61,8 @@ from src.ui.statistics_window import StatisticsWindow
 from src.utils.constants import (
     APP_NAME,
     DEFAULT_HOTKEY_TOGGLE_OVERLAY,
+    DETECTION_MODE_OFF,
+    DETECTION_MODE_SOULS,
     DETECTION_MODE_TEMPLATE,
     ICONS_DIR,
     SAVES_DIR,
@@ -77,6 +89,11 @@ from src.utils.stream_writer import render_template, write_deaths_file
 from src.utils.update_checker import UpdateChecker
 
 logger = get_logger(__name__)
+
+# Last entry of the Game dropdown, which opens the add-game-from-.exe flow.
+_ADD_GAME_SENTINEL = "__add_game_from_exe__"
+_ADD_GAME_LABEL = "+ Add game from .exe…"
+_GAME_LAUNCH_POLL_MS = 3000
 
 
 class MainWindow(QMainWindow):
@@ -189,6 +206,7 @@ class MainWindow(QMainWindow):
 
         selector_layout = QHBoxLayout()
         self._game_combo = QComboBox()
+        self._game_combo.setPlaceholderText("Add a game: pick its .exe")
         self._game_combo.currentIndexChanged.connect(self._on_game_changed)
         self._boss_combo = QComboBox()
         self._boss_combo.currentIndexChanged.connect(self._on_boss_changed)
@@ -205,9 +223,16 @@ class MainWindow(QMainWindow):
         self._detect_last_label.setStyleSheet("color: #999999; font-size: 11px;")
         detect_text_layout.addWidget(self._detect_status_label)
         detect_text_layout.addWidget(self._detect_last_label)
+        death_screen_button = QPushButton("📷 Death Screen…")
+        death_screen_button.setToolTip(
+            "A death wasn't counted? Pick the death screen from the last few seconds "
+            "(or a screenshot) so the app recognizes it next time."
+        )
+        death_screen_button.clicked.connect(self._open_death_screen_dialog)
         detect_button = QPushButton("Auto-Detect…")
         detect_button.clicked.connect(self._open_auto_detect_window)
         detect_layout.addLayout(detect_text_layout, 1)
+        detect_layout.addWidget(death_screen_button)
         detect_layout.addWidget(detect_button)
         root_layout.addLayout(detect_layout)
 
@@ -368,30 +393,79 @@ class MainWindow(QMainWindow):
         self._death_watcher.status_changed.connect(self._detect_status_label.setText)
         self._death_watcher.death_detected.connect(self._on_death_detected)
         self._death_watcher.start()
+        # Switch to a configured game automatically when its exe starts.
+        self._running_game_ids: set[int] = set()
+        self._game_launch_timer = QTimer(self)
+        self._game_launch_timer.setInterval(_GAME_LAUNCH_POLL_MS)
+        self._game_launch_timer.timeout.connect(self._check_game_launches)
+        if detection_available():
+            self._game_launch_timer.start()
 
     def _configure_detection(self) -> None:
         """Point the watcher at the current game's detection config, if any."""
         game_id = self._counter_manager.current_game_id
         row = self._database.get_game_detection(game_id) if game_id is not None else None
-        matcher = (
-            build_matcher(row["mode"], row["region"], row["template"]) if row is not None else None
-        )
-        if game_id is None or row is None or not row["exe_path"] or matcher is None:
+        if (
+            game_id is None
+            or row is None
+            or not row["exe_path"]
+            or row["mode"] == DETECTION_MODE_OFF
+            or not detection_available()
+        ):
             self._death_watcher.configure(None)
-            if not detection_available():
-                status = "Auto-detect needs Windows"
-            elif row is not None and row["mode"] == DETECTION_MODE_TEMPLATE and matcher is None:
-                hotkey = self._database.get_setting(SETTING_HOTKEY_CALIBRATE, "f8").upper()
-                status = f"Auto-detect: press {hotkey} on the death screen to calibrate"
-            else:
-                status = "Auto-detect off"
-            self._detect_status_label.setText(status)
+            self._detect_status_label.setText(
+                "Auto-detect needs Windows" if not detection_available() else "Auto-detect off"
+            )
             return
+        templates = [
+            (t["region"], t["template"]) for t in self._database.get_death_templates(game_id)
+        ]
+        # A None matcher still watches the window, buffering recent frames so
+        # the player can pick their first death screen with 📷 Death Screen.
+        matcher = build_matcher(row["mode"], templates)
         cooldown = float(self._database.get_setting(SETTING_DETECTION_COOLDOWN, "8") or 8)
         self._death_watcher.configure(
             WatchConfig(game_id=game_id, exe_path=row["exe_path"], matcher=matcher),
             cooldown_seconds=cooldown,
         )
+
+    def _check_game_launches(self) -> None:
+        """Select a configured game when its exe starts (not while the current one runs)."""
+        configs = {
+            row["exe_path"]: row["game_id"] for row in self._database.get_all_game_detections()
+        }
+        running = {configs[path] for path in running_exe_paths(list(configs))}
+        newly_started = running - self._running_game_ids
+        self._running_game_ids = running
+        current = self._counter_manager.current_game_id
+        if not newly_started or current in running:
+            return
+        game_id = min(newly_started)
+        index = self._game_combo.findData(game_id)
+        if index < 0:
+            return
+        self._game_combo.setCurrentIndex(index)
+        if self._tray is not None:
+            self._tray.showMessage(
+                APP_NAME,
+                f"{self._game_combo.itemText(index)} started: now counting its deaths.",
+                QSystemTrayIcon.MessageIcon.Information,
+                4000,
+            )
+
+    def _save_death_template(self, game_id: int, template: DeathTemplate) -> None:
+        """Store a new death screen and turn detection on for the game if needed."""
+        self._database.add_death_template(game_id, template.region_json(), template.patch_bytes())
+        row = self._database.get_game_detection(game_id)
+        exe_path = row["exe_path"] if row is not None else None
+        if row is None or row["mode"] == DETECTION_MODE_OFF:
+            self._database.set_game_detection(game_id, exe_path, DETECTION_MODE_TEMPLATE)
+        self._configure_detection()
+        if not exe_path:
+            QMessageBox.information(
+                self, "Select the Game", "Death screen saved. Now pick the game's .exe."
+            )
+            self._open_auto_detect_window()
 
     def _on_death_detected(self, game_id: int) -> None:
         if game_id != self._counter_manager.current_game_id:
@@ -417,13 +491,46 @@ class MainWindow(QMainWindow):
         dialog = CalibrationDialog(frame, parent=self)
         if dialog.exec() != CalibrationDialog.DialogCode.Accepted or dialog.template is None:
             return
-        self._database.set_game_death_template(
-            game_id, dialog.template.region_json(), dialog.template.patch_bytes()
+        self._save_death_template(game_id, dialog.template)
+
+    def _open_death_screen_dialog(self) -> None:
+        game_id = self._counter_manager.current_game_id
+        if game_id is None:
+            QMessageBox.information(self, "Select a Game", "Select or add a game first.")
+            return
+        dialog = DeathScreenDialog(self._death_watcher.recent_frames(), parent=self)
+        if dialog.exec() != DeathScreenDialog.DialogCode.Accepted or dialog.template is None:
+            return
+        self._save_death_template(game_id, dialog.template)
+        if dialog.count_death:
+            self._on_increment()
+
+    def _add_game_from_exe(self) -> None:
+        """Create (or reuse) a game from its .exe and set up detection in one go."""
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Select the Game's .exe", "", "Programs (*.exe)"
         )
-        self._database.set_game_detection(game_id, exe_path, DETECTION_MODE_TEMPLATE)
-        self._configure_detection()
-        if not exe_path:
-            self._open_auto_detect_window()
+        if not path:
+            return
+        path = str(Path(path))
+        name, ok = QInputDialog.getText(
+            self, "Add Game", "Game name:", text=exe_display_name(path)
+        )
+        if not ok or not name.strip():
+            return
+        existing = {g["name"].casefold(): g["id"] for g in self._database.get_games()}
+        game_id = existing.get(name.strip().casefold())
+        if game_id is None:
+            game_id = self._database.create_game(name.strip())
+        has_templates = bool(self._database.get_death_templates(game_id))
+        preset = Path(path).name.lower() in SOULS_PRESET_EXES and not has_templates
+        self._database.set_game_detection(
+            game_id, path, DETECTION_MODE_SOULS if preset else DETECTION_MODE_TEMPLATE
+        )
+        self._reload_games(select_game_id=game_id)
+        if not preset and not has_templates:
+            hotkey = self._database.get_setting(SETTING_HOTKEY_CALIBRATE, "f8").upper()
+            QMessageBox.information(self, "Teach It Your Death Screen", first_death_hint(hotkey))
 
     def _apply_saved_settings(self) -> None:
         settings = self._database.get_all_settings()
@@ -529,17 +636,26 @@ class MainWindow(QMainWindow):
     # ----------------------------------------------------------------
     # Data loading
     # ----------------------------------------------------------------
-    def _reload_games(self) -> None:
+    def _reload_games(self, select_game_id: int | None = None) -> None:
         self._game_combo.blockSignals(True)
         self._game_combo.clear()
         games = self._database.get_games()
         for game in games:
             self._game_combo.addItem(game["name"], userData=game["id"])
+        if games:
+            self._game_combo.insertSeparator(self._game_combo.count())
+        self._game_combo.addItem(_ADD_GAME_LABEL, userData=_ADD_GAME_SENTINEL)
         self._game_combo.blockSignals(False)
         if games:
-            self._game_combo.setCurrentIndex(0)
-            self._on_game_changed(0)
+            index = max(self._game_combo.findData(select_game_id), 0)
+            self._game_combo.blockSignals(True)
+            self._game_combo.setCurrentIndex(index)
+            self._game_combo.blockSignals(False)
+            self._on_game_changed(index)
         else:
+            self._game_combo.blockSignals(True)
+            self._game_combo.setCurrentIndex(-1)  # shows the placeholder text
+            self._game_combo.blockSignals(False)
             self._counter_manager.set_current_game(None, None)
             self._reload_bosses(None)
             self._refresh_counters()
@@ -560,6 +676,15 @@ class MainWindow(QMainWindow):
     # Selector event handlers
     # ----------------------------------------------------------------
     def _on_game_changed(self, index: int) -> None:
+        if self._game_combo.itemData(index) == _ADD_GAME_SENTINEL:
+            # Snap back to the previous game, then run the add flow (which
+            # selects the new game itself if one is added).
+            previous = self._game_combo.findData(self._counter_manager.current_game_id)
+            self._game_combo.blockSignals(True)
+            self._game_combo.setCurrentIndex(previous)
+            self._game_combo.blockSignals(False)
+            self._add_game_from_exe()
+            return
         game_id = self._game_combo.itemData(index)
         game_name = self._game_combo.itemText(index) if index >= 0 else None
         self._counter_manager.set_current_game(game_id, game_name)

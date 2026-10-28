@@ -13,7 +13,7 @@ A free, open-source death counter for Soulslike games, challenge runs, speedruns
 ## Features
 
 - **Manual death counting** — works with *any* game, no memory reading or injection required
-- **Automatic death detection (Windows)** — pick the game's `.exe` and the app watches its window for the death screen, counting each death for you. Calibrate any game once (`F8` on the death screen, then box the death text), or use the zero-setup **Souls preset** for Elden Ring, Dark Souls I–III and Sekiro. Screen capture only, so it's safe with anti-cheat
+- **Automatic death detection (Windows)** — add a game straight from its `.exe` and the app watches its window for the death screen, counting each death for you. It switches to the right game when you launch it. Teach it any game's death screen in seconds (`F8` on the death screen, or **📷 Death Screen** afterwards to pick it from the last few seconds), save several if some deaths are missed, or use the zero-setup **Souls preset** for Elden Ring, Dark Souls I–III and Sekiro. Screen capture only, so it's safe with anti-cheat
 - **Session + Total counters** — track a single run and your all-time total separately
 - **Full CRUD freedom** — create, rename, and delete any game or boss at any time; nothing is locked in
 - **Quick-Add templates** — one click adds a popular game (Elden Ring, Dark Souls III, Sekiro, Bloodborne, Hollow Knight, Cuphead) with its full boss list pre-filled — then edit/rename/delete freely
@@ -97,7 +97,12 @@ python -m src.app
 2. Double-click any game or boss in that dialog to rename it; delete buttons remove it (and its history) entirely. Nothing is permanent until you want it to be.
 3. Select your game/boss from the dropdowns on the main window.
 4. Hit **+1 Death** (or `F9`) every time you die. `F10` decrements, `F11` undoes the last action, and **Set Exact Count…** lets you jump straight to a specific number.
-   - **Or let the app count for you:** click **Auto-Detect…** (also under **Manage → Auto Death Detection…**), browse to the game's `.exe`, and save. Souls games get the built-in preset automatically. For any other game, press `F8` in-game the first time the death screen shows, drag a box around the death text, and save. From then on, deaths are counted whenever that game is running. Run the game in **borderless or windowed** mode, since exclusive fullscreen can capture as black.
+   - **Or let the app count for you:** in the **Game** dropdown choose **+ Add game from .exe…** and pick the game's `.exe`. The name is read from the exe, and detection is set up right away. Souls games use the built-in preset immediately. For any other game, teach it the death screen the first time you die, in one of two ways:
+     - Press `F8` while the death screen is showing.
+     - Afterwards, click **📷 Death Screen…**, pick the frame from the last few seconds, and drag a box around the death text. You can also load a screenshot file or paste one, e.g. from Win+Shift+S.
+   - If a death is ever missed, use **📷 Death Screen…** again. It saves another death screen (any saved one counts) and can add the missed +1.
+   - When you launch a configured game, the app switches to it automatically.
+   - Run games in **borderless or windowed** mode, since exclusive fullscreen can capture as black. **Auto-Detect…** (also under **Manage → Auto Death Detection…**) changes the exe, the method, the saved death screens, and the cooldown.
 5. Beat a boss? Select it in **Manage → Games & Bosses…** and hit **Toggle Defeated ✓** — your "deaths until victory" number is captured permanently.
 6. Open **Manage → Games & Bosses… → Session History** to review or delete individual past runs for a game.
 7. Open **View → Toggle Overlay** (or `Ctrl+F12`) and add it as a **Window Capture** source in OBS — or switch the overlay to **chroma** mode in Settings and use a Color Key filter. Prefer text? Enable **deaths.txt** in Settings and point an OBS **Text Source** at the file, with your own `{game} - {boss}: {deaths}` template.

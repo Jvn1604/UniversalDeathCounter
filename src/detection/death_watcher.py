@@ -10,11 +10,14 @@ pattern as :mod:`src.hotkeys.hotkey_manager` and the update checker).
 
 from __future__ import annotations
 
+import math
 import threading
 import time
+from collections import deque
 from dataclasses import dataclass
 from pathlib import Path
 
+import numpy as np
 from PySide6.QtCore import QObject, Signal
 
 from src.detection.game_window import (
@@ -42,13 +45,26 @@ _PROCESS_POLL_SECONDS: float = 2.0
 _BLACK_FRAME_LIMIT: int = int(FRAMES_PER_SECOND * 5)
 
 
+# Recent frames kept for "missed a death?" captures: one per second, at most
+# this many, downscaled to at most this width to bound memory (~25 MB).
+RECENT_FRAME_COUNT: int = 8
+_RECENT_FRAME_INTERVAL: float = 1.0
+_RECENT_FRAME_MAX_WIDTH: int = 1280
+
+
 @dataclass(slots=True, frozen=True)
 class WatchConfig:
-    """What to watch: which game (by id), its executable, and how to match."""
+    """
+    What to watch: which game (by id), its executable, and how to match.
+
+    ``matcher`` may be None for a game with no death screen saved yet; the
+    window is then only captured into the recent-frames buffer, so the
+    player can pick their first death screen from it.
+    """
 
     game_id: int
     exe_path: str
-    matcher: Matcher
+    matcher: Matcher | None
 
 
 class DeathWatcher(QObject):
@@ -72,6 +88,12 @@ class DeathWatcher(QObject):
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
         self._last_status = ""
+        self._recent_frames: deque[tuple[float, np.ndarray]] = deque(maxlen=RECENT_FRAME_COUNT)
+
+    def recent_frames(self) -> list[tuple[float, np.ndarray]]:
+        """``(time.monotonic() timestamp, RGB frame)`` pairs, oldest first."""
+        with self._lock:
+            return list(self._recent_frames)
 
     # ----------------------------------------------------------------
     # Control (main thread)
@@ -126,15 +148,18 @@ class DeathWatcher(QObject):
         hwnd: int | None = None
         next_lookup = 0.0
         black_frames = 0
+        next_recent = 0.0
 
         while not self._stop_event.is_set():
             with self._lock:
                 config, version = self._config, self._config_version
                 debouncer.cooldown_seconds = self._cooldown_seconds
+                if version != seen_version:
+                    self._recent_frames.clear()  # frames of another game
             if version != seen_version:
                 seen_version = version
                 debouncer.reset()
-                hwnd, next_lookup, black_frames = None, 0.0, 0
+                hwnd, next_lookup, black_frames, next_recent = None, 0.0, 0, 0.0
 
             if config is None:
                 self._stop_event.wait(_IDLE_POLL_SECONDS)
@@ -158,13 +183,28 @@ class DeathWatcher(QObject):
                 continue
 
             frame = grab_rect(sct, rect)
+            now = time.monotonic()
+            if now >= next_recent:
+                next_recent = now + _RECENT_FRAME_INTERVAL
+                step = max(1, math.ceil(frame.shape[1] / _RECENT_FRAME_MAX_WIDTH))
+                with self._lock:
+                    self._recent_frames.append((now, frame[::step, ::step].copy()))
+
             black_frames = black_frames + 1 if int(frame.max()) < 8 else 0
             if black_frames >= _BLACK_FRAME_LIMIT:
                 self._set_status(
                     f"Capture of {exe_name} is black. Switch the game to borderless/windowed."
                 )
+            elif config.matcher is None:
+                self._set_status(
+                    f"Watching {exe_name}: after you die, click 📷 Death Screen to teach it"
+                )
             else:
                 self._set_status(f"Watching {exe_name} for deaths")
+
+            if config.matcher is None:
+                self._stop_event.wait(_RECENT_FRAME_INTERVAL)  # buffer only, no matching
+                continue
 
             matched, _score = config.matcher.match(frame)
             if debouncer.update(matched, time.monotonic()):

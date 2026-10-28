@@ -14,6 +14,7 @@ windowed mode always works.
 from __future__ import annotations
 
 import os
+import struct
 import sys
 from pathlib import Path
 
@@ -71,6 +72,75 @@ def find_process_ids(exe_path: str) -> list[int]:
         if running_exe is None or _same_path(running_exe, exe_path):
             pids.append(int(info["pid"]))
     return pids
+
+
+def running_exe_paths(exe_paths: list[str]) -> set[str]:
+    """
+    Return which of ``exe_paths`` currently have a running process.
+
+    One pass over the process list, reading each process's full path only
+    when its file name matches, so it is cheap enough to poll every few
+    seconds.
+    """
+    if not _DEPENDENCIES_AVAILABLE or not exe_paths:
+        return set()
+    by_name: dict[str, list[str]] = {}
+    for path in exe_paths:
+        by_name.setdefault(Path(path).name.lower(), []).append(path)
+    running: set[str] = set()
+    for process in psutil.process_iter(["name"]):
+        candidates = by_name.get((process.info.get("name") or "").lower())
+        if not candidates:
+            continue
+        try:
+            running_exe = process.exe()
+        except (psutil.AccessDenied, psutil.NoSuchProcess):
+            running_exe = None
+        for path in candidates:
+            if running_exe is None or _same_path(running_exe, path):
+                running.add(path)
+    return running
+
+
+def exe_display_name(exe_path: str) -> str:
+    """
+    A friendly game name for an executable.
+
+    Uses the exe's embedded ProductName / FileDescription (e.g.
+    ``eldenring.exe`` → "ELDEN RING"), falling back to a tidied file name.
+    """
+    name = _version_info_name(exe_path) if DETECTION_SUPPORTED else None
+    if not name:
+        stem = Path(exe_path).stem
+        for suffix in ("-Win64-Shipping", "-Win32-Shipping", "_x64", "64"):
+            stem = stem.removesuffix(suffix)
+        name = stem.replace("_", " ").replace("-", " ").strip()
+        if name.islower():
+            name = name.title()
+    return " ".join(name.replace("™", "").replace("®", "").split()) or Path(exe_path).stem
+
+
+def _version_info_name(exe_path: str) -> str | None:
+    version = ctypes.windll.version
+    size = version.GetFileVersionInfoSizeW(exe_path, None)
+    if not size:
+        return None
+    buffer = ctypes.create_string_buffer(size)
+    if not version.GetFileVersionInfoW(exe_path, 0, size, buffer):
+        return None
+    pointer, length = ctypes.c_void_p(), wintypes.UINT()
+    if not version.VerQueryValueW(
+        buffer, "\\VarFileInfo\\Translation", ctypes.byref(pointer), ctypes.byref(length)
+    ) or length.value < 4:
+        return None
+    language, codepage = struct.unpack_from("<HH", ctypes.string_at(pointer, 4))
+    for field in ("ProductName", "FileDescription"):
+        query = f"\\StringFileInfo\\{language:04x}{codepage:04x}\\{field}"
+        if version.VerQueryValueW(buffer, query, ctypes.byref(pointer), ctypes.byref(length)):
+            value = ctypes.wstring_at(pointer, length.value).rstrip("\0").strip()
+            if value and "operating system" not in value.lower():
+                return value
+    return None
 
 
 def find_main_window(pids: list[int]) -> int | None:

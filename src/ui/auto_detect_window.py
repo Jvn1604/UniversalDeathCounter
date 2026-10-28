@@ -9,12 +9,15 @@ Auto death detection dialogs.
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
 
 import numpy as np
 from PySide6.QtCore import QPoint, QRect, QSize, Qt, Signal
-from PySide6.QtGui import QImage, QMouseEvent, QPixmap
+from PySide6.QtGui import QIcon, QImage, QMouseEvent, QPixmap
 from PySide6.QtWidgets import (
+    QApplication,
+    QCheckBox,
     QComboBox,
     QDialog,
     QFileDialog,
@@ -22,6 +25,8 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QListWidget,
+    QListWidgetItem,
     QMessageBox,
     QPushButton,
     QRubberBand,
@@ -175,6 +180,123 @@ class CalibrationDialog(QDialog):
         self.accept()
 
 
+def first_death_hint(hotkey: str) -> str:
+    """How to teach the app a game's death screen, for info messages."""
+    return (
+        "Detection starts once the app knows this game's death screen. The next time "
+        f"you die, either press {hotkey} while the death screen shows, or click "
+        "📷 Death Screen on the main window afterwards and pick it from the last few "
+        "seconds."
+    )
+
+
+class DeathScreenDialog(QDialog):
+    """
+    Add a death screen after the fact ("that death wasn't counted").
+
+    Offers the watcher's recent frames as thumbnails (newest first), a
+    screenshot file, or the clipboard (e.g. after Win+Shift+S). Once the
+    player marks the death text, :attr:`template` holds the result and
+    :attr:`count_death` says whether to also add +1.
+    """
+
+    def __init__(
+        self, recent_frames: list[tuple[float, np.ndarray]], parent: QWidget | None = None
+    ) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Add a Death Screen")
+        self.setMinimumWidth(640)
+        self.template: DeathTemplate | None = None
+        self.count_death = False
+        self._frames = list(reversed(recent_frames))  # newest first
+
+        layout = QVBoxLayout(self)
+        if self._frames:
+            layout.addWidget(QLabel("Pick the frame that shows the death screen:"))
+            self._list = QListWidget()
+            self._list.setViewMode(QListWidget.ViewMode.IconMode)
+            self._list.setIconSize(QSize(240, 135))
+            self._list.setFlow(QListWidget.Flow.LeftToRight)
+            self._list.setWrapping(True)
+            self._list.setResizeMode(QListWidget.ResizeMode.Adjust)
+            self._list.setMinimumHeight(330)
+            now = time.monotonic()
+            for timestamp, frame in self._frames:
+                icon = QIcon(QPixmap.fromImage(frame_to_qimage(frame)).scaled(
+                    240, 135, Qt.AspectRatioMode.KeepAspectRatio,
+                    Qt.TransformationMode.SmoothTransformation,
+                ))
+                QListWidgetItem(icon, f"{max(0, round(now - timestamp))} s ago", self._list)
+            self._list.itemDoubleClicked.connect(lambda _item: self._use_selected())
+            layout.addWidget(self._list)
+        else:
+            empty = QLabel(
+                "No recent frames: the game isn't being watched right now. Load or paste "
+                "a screenshot of the death screen instead."
+            )
+            empty.setWordWrap(True)
+            layout.addWidget(empty)
+
+        self._count_check = QCheckBox("That death wasn't counted: add +1 death too")
+        self._count_check.setChecked(bool(self._frames))
+        layout.addWidget(self._count_check)
+
+        buttons = QHBoxLayout()
+        file_button = QPushButton("Load Screenshot File…")
+        file_button.clicked.connect(self._use_file)
+        paste_button = QPushButton("Paste from Clipboard")
+        paste_button.clicked.connect(self._use_clipboard)
+        buttons.addWidget(file_button)
+        buttons.addWidget(paste_button)
+        buttons.addStretch()
+        cancel_button = QPushButton("Cancel")
+        cancel_button.clicked.connect(self.reject)
+        buttons.addWidget(cancel_button)
+        if self._frames:
+            use_button = QPushButton("Use Selected Frame")
+            use_button.setObjectName("AccentButton")
+            use_button.clicked.connect(self._use_selected)
+            buttons.addWidget(use_button)
+        layout.addLayout(buttons)
+
+    def _calibrate(self, frame: np.ndarray) -> None:
+        dialog = CalibrationDialog(frame, parent=self)
+        if dialog.exec() == QDialog.DialogCode.Accepted and dialog.template is not None:
+            self.template = dialog.template
+            self.count_death = self._count_check.isChecked()
+            self.accept()
+
+    def _use_selected(self) -> None:
+        row = self._list.currentRow()
+        if row < 0:
+            QMessageBox.information(self, "Pick a Frame", "Click the frame with the death screen.")
+            return
+        self._calibrate(self._frames[row][1])
+
+    def _use_file(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Death Screen Screenshot", "", "Images (*.png *.jpg *.jpeg *.bmp)"
+        )
+        if not path:
+            return
+        image = QImage(path)
+        if image.isNull():
+            QMessageBox.warning(self, "Could Not Open", "That file is not a readable image.")
+            return
+        self._calibrate(qimage_to_frame(image))
+
+    def _use_clipboard(self) -> None:
+        image = QApplication.clipboard().image()
+        if image.isNull():
+            QMessageBox.information(
+                self,
+                "Clipboard Is Empty",
+                "Copy a screenshot of the death screen first (e.g. Win+Shift+S).",
+            )
+            return
+        self._calibrate(qimage_to_frame(image))
+
+
 # ----------------------------------------------------------------
 # Per-game setup
 # ----------------------------------------------------------------
@@ -226,17 +348,21 @@ class AutoDetectWindow(QDialog):
 
         calibration_row = QHBoxLayout()
         self._calibration_label = QLabel()
-        screenshot_button = QPushButton("Calibrate from Screenshot…")
+        screenshot_button = QPushButton("Add from Screenshot…")
         screenshot_button.clicked.connect(self._calibrate_from_file)
+        self._clear_button = QPushButton("Clear")
+        self._clear_button.clicked.connect(self._clear_templates)
         calibration_row.addWidget(self._calibration_label)
         calibration_row.addStretch()
         calibration_row.addWidget(screenshot_button)
-        form.addRow("Calibration", calibration_row)
+        calibration_row.addWidget(self._clear_button)
+        form.addRow("Death screens", calibration_row)
 
         hotkey = self._database.get_setting(SETTING_HOTKEY_CALIBRATE, "f8").upper()
         hint = QLabel(
-            f"Easiest: press {hotkey} in-game while the death screen is showing, "
-            "then mark the death text. Or load a screenshot of it here."
+            f"Press {hotkey} in-game while the death screen is showing, or after a death "
+            "click 📷 Death Screen on the main window and pick the frame. Add more than "
+            "one if some deaths are missed: any saved death screen counts."
         )
         hint.setWordWrap(True)
         hint.setStyleSheet("color: #999999; font-size: 11px;")
@@ -266,12 +392,22 @@ class AutoDetectWindow(QDialog):
         )
 
     def _has_template(self) -> bool:
-        row = self._database.get_game_detection(self._game_id)
-        return row is not None and row["template"] is not None
+        return bool(self._database.get_death_templates(self._game_id))
 
     def _update_calibration_label(self) -> None:
-        calibrated = self._has_template()
-        self._calibration_label.setText("Calibrated ✓" if calibrated else "Not calibrated")
+        count = len(self._database.get_death_templates(self._game_id))
+        self._calibration_label.setText(
+            "None saved" if count == 0 else f"{count} saved ✓"
+        )
+        self._clear_button.setEnabled(count > 0)
+
+    def _clear_templates(self) -> None:
+        confirm = QMessageBox.question(
+            self, "Clear Death Screens", "Delete all saved death screens for this game?"
+        )
+        if confirm == QMessageBox.StandardButton.Yes:
+            self._database.clear_death_templates(self._game_id)
+            self._update_calibration_label()
 
     def _browse_exe(self) -> None:
         path, _ = QFileDialog.getOpenFileName(
@@ -298,10 +434,11 @@ class AutoDetectWindow(QDialog):
         dialog = CalibrationDialog(qimage_to_frame(image), parent=self)
         if dialog.exec() != QDialog.DialogCode.Accepted or dialog.template is None:
             return
-        self._database.set_game_death_template(
+        self._database.add_death_template(
             self._game_id, dialog.template.region_json(), dialog.template.patch_bytes()
         )
-        self._mode_combo.setCurrentIndex(self._mode_combo.findData(DETECTION_MODE_TEMPLATE))
+        if self._mode_combo.currentData() == DETECTION_MODE_OFF:
+            self._mode_combo.setCurrentIndex(self._mode_combo.findData(DETECTION_MODE_TEMPLATE))
         self._update_calibration_label()
 
     def _save(self) -> None:
@@ -312,12 +449,7 @@ class AutoDetectWindow(QDialog):
             return
         if mode == DETECTION_MODE_TEMPLATE and not self._has_template():
             hotkey = self._database.get_setting(SETTING_HOTKEY_CALIBRATE, "f8").upper()
-            QMessageBox.information(
-                self,
-                "Calibration Needed",
-                "Saved. Detection starts once you calibrate: press "
-                f"{hotkey} in-game the next time the death screen shows.",
-            )
+            QMessageBox.information(self, "Teach It Your Death Screen", first_death_hint(hotkey))
         self._database.set_game_detection(self._game_id, exe_path, mode)
         self._database.set_setting(SETTING_DETECTION_COOLDOWN, self._cooldown_spin.value())
         self.accept()
