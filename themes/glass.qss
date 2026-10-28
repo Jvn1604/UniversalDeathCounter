@@ -727,3 +727,53 @@ QMessageBox, QInputDialog, QProgressDialog, QColorDialog, QFileDialog {
 QLabel#CounterLabel {
     color: #ff6aa0;
 }
+
+/* ---------------------------------------------------------------- update card */
+
+QFrame#UpdateCard {
+    background-color: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    border-radius: 12px;
+}
+
+QFrame#UpdateCard[state="available"] {
+    background-color: qlineargradient(x1: 0, y1: 0, x2: 1, y2: 1,
+                                      stop: 0 rgba(255, 79, 139, 0.22), stop: 1 rgba(168, 85, 247, 0.08));
+    border: 1px solid rgba(255, 79, 139, 0.50);
+}
+
+QFrame#UpdateCard QWidget {
+    background-color: transparent;
+}
+
+QLabel#UpdateTitle {
+    color: #ffffff;
+    font-size: 12px;
+    font-weight: 800;
+}
+
+QLabel#UpdateDetail {
+    color: #b3a9d6;
+    font-size: 11px;
+}
+
+QPushButton#UpdateCheck {
+    background-color: transparent;
+    border: 1px solid transparent;
+    border-radius: 7px;
+    padding: 0;
+    min-width: 26px;
+    max-width: 26px;
+    min-height: 26px;
+    max-height: 26px;
+}
+
+QPushButton#UpdateCheck:hover {
+    background-color: rgba(255, 255, 255, 0.12);
+    border: 1px solid rgba(255, 255, 255, 0.14);
+}
+
+QFrame#UpdateCard QPushButton#AccentButton {
+    padding: 7px 10px;
+    font-size: 12px;
+}

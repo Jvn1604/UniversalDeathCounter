@@ -101,7 +101,7 @@ No Python or anything else needed. Windows 10 or 11.
 - **Right-click the Game or Boss box** to rename it or mark the boss defeated, without opening Games & Bosses.
 - **Tray menu** has +1, Undo, Boss Defeated, pause detection, start/split the timer, the timer window, mini mode and the overlay.
 - **One place for everything:** pages and tools in the sidebar, profiles and backups at the top right. No duplicated menus.
-- **One-click updates:** when a new version is out, click **Update** at the top; the installed app downloads it, updates itself and reopens. (Portable copies open the download page.)
+- **One-click updates:** the card at the bottom of the sidebar shows whether you are up to date (checked at startup, every 6 hours, or with its refresh button). When a new version is out, click **Update**: the installed app downloads it, updates itself and reopens. (Portable copies open the download page.)
 - Deleting a game tells you exactly what goes with it (deaths, bosses, sessions, runs).
 
 ### 🪶 Lightweight
