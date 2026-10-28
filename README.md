@@ -60,7 +60,7 @@ No Python or anything else needed. Windows 10 or 11.
 - **Keybind editor with live conflict detection.** It flags duplicates, keys that would block typing, keys another program already took, and overlapping combos.
 
 ### 📺 Made for streaming
-- **OBS-ready overlay:** a translucent card, or green-screen mode for OBS's Chroma Key. Pick which number it shows, plus its color, font size and lines.
+- **OBS-ready overlay, styled your way:** a card in any color, your own picture as the background, or green-screen mode for OBS's Chroma Key. Choose the font, number and text colors, size, corner roundness, opacity, a shadow that keeps text readable, and which lines show.
 - **`deaths.txt`** for OBS Text sources, with your own template, e.g. `{game} - {boss}: {deaths}`.
 - **Help → Set Up OBS Overlay** walks you through both methods, with one-click setup buttons.
 - **Multi-monitor:** move the overlay to any display. Windows come back on-screen if a monitor is unplugged.
@@ -72,7 +72,7 @@ No Python or anything else needed. Windows 10 or 11.
 - Notes on individual deaths, session history, and graphs: per boss, over time, and per session.
 - Ready-made boss lists for Elden Ring, Dark Souls III, Sekiro, Bloodborne, Hollow Knight and Cuphead.
 - **Multiple profiles** (switch from the box at the top), JSON backup and restore, and CSV export.
-- Your own text and death-number colors in **Settings → General**.
+- **Make the main window yours** in **Settings → Appearance**: any installed font, text and death-number colors, and a background image with adjustable dimming. Click **Apply** to preview without closing Settings.
 
 ### 🪶 Lightweight
 - The whole app is ~100 MB installed and adds **no** background services.
