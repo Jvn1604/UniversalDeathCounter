@@ -18,6 +18,7 @@ env/
 saves/*.db
 saves/*.db-journal
 saves/logs/
+saves/backgrounds/
 
 # --- Testing / tooling ---
 .pytest_cache/

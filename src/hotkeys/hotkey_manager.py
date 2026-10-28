@@ -174,6 +174,8 @@ class HotkeyManager(QObject):
             hotkey is pressed.
         pause_detection_triggered: Emitted when the pause/resume
             auto-detection hotkey is pressed.
+        action_triggered: Emitted with the action name for every hotkey,
+            including actions without a dedicated signal (e.g. the timer's).
         registration_failed: Emitted with ``[(action, key), ...]`` for keys
             that could not be registered (unknown key, or already taken
             by another program).
@@ -187,43 +189,19 @@ class HotkeyManager(QObject):
     pause_detection_triggered = Signal()
     prev_boss_triggered = Signal()
     next_boss_triggered = Signal()
+    action_triggered = Signal(str)
     registration_failed = Signal(list)
 
-    def __init__(
-        self,
-        increment_key: str,
-        decrement_key: str,
-        undo_key: str,
-        toggle_overlay_key: str,
-        calibrate_key: str = "f8",
-        pause_detection_key: str = "ctrl+f8",
-        prev_boss_key: str = "",
-        next_boss_key: str = "",
-        parent: QObject | None = None,
-    ) -> None:
+    def __init__(self, parent: QObject | None = None, **keys: str) -> None:
         """
         Args:
-            increment_key: Key combo (e.g. ``"f9"``) for +1 death.
-            decrement_key: Key combo for -1 death.
-            undo_key: Key combo for undo.
-            toggle_overlay_key: Key combo for toggling the overlay.
-            calibrate_key: Key combo for capturing a death-screen calibration.
-            pause_detection_key: Key combo for pausing/resuming auto-detection.
-            prev_boss_key: Key combo for selecting the previous boss.
-            next_boss_key: Key combo for selecting the next boss.
             parent: Optional Qt parent object.
+            **keys: One ``<action>_key`` combo per action, e.g.
+                ``increment_key="f9"`` or ``timer_split_key="num+1"``.
+                "" leaves that action unbound.
         """
         super().__init__(parent)
-        self._bindings: dict[str, str] = {
-            "increment": increment_key,
-            "decrement": decrement_key,
-            "undo": undo_key,
-            "toggle_overlay": toggle_overlay_key,
-            "calibrate": calibrate_key,
-            "pause_detection": pause_detection_key,
-            "prev_boss": prev_boss_key,
-            "next_boss": next_boss_key,
-        }
+        self._bindings: dict[str, str] = self._parse_bindings(keys)
         self._signals: dict[str, Signal] = {
             "increment": self.increment_triggered,
             "decrement": self.decrement_triggered,
@@ -270,36 +248,29 @@ class HotkeyManager(QObject):
         self._thread = None
         logger.info("Hotkeys unregistered")
 
-    def update_bindings(
-        self,
-        increment_key: str,
-        decrement_key: str,
-        undo_key: str,
-        toggle_overlay_key: str,
-        calibrate_key: str = "f8",
-        pause_detection_key: str = "ctrl+f8",
-        prev_boss_key: str = "",
-        next_boss_key: str = "",
-    ) -> None:
-        """Stop, rebind, and restart hotkeys with new key combinations."""
+    @staticmethod
+    def _parse_bindings(keys: dict[str, str]) -> dict[str, str]:
+        bindings: dict[str, str] = {}
+        for name, key in keys.items():
+            if not name.endswith("_key"):
+                raise TypeError(f"Unexpected argument {name!r}: expected <action>_key")
+            bindings[name.removesuffix("_key")] = key
+        return bindings
+
+    def update_bindings(self, **keys: str) -> None:
+        """Stop, rebind (same ``<action>_key`` arguments as the constructor), and restart."""
         was_active = self._thread is not None
         self.stop()
-        self._bindings = {
-            "increment": increment_key,
-            "decrement": decrement_key,
-            "undo": undo_key,
-            "toggle_overlay": toggle_overlay_key,
-            "calibrate": calibrate_key,
-            "pause_detection": pause_detection_key,
-            "prev_boss": prev_boss_key,
-            "next_boss": next_boss_key,
-        }
+        self._bindings = self._parse_bindings(keys)
         if was_active:
             self.start()
 
     def _emit_action(self, action: str) -> None:
-        # Called on the listener thread; Qt queues the signal to the main thread.
-        self._signals[action].emit()
+        # Called on the listener thread; Qt queues the signals to the main thread.
+        signal = self._signals.get(action)
+        if signal is not None:
+            signal.emit()
+        self.action_triggered.emit(action)
 
     def key_available(self, key: str) -> bool:
         """

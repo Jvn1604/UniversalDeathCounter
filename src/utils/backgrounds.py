@@ -11,6 +11,7 @@ from __future__ import annotations
 import hashlib
 from pathlib import Path
 
+import numpy as np
 from PySide6.QtCore import QRect, QSize, Qt
 from PySide6.QtGui import QImage, QPixmap
 
@@ -46,13 +47,31 @@ def import_background(source: Path, dest_dir: Path = BACKGROUNDS_DIR) -> Path:
             Qt.TransformationMode.SmoothTransformation,
         )
     digest = hashlib.sha1(source.read_bytes()).hexdigest()[:12]
-    suffix = ".png" if image.hasAlphaChannel() else ".jpg"
+    transparent = has_transparency(image)
+    if not transparent:
+        image = image.convertToFormat(QImage.Format.Format_RGB32)  # JPEG has no alpha
+    suffix = ".png" if transparent else ".jpg"
     dest_dir.mkdir(parents=True, exist_ok=True)
     destination = dest_dir / f"bg-{digest}{suffix}"
     if not destination.exists() and not image.save(str(destination), quality=90):
         raise OSError(f"Couldn't save the image to {destination}.")
     logger.info("Imported background %s -> %s", source, destination)
     return destination
+
+
+def has_transparency(image: QImage) -> bool:
+    """
+    Whether any pixel is see-through.
+
+    Screenshots are often saved with an alpha channel that is fully opaque;
+    those are stored as JPEG (~1 MB) instead of PNG (often 10+ MB).
+    """
+    if not image.hasAlphaChannel():
+        return False
+    argb = image.convertToFormat(QImage.Format.Format_ARGB32)
+    rows = np.frombuffer(argb.constBits(), dtype=np.uint8, count=argb.sizeInBytes())
+    pixels = rows.reshape(argb.height(), argb.bytesPerLine())[:, : argb.width() * 4]
+    return bool((pixels[:, 3::4] < 255).any())  # bytes are B, G, R, A
 
 
 def load_background(path: str) -> QPixmap | None:
