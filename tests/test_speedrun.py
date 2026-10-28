@@ -63,7 +63,8 @@ def test_format_time(ms, text) -> None:
 
 
 @pytest.mark.parametrize(
-    ("ms", "text"), [(-1_200, "-1.2"), (12_300, "+12.3"), (65_000, "+1:05.0"), (0, "+0.0")]
+    ("ms", "text"),
+    [(-12_420, "-12.42"), (5_310, "+5.31"), (65_000, "+1:05.00"), (0, "+0.00")],
 )
 def test_format_delta(ms, text) -> None:
     assert format_delta(ms) == text
@@ -202,8 +203,8 @@ def test_view_shows_deltas_golds_and_timer_color() -> None:
     clock.advance(20)  # 28.0: past the PB's 25.0 for split 2
     view = controller.view()
     assert view.rows[0].delta_status == GOLD
-    assert view.rows[0].delta == "-2.0"
-    assert view.rows[1].current and view.rows[1].delta == "+3.0"
+    assert view.rows[0].delta == "-2.00"
+    assert view.rows[1].current and view.rows[1].delta == "+3.00"
     assert view.rows[1].delta_status == BEHIND
     assert view.time_status == BEHIND
 

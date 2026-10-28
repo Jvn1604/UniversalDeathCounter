@@ -25,10 +25,12 @@ from src.detection.game_window import (
     find_main_window,
     find_process_ids,
     grab_rect,
+    is_foreground,
+    is_not_responding,
     open_screen_capture,
     window_client_rect,
 )
-from src.detection.matchers import DeathDebouncer, Matcher
+from src.detection.matchers import DeathDebouncer, Matcher, is_loading_frame
 from src.utils.logger import get_logger
 
 try:
@@ -44,6 +46,21 @@ _IDLE_POLL_SECONDS: float = 1.0
 _PROCESS_POLL_SECONDS: float = 2.0
 # ~5 s of solid black frames triggers the "use borderless" hint.
 _BLACK_FRAME_LIMIT: int = int(FRAMES_PER_SECOND * 5)
+
+
+# What the game is doing, reported for the speedrun timer's auto-pause.
+ACTIVITY_WAITING = "waiting"  # not started yet
+ACTIVITY_PLAYING = "playing"
+ACTIVITY_LOADING = "loading"  # black / near-black screen, or no window yet
+ACTIVITY_PAUSE_SCREEN = "pause_screen"  # one of the saved pause screens
+ACTIVITY_NOT_RESPONDING = "not_responding"
+ACTIVITY_BACKGROUND = "background"  # minimized or another window in front
+ACTIVITY_CLOSED = "closed"  # was running, process gone (quit or crash)
+# Consecutive frames needed before a loading / pause screen counts.
+_LOADING_FRAMES: int = 3
+_PAUSE_SCREEN_FRAMES: int = 2
+# Solid black for longer than this is a capture problem, not a load.
+_MAX_BLACK_LOADING_FRAMES: int = int(FRAMES_PER_SECOND * 30)
 
 
 # Recent frames kept for "missed a death?" captures: one per second, at most
@@ -68,6 +85,10 @@ class WatchConfig:
     game_id: int
     exe_path: str
     matcher: Matcher | None
+    # Speedrun auto-pause: report what the game is doing (activity_changed),
+    # optionally recognizing saved pause / loading screens.
+    watch_activity: bool = False
+    pause_matcher: Matcher | None = None
     required_frames: int = 3
     setup_hint: str = "after you die, click 📷 Death Screen to teach it"
 
@@ -79,10 +100,13 @@ class DeathWatcher(QObject):
     Signals:
         death_detected: Emitted with the game id when a death screen appears.
         status_changed: Emitted with a short human-readable status line.
+        activity_changed: Emitted with (game id, ``ACTIVITY_*``) when what the
+            game is doing changes; only with ``WatchConfig.watch_activity``.
     """
 
     death_detected = Signal(int)
     status_changed = Signal(str)
+    activity_changed = Signal(int, str)
 
     def __init__(self, cooldown_seconds: float = 8.0, parent: QObject | None = None) -> None:
         super().__init__(parent)
@@ -93,6 +117,7 @@ class DeathWatcher(QObject):
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
         self._last_status = ""
+        self._last_activity = ""
         self._recent_frames: deque[tuple[float, np.ndarray]] = deque(maxlen=RECENT_FRAME_COUNT)
 
     def recent_frames(self) -> list[tuple[float, np.ndarray]]:
@@ -139,6 +164,11 @@ class DeathWatcher(QObject):
             self._last_status = text
             self.status_changed.emit(text)
 
+    def _report(self, config: WatchConfig, activity: str) -> None:
+        if config.watch_activity and activity != self._last_activity:
+            self._last_activity = activity
+            self.activity_changed.emit(config.game_id, activity)
+
     def _run(self) -> None:
         try:
             with open_screen_capture() as sct:
@@ -154,6 +184,8 @@ class DeathWatcher(QObject):
         next_lookup = 0.0
         black_frames = 0
         next_recent = 0.0
+        ever_seen = False
+        loading_frames = pause_frames = 0
 
         while not self._stop_event.is_set():
             with self._lock:
@@ -167,6 +199,8 @@ class DeathWatcher(QObject):
                 if config is not None:
                     debouncer.required_frames = config.required_frames
                 hwnd, next_lookup, black_frames, next_recent = None, 0.0, 0, 0.0
+                ever_seen, loading_frames, pause_frames = False, 0, 0
+                self._last_activity = ""
 
             if config is None:
                 self._stop_event.wait(_IDLE_POLL_SECONDS)
@@ -178,12 +212,26 @@ class DeathWatcher(QObject):
                 hwnd = find_main_window(find_process_ids(config.exe_path))
                 next_lookup = now + _WINDOW_LOOKUP_INTERVAL
             if hwnd is None:
+                if not ever_seen:
+                    self._report(config, ACTIVITY_WAITING)
+                elif find_process_ids(config.exe_path):
+                    self._report(config, ACTIVITY_LOADING)  # alive, window not up
+                else:
+                    self._report(config, ACTIVITY_CLOSED)  # quit or crashed
                 self._set_status(f"Waiting for {exe_name} to start…")
                 self._stop_event.wait(_PROCESS_POLL_SECONDS)
+                continue
+            ever_seen = True
+
+            if is_not_responding(hwnd):
+                self._report(config, ACTIVITY_NOT_RESPONDING)
+                self._set_status(f"{exe_name} is not responding")
+                self._stop_event.wait(_IDLE_POLL_SECONDS)
                 continue
 
             rect = window_client_rect(hwnd)
             if rect is None:
+                self._report(config, ACTIVITY_BACKGROUND)
                 hwnd = None
                 self._set_status(f"{exe_name} is minimized")
                 self._stop_event.wait(_IDLE_POLL_SECONDS)
@@ -207,13 +255,29 @@ class DeathWatcher(QObject):
             else:
                 self._set_status(f"Watching {exe_name} for deaths")
 
-            if config.matcher is None:
+            if config.watch_activity:
+                loading = is_loading_frame(frame) and black_frames < _MAX_BLACK_LOADING_FRAMES
+                loading_frames = loading_frames + 1 if loading else 0
+                paused = config.pause_matcher is not None and config.pause_matcher.match(
+                    frame
+                )[0]
+                pause_frames = pause_frames + 1 if paused else 0
+                if pause_frames >= _PAUSE_SCREEN_FRAMES:
+                    self._report(config, ACTIVITY_PAUSE_SCREEN)
+                elif loading_frames >= _LOADING_FRAMES:
+                    self._report(config, ACTIVITY_LOADING)
+                elif not is_foreground(hwnd):
+                    self._report(config, ACTIVITY_BACKGROUND)
+                elif not loading and not paused:
+                    self._report(config, ACTIVITY_PLAYING)
+
+            if config.matcher is not None:
+                matched, _score = config.matcher.match(frame)
+                if debouncer.update(matched, time.monotonic()):
+                    logger.info("Death screen detected in %s", exe_name)
+                    self.death_detected.emit(config.game_id)
+            elif not config.watch_activity:
                 self._stop_event.wait(_RECENT_FRAME_INTERVAL)  # buffer only, no matching
                 continue
-
-            matched, _score = config.matcher.match(frame)
-            if debouncer.update(matched, time.monotonic()):
-                logger.info("Death screen detected in %s", exe_name)
-                self.death_detected.emit(config.game_id)
 
             self._stop_event.wait(1.0 / FRAMES_PER_SECOND)

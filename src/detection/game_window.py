@@ -175,6 +175,19 @@ def find_main_window(pids: list[int]) -> int | None:
     return best[1] if best is not None else None
 
 
+def is_not_responding(hwnd: int) -> bool:
+    """Windows' own "Not Responding" test (no input handled for ~5 s)."""
+    return DETECTION_SUPPORTED and bool(_user32.IsHungAppWindow(hwnd))
+
+
+def is_foreground(hwnd: int) -> bool:
+    """Whether ``hwnd`` is the window the player is using right now."""
+    if not DETECTION_SUPPORTED:
+        return True
+    _user32.GetForegroundWindow.restype = wintypes.HWND  # full-width handle
+    return _user32.GetForegroundWindow() == hwnd
+
+
 def window_client_rect(hwnd: int) -> Rect | None:
     """Screen rectangle of a window's client area, or None if gone/minimized."""
     if not DETECTION_SUPPORTED or not _user32.IsWindow(hwnd) or _user32.IsIconic(hwnd):

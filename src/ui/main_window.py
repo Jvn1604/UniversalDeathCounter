@@ -8,7 +8,9 @@ system into the primary user-facing UI.
 
 from __future__ import annotations
 
+import dataclasses
 import json
+import time
 from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
@@ -44,10 +46,25 @@ from PySide6.QtWidgets import (
 
 from src.core.counter_manager import CounterManager, CounterSnapshot
 from src.core.session_manager import SessionManager
-from src.core.speedrun import SpeedrunController
+from src.core.speedrun import (
+    FINISHED,
+    IDLE,
+    RUNNING,
+    SpeedrunController,
+    SpeedrunTimer,
+    format_time,
+)
 from src.core.statistics import StatisticsService
-from src.database.database import Database
-from src.detection.death_watcher import DeathWatcher, WatchConfig
+from src.database.database import SCREEN_PAUSE, Database
+from src.detection.death_watcher import (
+    ACTIVITY_BACKGROUND,
+    ACTIVITY_CLOSED,
+    ACTIVITY_LOADING,
+    ACTIVITY_NOT_RESPONDING,
+    ACTIVITY_PAUSE_SCREEN,
+    DeathWatcher,
+    WatchConfig,
+)
 from src.detection.game_window import (
     capture_game_frame,
     detection_available,
@@ -60,6 +77,7 @@ from src.detection.matchers import (
     DeathTemplate,
     HealthBarMatcher,
     build_matcher,
+    build_screen_matcher,
 )
 from src.hotkeys.gamepad import GamepadManager, combo_label
 from src.hotkeys.hotkey_manager import HotkeyManager
@@ -78,11 +96,12 @@ from src.ui.death_log_window import DeathLogWindow
 from src.ui.obs_guide_window import ObsGuideWindow
 from src.ui.settings_window import SettingsWindow
 from src.ui.statistics_window import StatisticsWindow
-from src.ui.timer_window import SplitsDialog, TimerWindow
+from src.ui.timer_window import RunHistoryDialog, SplitsDialog, TimerWindow
 from src.utils.backgrounds import cover, load_background
 from src.utils.constants import (
     APP_BRAND,
     APP_NAME,
+    APP_SHORT_NAME,
     APP_SUBTITLE,
     CONTROL_ACTIONS,
     DETECTION_MODE_HEALTH,
@@ -108,7 +127,16 @@ from src.utils.constants import (
     SETTING_OVERLAY_COUNTER_SOURCE,
     SETTING_OVERLAY_GEOMETRY,
     SETTING_THEME,
+    SETTING_TIMER_AUTOSAVE,
+    SETTING_TIMER_COMPARISON,
+    SETTING_TIMER_DIGITS,
     SETTING_TIMER_GEOMETRY,
+    SETTING_TIMER_METHOD,
+    SETTING_TIMER_PAUSE_BACKGROUND,
+    SETTING_TIMER_PAUSE_LOADING,
+    SETTING_TIMER_PAUSE_NOT_RESPONDING,
+    SETTING_TIMER_PAUSE_ON_CLOSE,
+    SETTING_TIMER_PAUSE_SCREENS,
     SETTING_TIMER_VISIBLE,
     SETTING_UI_BG_DIM,
     SETTING_UI_BG_IMAGE,
@@ -130,6 +158,14 @@ logger = get_logger(__name__)
 _ADD_GAME_SENTINEL = "__add_game_from_exe__"
 _ADD_GAME_LABEL = "+ Add game from .exe…"
 _GAME_LAUNCH_POLL_MS = 3000
+_AUTOSAVE_MS = 10_000  # a run in progress is saved this often (crash recovery)
+# What makes the speedrun timer's game time stop: (reason shown, setting).
+_GAME_TIME_PAUSES = {
+    ACTIVITY_LOADING: ("Loading", SETTING_TIMER_PAUSE_LOADING),
+    ACTIVITY_PAUSE_SCREEN: ("Game paused", SETTING_TIMER_PAUSE_SCREENS),
+    ACTIVITY_NOT_RESPONDING: ("Game not responding", SETTING_TIMER_PAUSE_NOT_RESPONDING),
+    ACTIVITY_BACKGROUND: ("Game in background", SETTING_TIMER_PAUSE_BACKGROUND),
+}
 # Caption under the big number, by the "Big number shows" setting.
 _COUNTER_CAPTIONS = {
     "session": "DEATHS THIS SESSION",
@@ -203,6 +239,15 @@ class MainWindow(QMainWindow):
         self._restore_main_geometry()
         QGuiApplication.instance().screenRemoved.connect(self._on_screen_removed)
         self._reload_games()
+        self._autosave_timer = QTimer(self)
+        self._autosave_timer.setInterval(_AUTOSAVE_MS)
+        self._autosave_timer.timeout.connect(self._autosave)
+        self._autosave_timer.start()
+        # Once the window is up; a QTimer (not singleShot) so closing can cancel it.
+        self._recovery_timer = QTimer(self)
+        self._recovery_timer.setSingleShot(True)
+        self._recovery_timer.timeout.connect(self._offer_run_recovery)
+        self._recovery_timer.start(0)
         self._maybe_check_updates()
 
     def _update_window_title(self) -> None:
@@ -248,6 +293,8 @@ class MainWindow(QMainWindow):
         self._add_display_menu(view_menu)
         timer_action = view_menu.addAction("Speedrun Timer")
         timer_action.triggered.connect(self._toggle_timer_window)
+        history_action = view_menu.addAction("Run History && Records…")
+        history_action.triggered.connect(self._open_run_history)
         stats_action = view_menu.addAction("Statistics && Graphs…")
         stats_action.triggered.connect(self._show_statistics)
         log_action = view_menu.addAction("Death Log…")
@@ -583,6 +630,7 @@ class MainWindow(QMainWindow):
     def _setup_death_watcher(self) -> None:
         self._death_watcher.status_changed.connect(self._detect_status_label.setText)
         self._death_watcher.death_detected.connect(self._on_death_detected)
+        self._death_watcher.activity_changed.connect(self._on_game_activity)
         self._log_watcher.status_changed.connect(self._detect_status_label.setText)
         self._log_watcher.death_detected.connect(self._on_death_detected)
         self._death_watcher.start()
@@ -614,6 +662,25 @@ class MainWindow(QMainWindow):
             status = "Auto-detect off"
         else:
             screen_config = self._screen_watch_config(game_id, mode, row["exe_path"])
+        if self._timer_needs_watching(game_id, row):
+            # A run is going: also watch for loads, pauses and crashes, even
+            # if death detection itself is off or uses the log file.
+            if screen_config is None:
+                screen_config = WatchConfig(
+                    game_id=game_id,
+                    exe_path=row["exe_path"],
+                    matcher=None,
+                    setup_hint="watching loads and pauses for the timer",
+                )
+            pause_screens = [
+                (t["region"], t["template"])
+                for t in self._database.get_death_templates(game_id, SCREEN_PAUSE)
+            ]
+            screen_config = dataclasses.replace(
+                screen_config,
+                watch_activity=True,
+                pause_matcher=build_screen_matcher(pause_screens),
+            )
         cooldown = float(self._database.get_setting(SETTING_DETECTION_COOLDOWN, "8") or 8)
         self._death_watcher.configure(screen_config, cooldown_seconds=cooldown)
         self._log_watcher.configure(log_config)
@@ -1032,6 +1099,8 @@ class MainWindow(QMainWindow):
             self._speedrun.add_deaths(
                 self._counter_manager.current_game_id, snapshot.session_deaths - before
             )
+            if self._speedrun.running:
+                self._autosave()
             self._timer_window.refresh()
         self._apply_snapshot(snapshot)
 
@@ -1249,6 +1318,10 @@ class MainWindow(QMainWindow):
 
     def _on_settings_changed(self) -> None:
         self._apply_saved_settings()
+        if self._speedrun is not None:
+            self._apply_timer_options(self._speedrun)
+            self._timer_window.set_controller(self._speedrun)
+        self._configure_detection()
         self._on_settings_changed_hotkeys()
         self._refresh_counters()
 
@@ -1303,8 +1376,21 @@ class MainWindow(QMainWindow):
             controller.set_runs(
                 self._database.get_speedrun_runs(game_id, controller.timer.split_names)
             )
+        self._apply_timer_options(controller)
         self._speedrun = controller
         self._timer_window.set_controller(controller)
+
+    def _apply_timer_options(self, controller: SpeedrunController) -> None:
+        settings = self._database.get_all_settings()
+        try:
+            digits = int(settings.get(SETTING_TIMER_DIGITS, "2"))
+        except ValueError:
+            digits = 2
+        controller.set_options(
+            settings.get(SETTING_TIMER_METHOD, "real"),
+            settings.get(SETTING_TIMER_COMPARISON, "pb"),
+            digits,
+        )
 
     def _end_speedrun(self) -> None:
         """Save the attempt in progress (if any), e.g. before closing or switching."""
@@ -1312,6 +1398,131 @@ class MainWindow(QMainWindow):
             self._speedrun.reset()
             self._speedrun = None
             self._timer_window.set_controller(None)
+        self._database.set_setting(SETTING_TIMER_AUTOSAVE, "")  # saved properly
+
+    def _timer_needs_watching(self, game_id: int | None, row) -> bool:
+        """Whether a run in progress needs the game window watched for auto-pause."""
+        controller = self._speedrun
+        if (
+            controller is None
+            or not controller.running
+            or controller.game_id != game_id
+            or row is None
+            or not row["exe_path"]
+            or not detection_available()
+        ):
+            return False
+        settings = self._database.get_all_settings()
+        keys = [key for _reason, key in _GAME_TIME_PAUSES.values()]
+        keys.append(SETTING_TIMER_PAUSE_ON_CLOSE)
+        return any(settings.get(key, "false") == "true" for key in keys)
+
+    def _on_game_activity(self, game_id: int, activity: str) -> None:
+        """Auto-pause the speedrun timer from what the game is doing."""
+        controller = self._speedrun
+        if controller is None or controller.game_id != game_id or not controller.running:
+            return
+        settings = self._database.get_all_settings()
+        if activity == ACTIVITY_CLOSED:
+            controller.set_game_paused("")
+            if (
+                settings.get(SETTING_TIMER_PAUSE_ON_CLOSE, "true") == "true"
+                and controller.timer.state == RUNNING
+            ):
+                controller.timer.toggle_pause()
+                self._notify(
+                    "The game closed or crashed, so the timer is paused. "
+                    "Resume it with the pause key when you're back in."
+                )
+        else:
+            reason, key = _GAME_TIME_PAUSES.get(activity, ("", ""))
+            enabled = bool(key) and settings.get(key, "false") == "true"
+            controller.set_game_paused(reason if enabled else "")
+        self._autosave()
+        self._timer_window.refresh()
+
+    def _notify(self, message: str, msecs: int = 5000) -> None:
+        if self._tray is not None:
+            self._tray.showMessage(
+                APP_BRAND, message, QSystemTrayIcon.MessageIcon.Information, msecs
+            )
+
+    # Auto-save / crash recovery ------------------------------------------
+    def _autosave(self) -> None:
+        """Save a snapshot of the run in progress (cleared once it's stored)."""
+        controller = self._speedrun
+        if controller is not None and controller.timer.state != IDLE:
+            data = {
+                "game_id": controller.game_id,
+                "game_name": controller.game_name,
+                "saved_at": time.time(),
+                **controller.timer.snapshot(),
+            }
+            self._database.set_setting(SETTING_TIMER_AUTOSAVE, json.dumps(data))
+        elif self._database.get_setting(SETTING_TIMER_AUTOSAVE, ""):
+            self._database.set_setting(SETTING_TIMER_AUTOSAVE, "")
+
+    def _offer_run_recovery(self) -> None:
+        """After a crash, offer the run that was in progress back."""
+        raw = self._database.get_setting(SETTING_TIMER_AUTOSAVE, "")
+        if not raw:
+            return
+        try:
+            data = json.loads(raw)
+            game_id = int(data["game_id"])
+            timer = SpeedrunTimer.restore(data)
+        except (ValueError, KeyError, TypeError):
+            logger.warning("Discarding an unreadable auto-saved run")
+            self._database.set_setting(SETTING_TIMER_AUTOSAVE, "")
+            return
+        game = self._database.get_game(game_id)
+        if game is None:
+            self._database.set_setting(SETTING_TIMER_AUTOSAVE, "")
+            return
+        done = sum(1 for t in timer.split_times if t is not None)
+        pause_key = self._hotkey_bindings().get("timer_pause_key", "").upper() or "Pause"
+        box = QMessageBox(self)
+        box.setWindowTitle("Recover Run")
+        box.setIcon(QMessageBox.Icon.Question)
+        box.setText(
+            f"A {game['name']} run was still going when {APP_SHORT_NAME} last closed "
+            "unexpectedly.\n\n"
+            f"Time {format_time(timer.elapsed_ms())}   •   "
+            f"Split {done + 1 if timer.state != FINISHED else done}/{len(timer.split_names)}   •   "
+            f"Deaths {timer.deaths}\n\n"
+            f"Resume brings it back paused at that time; press {pause_key} to go on."
+        )
+        resume = box.addButton("Resume Run", QMessageBox.ButtonRole.AcceptRole)
+        keep = box.addButton("Save as Attempt", QMessageBox.ButtonRole.ActionRole)
+        box.addButton("Discard", QMessageBox.ButtonRole.DestructiveRole)
+        box.exec()
+        clicked = box.clickedButton()
+        if clicked is resume:
+            self._resume_recovered_run(game_id, timer)
+            return
+        if clicked is keep:
+            record = timer.reset()
+            if record is not None:
+                self._database.add_speedrun_run(game_id, record)
+        self._database.set_setting(SETTING_TIMER_AUTOSAVE, "")
+        if self._speedrun is not None and self._speedrun.game_id == game_id:
+            self._load_speedrun(force=True)  # new attempt count / history
+
+    def _resume_recovered_run(self, game_id: int, timer: SpeedrunTimer) -> None:
+        index = self._game_combo.findData(game_id)
+        if index >= 0 and self._game_combo.currentIndex() != index:
+            self._game_combo.setCurrentIndex(index)  # loads that game's timer
+        if self._speedrun is None or self._speedrun.game_id != game_id:
+            self._load_speedrun(force=True)
+        controller = self._speedrun
+        if controller is None:
+            return
+        controller.set_runs(self._database.get_speedrun_runs(game_id, timer.split_names))
+        controller.restore_timer(timer)
+        if not self._timer_window.isVisible():
+            self._toggle_timer_window()
+        self._timer_window.refresh()
+        self._configure_detection()
 
     def _timer_action(self, action: str) -> None:
         controller = self._speedrun
@@ -1325,11 +1536,18 @@ class MainWindow(QMainWindow):
             "undo": timer.undo_split,
             "skip": timer.skip_split,
         }
+        was_running = controller.running
         handlers[action]()
+        if action == "split" and controller.is_new_pb():
+            total = format_time(controller.timer.elapsed_ms(controller.method), 2)
+            self._notify(f"🏆 New personal best! {total}", 8000)
         if action == "reset" and controller.game_id != self._counter_manager.current_game_id:
             self._load_speedrun()  # the finished-with game's run is saved; follow the UI
         if action == "split" and not self._timer_window.isVisible():
             self._toggle_timer_window()  # starting a run shows the timer
+        if controller.running != was_running:
+            self._configure_detection()  # start/stop watching for loads and crashes
+        self._autosave()
         self._timer_window.refresh()
 
     def _on_timer_window_action(self, action: str) -> None:
@@ -1337,6 +1555,8 @@ class MainWindow(QMainWindow):
             self._open_splits_dialog()
         elif action == "hide":
             self._toggle_timer_window()
+        elif action == "history":
+            self._open_run_history()
         else:
             self._timer_action(action)
 
@@ -1345,6 +1565,13 @@ class MainWindow(QMainWindow):
         self._database.set_setting(
             SETTING_TIMER_VISIBLE, "true" if self._timer_window.isVisible() else "false"
         )
+
+    def _open_run_history(self) -> None:
+        if self._speedrun is None or self._speedrun.game_id is None:
+            QMessageBox.information(self, "Select a Game", "Select a game first.")
+            return
+        RunHistoryDialog(self._database, self._speedrun, parent=self).exec()
+        self._timer_window.set_controller(self._speedrun)  # history may have changed
 
     def _open_splits_dialog(self) -> None:
         game_id = self._counter_manager.current_game_id
@@ -1438,6 +1665,8 @@ class MainWindow(QMainWindow):
         self._session_manager.end_current_session()
         self._hotkey_manager.stop()
         self._gamepad_manager.stop()
+        self._autosave_timer.stop()
+        self._recovery_timer.stop()
         self._death_watcher.stop()
         self._log_watcher.stop()
         self._overlay.close()
