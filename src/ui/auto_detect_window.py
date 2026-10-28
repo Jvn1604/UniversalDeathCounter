@@ -38,7 +38,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from src.database.database import Database
+from src.database.database import SCREEN_PAUSE, Database
 from src.detection.game_window import detection_available
 from src.detection.log_watcher import compile_death_pattern, scan_log
 from src.detection.matchers import SOULS_PRESET_EXES, DeathTemplate, HealthBar, Region
@@ -194,6 +194,18 @@ class CalibrationDialog(QDialog):
             QMessageBox.warning(self, "Try Another Area", str(exc))
             return
         self.accept()
+
+
+class PauseScreenDialog(CalibrationDialog):
+    """Marks a pause / loading / cutscene screen for the speedrun timer's game time."""
+
+    _TITLE = "Mark Pause or Loading Screen"
+    _INSTRUCTIONS = (
+        "Drag a box around something that only shows on this screen, like the "
+        '"PAUSED" text, the loading icon, or a cutscene\'s black bars.\n'
+        "While it's on screen, the speedrun timer's game time stops."
+    )
+    _SAVE_LABEL = "Save Screen"
 
 
 class HealthBarDialog(CalibrationDialog):
@@ -472,6 +484,36 @@ class AutoDetectWindow(QDialog):
         )
         form.addRow("", self._log_hint)
 
+        # Speedrun timer: screens that stop game time (any detection method).
+        self._pause_label = QLabel()
+        pause_frame_button = QPushButton("Last Game Frame")
+        pause_frame_button.setToolTip(
+            "Pause the game (or wait on a loading screen), then click this."
+        )
+        pause_frame_button.clicked.connect(self._pause_from_recent_frame)
+        pause_file_button = QPushButton("From Screenshot…")
+        pause_file_button.clicked.connect(self._pause_from_file)
+        self._pause_clear_button = QPushButton("Clear")
+        self._pause_clear_button.clicked.connect(self._clear_pause_screens)
+        form.addRow(
+            "Timer pause screens",
+            self._row(
+                self._pause_label,
+                pause_frame_button,
+                pause_file_button,
+                self._pause_clear_button,
+                stretch_after=0,
+            ),
+        )
+        form.addRow(
+            "",
+            self._hint(
+                "For the speedrun timer: game time stops while a saved pause menu, "
+                "loading or cutscene screen shows. Black loading screens, crashes and "
+                "freezes are recognized without this (Settings → Speedrun)."
+            ),
+        )
+
         self._cooldown_spin = QSpinBox()
         self._cooldown_spin.setRange(3, 120)
         self._cooldown_spin.setSuffix(" s")
@@ -517,6 +559,7 @@ class AutoDetectWindow(QDialog):
         self._pattern_edit.setText(str(options.get("log_pattern") or ""))
         self._update_calibration_label()
         self._update_health_label()
+        self._update_pause_label()
         self._health_frame_button.setEnabled(bool(self._recent_frames and self._recent_frames()))
         self._cooldown_spin.setValue(
             int(self._database.get_setting(SETTING_DETECTION_COOLDOWN, "8") or 8)
@@ -535,6 +578,47 @@ class AutoDetectWindow(QDialog):
             "None saved" if count == 0 else f"{count} saved ✓"
         )
         self._clear_button.setEnabled(count > 0)
+
+    def _update_pause_label(self) -> None:
+        count = len(self._database.get_death_templates(self._game_id, SCREEN_PAUSE))
+        self._pause_label.setText("None saved" if count == 0 else f"{count} saved ✓")
+        self._pause_clear_button.setEnabled(count > 0)
+
+    def _mark_pause_screen(self, frame: np.ndarray) -> None:
+        dialog = PauseScreenDialog(frame, parent=self)
+        if dialog.exec() != QDialog.DialogCode.Accepted or dialog.template is None:
+            return
+        self._database.add_death_template(
+            self._game_id,
+            dialog.template.region_json(),
+            dialog.template.patch_bytes(),
+            SCREEN_PAUSE,
+        )
+        self._update_pause_label()
+
+    def _pause_from_recent_frame(self) -> None:
+        frames = self._recent_frames() if self._recent_frames else []
+        if not frames:
+            QMessageBox.information(
+                self,
+                "No Game Frame Yet",
+                "Start the game (or a speedrun) first, then try again.",
+            )
+            return
+        self._mark_pause_screen(frames[-1][1])
+
+    def _pause_from_file(self) -> None:
+        frame = self._open_image(self, "Pause or Loading Screen Screenshot")
+        if frame is not None:
+            self._mark_pause_screen(frame)
+
+    def _clear_pause_screens(self) -> None:
+        confirm = QMessageBox.question(
+            self, "Clear Pause Screens", "Delete all saved pause/loading screens for this game?"
+        )
+        if confirm == QMessageBox.StandardButton.Yes:
+            self._database.clear_death_templates(self._game_id, SCREEN_PAUSE)
+            self._update_pause_label()
 
     def _update_health_label(self) -> None:
         bar = self._health_bar()

@@ -8,12 +8,15 @@ on a ~30 fps timer only while a run is going, so an idle timer costs nothing.
 
 from __future__ import annotations
 
+from datetime import datetime
+
 from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import QContextMenuEvent
 from PySide6.QtWidgets import (
     QDialog,
     QGridLayout,
     QHBoxLayout,
+    QHeaderView,
     QLabel,
     QListWidget,
     QListWidgetItem,
@@ -21,6 +24,8 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QSizeGrip,
+    QTableWidget,
+    QTableWidgetItem,
     QVBoxLayout,
     QWidget,
 )
@@ -32,6 +37,7 @@ from src.core.speedrun import (
     RUNNING,
     SpeedrunController,
     TimerView,
+    format_time,
 )
 from src.database.database import Database
 from src.overlay.capture_window import CaptureWindow
@@ -51,7 +57,7 @@ class TimerWindow(CaptureWindow):
 
     Signals:
         action_requested: From the right-click menu: "split", "pause", "undo",
-            "skip", "reset", "edit_splits" or "hide".
+            "skip", "reset", "edit_splits", "history" or "hide".
     """
 
     action_requested = Signal(str)
@@ -90,6 +96,13 @@ class TimerWindow(CaptureWindow):
         self._time_label = QLabel("0:00.00")
         self._time_label.setAlignment(Qt.AlignmentFlag.AlignRight)
         layout.addWidget(self._time_label)
+        # Why the clock isn't moving (Paused / Loading…) and the other clock.
+        self._sub_label = QLabel()
+        self._sub_label.setAlignment(Qt.AlignmentFlag.AlignRight)
+        layout.addWidget(self._sub_label)
+        self._segment_label = QLabel()
+        self._segment_label.setTextFormat(Qt.TextFormat.RichText)
+        layout.addWidget(self._segment_label)
         self._footer_label = QLabel()
         self._footer_label.setWordWrap(True)
         layout.addWidget(self._footer_label)
@@ -116,11 +129,15 @@ class TimerWindow(CaptureWindow):
         self._title_label.setStyleSheet(f"color: {secondary}; font-weight: 600; {font}")
         self._attempts_label.setStyleSheet(f"color: {secondary}; font-size: 11px; {font}")
         self._footer_label.setStyleSheet(f"color: {secondary}; font-size: 11px; {font}")
+        self._segment_label.setStyleSheet(f"color: {secondary}; font-size: 11px; {font}")
+        self._sub_label.setStyleSheet(f"color: {secondary}; font-size: 11px; {font}")
         self.apply_outline(
             (
                 self._title_label,
                 self._attempts_label,
                 self._time_label,
+                self._sub_label,
+                self._segment_label,
                 self._footer_label,
                 *(label for row in self._rows for label in row),
             )
@@ -146,6 +163,7 @@ class TimerWindow(CaptureWindow):
             ("Reset", "reset"),
             (None, ""),
             ("Edit Splits…", "edit_splits"),
+            ("Run History && Records…", "history"),
             ("Hide Timer", "hide"),
         ):
             if label is None:
@@ -171,11 +189,24 @@ class TimerWindow(CaptureWindow):
         if previous is None or previous.time_status != view.time_status:
             self._style_time(view.time_status)
         self._time_label.setText(view.time)
-        if previous is None or (previous.rows, previous.attempts, previous.deaths, previous.pb) != (
+        sub = "   ".join(part for part in (view.paused_reason, view.other_time) if part)
+        if self._sub_label.text() != sub:
+            self._sub_label.setText(sub)
+        static = (
             view.rows,
             view.attempts,
             view.deaths,
             view.pb,
+            view.previous_segment,
+            view.comparison,
+        )
+        if previous is None or static != (
+            previous.rows,
+            previous.attempts,
+            previous.deaths,
+            previous.pb,
+            previous.previous_segment,
+            previous.comparison,
         ):
             self._render_static(view)
         if view.state != RUNNING:
@@ -204,6 +235,14 @@ class TimerWindow(CaptureWindow):
             )
             time.setText(row.time)
             time.setStyleSheet(f"color: {secondary}; {font}")
+        segment = "-"
+        if view.previous_segment:
+            color = _STATUS_COLORS.get(view.previous_segment_status, secondary)
+            segment = (
+                f'<span style="color: {color}; font-weight: 600;">'
+                f"{view.previous_segment}</span>"
+            )
+        self._segment_label.setText(f"Previous segment {segment}   •   vs {view.comparison}")
         deaths = f"Deaths {view.deaths}"
         if view.pb_deaths is not None:
             deaths += f" (PB run {view.pb_deaths})"
@@ -317,3 +356,161 @@ class SplitsDialog(QDialog):
     def _save(self) -> None:
         self._database.set_speedrun_splits(self._game_id, self.names())
         self.accept()
+
+
+def _local_time(iso: str) -> str:
+    try:
+        return datetime.fromisoformat(iso).astimezone().strftime("%Y-%m-%d %H:%M")
+    except ValueError:
+        return iso
+
+
+class RunHistoryDialog(QDialog):
+    """Every attempt for the current splits, plus personal records."""
+
+    def __init__(
+        self,
+        database: Database,
+        controller: SpeedrunController,
+        parent: QWidget | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self._database = database
+        self._controller = controller
+        self.changed = False
+        self.setWindowTitle(f"Run History & Records: {controller.game_name}")
+        self.setMinimumSize(640, 480)
+
+        layout = QVBoxLayout(self)
+        self._records_label = QLabel()
+        self._records_label.setTextFormat(Qt.TextFormat.RichText)
+        self._records_label.setWordWrap(True)
+        self._records_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        layout.addWidget(self._records_label)
+
+        self._table = QTableWidget(0, 6)
+        self._table.setHorizontalHeaderLabels(
+            ["#", "Date", "Result", "Real time", "Game time", "Deaths"]
+        )
+        self._table.verticalHeader().setVisible(False)
+        self._table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self._table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        header = self._table.horizontalHeader()
+        header.setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)  # Result takes the rest
+        layout.addWidget(self._table, 1)
+
+        buttons = QHBoxLayout()
+        self._delete_button = QPushButton("Delete Selected Run")
+        self._delete_button.setObjectName("DangerButton")
+        self._delete_button.clicked.connect(self._delete_selected)
+        close = QPushButton("Close")
+        close.clicked.connect(self.accept)
+        buttons.addWidget(self._delete_button)
+        buttons.addStretch()
+        buttons.addWidget(close)
+        layout.addLayout(buttons)
+        self._populate()
+
+    def _populate(self) -> None:
+        controller = self._controller
+        names = controller.timer.split_names
+        runs = controller.runs
+        records = controller.records()
+        digits = controller.digits
+        pb = records.pb
+
+        lines = [f"<b>Attempts:</b> {records.attempts} &nbsp; <b>Finished:</b> {records.finished}"]
+        if pb is not None:
+            lines.append(
+                f"<b>🏆 Personal best:</b> {format_time(pb.total(controller.method), digits)} "
+                f"({pb.deaths} deaths, {_local_time(pb.started_at)})"
+            )
+        if records.fewest_deaths is not None and records.fewest_deaths is not pb:
+            run = records.fewest_deaths
+            lines.append(
+                f"<b>💀 Fewest deaths:</b> {run.deaths} in "
+                f"{format_time(run.total(controller.method), digits)} "
+                f"({_local_time(run.started_at)})"
+            )
+        lines.append(f"<b>Sum of best:</b> {format_time(records.sum_of_best, digits)}")
+        golds = ", ".join(
+            f"{name} {format_time(best, digits)}"
+            for name, best in records.best_segments
+            if best is not None
+        )
+        if golds:
+            lines.append(f"<b>Best segments:</b> {golds}")
+        if controller.game_id is not None:
+            lines += self._death_records(controller.game_id)
+        self._records_label.setText("<br>".join(lines))
+
+        self._table.setRowCount(len(runs))
+        for row, (number, run) in enumerate(reversed(list(enumerate(runs, start=1)))):
+            if run.finished:
+                result = "Finished"
+            else:  # the split it was on when reset
+                reached = min(len(run.split_times), len(names) - 1)
+                result = f"Reset at {names[reached]}"
+            is_pb = pb is not None and run is pb
+            cells = [
+                str(number),
+                _local_time(run.started_at),
+                ("🏆 PB  " if is_pb else "") + result,
+                format_time(_last(run.split_times), digits),
+                format_time(_last(run.times("game")), digits),
+                str(run.deaths),
+            ]
+            for column, text in enumerate(cells):
+                item = QTableWidgetItem(text)
+                item.setData(Qt.ItemDataRole.UserRole, run.run_id)
+                self._table.setItem(row, column, item)
+        self._delete_button.setEnabled(bool(runs) and not controller.running)
+
+    def _death_records(self, game_id: int) -> list[str]:
+        """Death-counter records: easiest boss victory and the roughest session."""
+        lines: list[str] = []
+        victories = [
+            boss
+            for boss in self._database.get_bosses(game_id)
+            if boss["defeated"] and boss["deaths_at_defeat"] is not None
+        ]
+        if victories:
+            best = min(victories, key=lambda boss: boss["deaths_at_defeat"])
+            lines.append(
+                f"<b>Fewest deaths to beat a boss:</b> {best['deaths_at_defeat']} "
+                f"({best['name']})"
+            )
+        sessions = self._database.get_sessions_with_counts(game_id)
+        if sessions:
+            worst = max(sessions, key=lambda session: session["deaths"])
+            if worst["deaths"] > 0:
+                lines.append(
+                    f"<b>Most deaths in a session:</b> {worst['deaths']} "
+                    f"({_local_time(worst['started_at'])})"
+                )
+        return lines
+
+    def _delete_selected(self) -> None:
+        row = self._table.currentRow()
+        item = self._table.item(row, 0) if row >= 0 else None
+        run_id = item.data(Qt.ItemDataRole.UserRole) if item is not None else None
+        if run_id is None:
+            return
+        confirm = QMessageBox.question(
+            self, "Delete Run", "Delete this run from the history? This can't be undone."
+        )
+        if confirm != QMessageBox.StandardButton.Yes:
+            return
+        self._database.delete_speedrun_run(int(run_id))
+        game_id = self._controller.game_id
+        if game_id is not None:
+            self._controller.set_runs(
+                self._database.get_speedrun_runs(game_id, self._controller.timer.split_names)
+            )
+        self.changed = True
+        self._populate()
+
+
+def _last(times: list[int | None]) -> int | None:
+    return next((t for t in reversed(times) if t is not None), None)
