@@ -89,8 +89,10 @@ class WatchConfig:
     # optionally recognizing saved pause / loading screens.
     watch_activity: bool = False
     pause_matcher: Matcher | None = None
+    # Boss kills: saved victory screens, watched while a boss is selected.
+    victory_matcher: Matcher | None = None
     required_frames: int = 3
-    setup_hint: str = "after you die, click 📷 Death Screen to teach it"
+    setup_hint: str = "after you die, click 📷 Capture Screen to teach it"
 
 
 class DeathWatcher(QObject):
@@ -102,11 +104,14 @@ class DeathWatcher(QObject):
         status_changed: Emitted with a short human-readable status line.
         activity_changed: Emitted with (game id, ``ACTIVITY_*``) when what the
             game is doing changes; only with ``WatchConfig.watch_activity``.
+        boss_defeated: Emitted with the game id when a saved victory screen
+            (a boss-kill banner) appears.
     """
 
     death_detected = Signal(int)
     status_changed = Signal(str)
     activity_changed = Signal(int, str)
+    boss_defeated = Signal(int)
 
     def __init__(self, cooldown_seconds: float = 8.0, parent: QObject | None = None) -> None:
         super().__init__(parent)
@@ -180,6 +185,8 @@ class DeathWatcher(QObject):
     def _watch_loop(self, sct: mss.base.MSSBase) -> None:
         seen_version = -1
         debouncer = DeathDebouncer()
+        # A victory banner shows for a few seconds; count it once.
+        victory_debouncer = DeathDebouncer(required_frames=3, cooldown_seconds=20.0)
         hwnd: int | None = None
         next_lookup = 0.0
         black_frames = 0
@@ -196,6 +203,7 @@ class DeathWatcher(QObject):
             if version != seen_version:
                 seen_version = version
                 debouncer.reset()
+                victory_debouncer.reset()
                 if config is not None:
                     debouncer.required_frames = config.required_frames
                 hwnd, next_lookup, black_frames, next_recent = None, 0.0, 0, 0.0
@@ -276,7 +284,16 @@ class DeathWatcher(QObject):
                 if debouncer.update(matched, time.monotonic()):
                     logger.info("Death screen detected in %s", exe_name)
                     self.death_detected.emit(config.game_id)
-            elif not config.watch_activity:
+            if config.victory_matcher is not None:
+                won, _score = config.victory_matcher.match(frame)
+                if victory_debouncer.update(won, time.monotonic()):
+                    logger.info("Boss victory screen detected in %s", exe_name)
+                    self.boss_defeated.emit(config.game_id)
+            if (
+                config.matcher is None
+                and config.victory_matcher is None
+                and not config.watch_activity
+            ):
                 self._stop_event.wait(_RECENT_FRAME_INTERVAL)  # buffer only, no matching
                 continue
 

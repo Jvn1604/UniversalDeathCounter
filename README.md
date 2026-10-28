@@ -46,7 +46,7 @@ No Python or anything else needed. Windows 10 or 11.
 
 ### 💀 Automatic death detection
 - **Add a game straight from its `.exe`.** The app watches that game's window and counts a death whenever the death screen appears.
-- **Works with any game.** Teach it the death screen once, either by pressing `F8` on the death screen or afterwards with **📷 Death Screen…**, which lets you pick the frame from the last few seconds.
+- **Works with any game.** Teach it the death screen once, either by pressing `F8` on the death screen or afterwards with **📷 Capture Screen…**, which lets you pick the frame from the last few seconds.
 - **Zero setup for Souls games.** The built-in preset recognizes Elden Ring, Dark Souls I–III and Sekiro.
 - **No death screen? Use the health bar.** Mark your health bar once at full health, and a death counts when it empties.
 - **Or the game's log file.** For games that log deaths, such as Minecraft, it counts every new line that matches your text. This mode doesn't capture the screen at all.
@@ -80,7 +80,7 @@ No Python or anything else needed. Windows 10 or 11.
 ### 📊 Tracking & stats
 - Session, boss and all-time counts, all at once, and they're independent: **Reset Session** starts a fresh session without touching the all-time total, and **Reset Total** zeroes the total without touching the session. Counts never go below zero.
 - Switch bosses with the ◀ ▶ buttons or `Ctrl+F9` / `Ctrl+F10` from in-game. Defeated bosses are skipped.
-- Mark bosses **Defeated ✓** to keep your "deaths until victory" forever.
+- **Boss kills are detected too.** After your first boss of a game, use **📷 Capture Screen…** to teach it that game's victory banner (e.g. *GREAT ENEMY FELLED*). Every later kill of the selected boss then marks it **Defeated ✓**, keeps your "deaths until victory", selects the next boss, and can split the speedrun timer. There's also a **Boss Defeated** key (`Ctrl+F11`) for doing it by hand.
 - Notes on individual deaths, session history, and graphs: per boss, over time, and per session.
 - Ready-made boss lists for Elden Ring, Dark Souls III, Sekiro, Bloodborne, Hollow Knight and Cuphead.
 - **Multiple profiles** (switch from the box at the top), JSON backup and restore, and CSV export.
@@ -115,6 +115,7 @@ You can always count by hand too: **+1 Death** (`F9`), **-1** (`F10`), **Undo** 
 | Calibrate death screen | `F8` | not set |
 | Pause / resume auto-detect | `Ctrl+F8` | not set |
 | Previous / next boss | `Ctrl+F9` / `Ctrl+F10` | not set |
+| Boss defeated | `Ctrl+F11` | not set |
 | Timer: start / split | `Num 1` | not set |
 | Timer: pause / reset | `Num 5` / `Num 3` | not set |
 | Timer: undo / skip split | `Num 8` / `Num 2` | not set |
@@ -165,7 +166,7 @@ Another program has already registered that key. On many PCs plain `F12` is take
 **Deaths aren't detected**
 1. Check the status line under the game selector. It should say *"Watching <game>.exe for deaths"*.
 2. If it says the capture is **black**, switch the game to borderless or windowed mode.
-3. If it's watching but misses deaths, use **📷 Death Screen…** right after a death to add that screen.
+3. If it's watching but misses deaths, use **📷 Capture Screen…** right after a death to add that screen.
 
 **The overlay shows a green box in OBS**
 Add a **Chroma Key** filter to the source (Key Color Type: Green). See **Help → Set Up OBS Overlay**.
