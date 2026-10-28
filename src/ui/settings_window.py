@@ -1,5 +1,4 @@
 """
-<<<<<<< HEAD
 Settings dialog: theme, overlay appearance & behavior, streaming output,
 hotkeys, tray, and updates.
 
@@ -7,20 +6,12 @@ All changes are persisted immediately to the `settings` table via
 :class:`~src.database.database.Database`, consistent with the app's
 "no manual save button" philosophy (the Save button here commits the
 whole form at once).
-=======
-Settings dialog: theme, overlay appearance, hotkeys, autosave, startup.
-
-All changes are persisted immediately to the `settings` table via
-:class:`~src.database.database.Database`, consistent with the app's
-"no manual save button" philosophy.
->>>>>>> 87d3c43bd4a8cfe2e09f744eb9c535cdd5c0fb02
 """
 
 from __future__ import annotations
 
 from PySide6.QtCore import Signal
-<<<<<<< HEAD
-from PySide6.QtGui import QColor
+from PySide6.QtGui import QColor, QKeySequence
 from PySide6.QtWidgets import (
     QCheckBox,
     QColorDialog,
@@ -29,40 +20,32 @@ from PySide6.QtWidgets import (
     QDoubleSpinBox,
     QFileDialog,
     QFormLayout,
+    QGridLayout,
     QGroupBox,
     QHBoxLayout,
     QKeySequenceEdit,
+    QLabel,
     QLineEdit,
-=======
-from PySide6.QtWidgets import (
-    QCheckBox,
-    QComboBox,
-    QDialog,
-    QDoubleSpinBox,
-    QFormLayout,
-    QKeySequenceEdit,
->>>>>>> 87d3c43bd4a8cfe2e09f744eb9c535cdd5c0fb02
+    QMessageBox,
     QPushButton,
     QSpinBox,
+    QTabWidget,
     QVBoxLayout,
+    QWidget,
 )
 
 from src.database.database import Database
+from src.hotkeys.conflicts import ERROR, WARNING, Conflict, find_conflicts, has_errors
+from src.hotkeys.gamepad import GamepadManager, combo_label
+from src.hotkeys.hotkey_manager import HotkeyManager
+from src.utils import startup
 from src.utils.constants import (
     AVAILABLE_THEMES,
-<<<<<<< HEAD
+    CONTROL_ACTIONS,
     SETTING_CHECK_UPDATES,
     SETTING_DEATHS_TXT_ENABLED,
     SETTING_DEATHS_TXT_PATH,
     SETTING_DEATHS_TXT_TEMPLATE,
-=======
-    SETTING_AUTOSAVE,
->>>>>>> 87d3c43bd4a8cfe2e09f744eb9c535cdd5c0fb02
-    SETTING_HOTKEY_DECREMENT,
-    SETTING_HOTKEY_INCREMENT,
-    SETTING_HOTKEY_TOGGLE_OVERLAY,
-    SETTING_HOTKEY_UNDO,
-<<<<<<< HEAD
     SETTING_MINIMIZE_TO_TRAY,
     SETTING_OVERLAY_ALWAYS_ON_TOP,
     SETTING_OVERLAY_BG_MODE,
@@ -73,52 +56,44 @@ from src.utils.constants import (
     SETTING_OVERLAY_SHOW_GAME,
     SETTING_OVERLAY_SHOW_STATS,
     SETTING_OVERLAY_TEXT_COLOR,
-=======
-    SETTING_LAUNCH_ON_STARTUP,
-    SETTING_OVERLAY_ALWAYS_ON_TOP,
-    SETTING_OVERLAY_FONT_SIZE,
-    SETTING_OVERLAY_OPACITY,
->>>>>>> 87d3c43bd4a8cfe2e09f744eb9c535cdd5c0fb02
     SETTING_THEME,
+    pad_setting,
 )
 from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
-<<<<<<< HEAD
 _BG_MODES = ["dark", "chroma"]
 _COUNTER_SOURCES = ["session", "boss", "total"]
 
-=======
->>>>>>> 87d3c43bd4a8cfe2e09f744eb9c535cdd5c0fb02
 
 class SettingsWindow(QDialog):
     """
     Modal dialog exposing all user-configurable settings.
 
     Signals:
-<<<<<<< HEAD
         settings_changed: Emitted whenever settings are saved, so the
             main window can refresh theme/overlay/hotkeys/stream output live.
-=======
-        settings_changed: Emitted whenever any setting is saved, so the
-            main window can refresh theme/overlay/hotkeys live.
->>>>>>> 87d3c43bd4a8cfe2e09f744eb9c535cdd5c0fb02
     """
 
     settings_changed = Signal()
 
-    def __init__(self, database: Database, parent=None) -> None:
+    def __init__(
+        self,
+        database: Database,
+        gamepad: GamepadManager | None = None,
+        hotkeys: HotkeyManager | None = None,
+        parent=None,
+    ) -> None:
         super().__init__(parent)
         self._database = database
-<<<<<<< HEAD
+        self._gamepad = gamepad
+        self._hotkeys = hotkeys  # probes whether keys are taken by other programs
+        self._availability: dict[str, bool] = {}
+        self._recording_action: str | None = None
         self._text_color = "#ff4d4d"
         self.setWindowTitle("Settings")
         self.setMinimumWidth(460)
-=======
-        self.setWindowTitle("Settings")
-        self.setMinimumWidth(380)
->>>>>>> 87d3c43bd4a8cfe2e09f744eb9c535cdd5c0fb02
         self._build_ui()
         self._load_current_values()
 
@@ -126,8 +101,13 @@ class SettingsWindow(QDialog):
     # UI construction
     # ----------------------------------------------------------------
     def _build_ui(self) -> None:
-        layout = QVBoxLayout(self)
-<<<<<<< HEAD
+        outer = QVBoxLayout(self)
+        tabs = QTabWidget()
+        outer.addWidget(tabs)
+        general_page = QWidget()
+        layout = QVBoxLayout(general_page)
+        tabs.addTab(general_page, "General")
+        tabs.addTab(self._build_controls_page(), "Controls")
 
         # --- General ---
         general_group = QGroupBox("General")
@@ -137,6 +117,13 @@ class SettingsWindow(QDialog):
         general_form.addRow("Theme", self._theme_combo)
         self._minimize_tray_check = QCheckBox("Minimize to system tray on close")
         general_form.addRow(self._minimize_tray_check)
+        self._start_with_windows_check = QCheckBox("Start with Windows")
+        if not startup.startup_supported():
+            self._start_with_windows_check.setEnabled(False)
+            self._start_with_windows_check.setToolTip(
+                "Available in the installed app (not when running from source)."
+            )
+        general_form.addRow(self._start_with_windows_check)
         self._check_updates_check = QCheckBox("Check for updates on startup")
         general_form.addRow(self._check_updates_check)
         layout.addWidget(general_group)
@@ -164,22 +151,10 @@ class SettingsWindow(QDialog):
         self._font_size_spin = QSpinBox()
         self._font_size_spin.setRange(10, 96)
         overlay_form.addRow("Font size", self._font_size_spin)
-=======
-        form = QFormLayout()
-
-        self._theme_combo = QComboBox()
-        self._theme_combo.addItems(AVAILABLE_THEMES)
-        form.addRow("Theme", self._theme_combo)
-
-        self._font_size_spin = QSpinBox()
-        self._font_size_spin.setRange(10, 96)
-        form.addRow("Overlay Font Size", self._font_size_spin)
->>>>>>> 87d3c43bd4a8cfe2e09f744eb9c535cdd5c0fb02
 
         self._opacity_spin = QDoubleSpinBox()
         self._opacity_spin.setRange(0.1, 1.0)
         self._opacity_spin.setSingleStep(0.05)
-<<<<<<< HEAD
         overlay_form.addRow("Opacity (dark mode)", self._opacity_spin)
 
         self._show_game_check = QCheckBox("Show game name")
@@ -217,53 +192,184 @@ class SettingsWindow(QDialog):
         stream_form.addRow("Template", self._deaths_txt_template)
         layout.addWidget(stream_group)
 
-        # --- Hotkeys ---
-        hotkey_group = QGroupBox("Global Hotkeys")
-        hotkey_form = QFormLayout(hotkey_group)
-        self._hotkey_increment = QKeySequenceEdit()
-        hotkey_form.addRow("+1 Death", self._hotkey_increment)
-        self._hotkey_decrement = QKeySequenceEdit()
-        hotkey_form.addRow("-1 Death", self._hotkey_decrement)
-        self._hotkey_undo = QKeySequenceEdit()
-        hotkey_form.addRow("Undo", self._hotkey_undo)
-        self._hotkey_toggle_overlay = QKeySequenceEdit()
-        hotkey_form.addRow("Toggle Overlay", self._hotkey_toggle_overlay)
-        layout.addWidget(hotkey_group)
-=======
-        form.addRow("Overlay Opacity", self._opacity_spin)
-
-        self._always_on_top_check = QCheckBox("Overlay Always On Top")
-        form.addRow(self._always_on_top_check)
-
-        self._autosave_check = QCheckBox("Autosave (recommended: always on)")
-        self._autosave_check.setEnabled(False)  # Autosave is core behavior, always on.
-        form.addRow(self._autosave_check)
-
-        self._launch_on_startup_check = QCheckBox("Launch on Startup (coming soon)")
-        self._launch_on_startup_check.setEnabled(False)  # Placeholder per spec.
-        form.addRow(self._launch_on_startup_check)
-
-        self._hotkey_increment = QKeySequenceEdit()
-        form.addRow("Hotkey: +1 Death", self._hotkey_increment)
-
-        self._hotkey_decrement = QKeySequenceEdit()
-        form.addRow("Hotkey: -1 Death", self._hotkey_decrement)
-
-        self._hotkey_undo = QKeySequenceEdit()
-        form.addRow("Hotkey: Undo", self._hotkey_undo)
-
-        self._hotkey_toggle_overlay = QKeySequenceEdit()
-        form.addRow("Hotkey: Toggle Overlay", self._hotkey_toggle_overlay)
-
-        layout.addLayout(form)
->>>>>>> 87d3c43bd4a8cfe2e09f744eb9c535cdd5c0fb02
+        layout.addStretch()
 
         save_button = QPushButton("Save")
         save_button.setObjectName("AccentButton")
         save_button.clicked.connect(self._save)
-        layout.addWidget(save_button)
+        outer.addWidget(save_button)
 
-<<<<<<< HEAD
+    def _build_controls_page(self) -> QWidget:
+        """Keyboard + controller binding per action, with record/clear buttons."""
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        intro = QLabel(
+            "Click a keyboard field and press keys, or click Record and press a controller "
+            "button combo (hold them, then release). Works with Xbox, PlayStation and most "
+            "other controllers. Controller presses also reach the game, so a combo such as "
+            "View/Share + D-pad Up is safest."
+        )
+        intro.setWordWrap(True)
+        layout.addWidget(intro)
+
+        grid = QGridLayout()
+        for column, title in enumerate(("Action", "Keyboard", "", "Controller", "", "")):
+            header = QLabel(title)
+            header.setStyleSheet("font-weight: 600;")
+            grid.addWidget(header, 0, column)
+
+        self._key_edits: dict[str, QKeySequenceEdit] = {}
+        self._pad_labels: dict[str, QLabel] = {}
+        self._record_buttons: dict[str, QPushButton] = {}
+        self._pad_values: dict[str, str] = {}
+        for row, (action, label, _setting, _default) in enumerate(CONTROL_ACTIONS, start=1):
+            grid.addWidget(QLabel(label), row, 0)
+
+            key_edit = QKeySequenceEdit()
+            key_edit.setMaximumSequenceLength(1)
+            key_edit.keySequenceChanged.connect(self._refresh_conflicts)
+            self._key_edits[action] = key_edit
+            grid.addWidget(key_edit, row, 1)
+            clear_key = QPushButton("✕")
+            clear_key.setToolTip("Clear keyboard binding")
+            clear_key.setFixedWidth(36)
+            clear_key.setStyleSheet("padding: 0;")
+            clear_key.clicked.connect(key_edit.clear)
+            grid.addWidget(clear_key, row, 2)
+
+            pad_label = QLabel()
+            pad_label.setMinimumWidth(170)
+            pad_label.setWordWrap(True)  # long combos wrap instead of being cut off
+            self._pad_labels[action] = pad_label
+            grid.addWidget(pad_label, row, 3)
+            record = QPushButton("Record")
+            record.clicked.connect(lambda _=False, a=action: self._start_recording(a))
+            self._record_buttons[action] = record
+            grid.addWidget(record, row, 4)
+            clear_pad = QPushButton("✕")
+            clear_pad.setToolTip("Clear controller binding")
+            clear_pad.setFixedWidth(36)
+            clear_pad.setStyleSheet("padding: 0;")
+            clear_pad.clicked.connect(lambda _=False, a=action: self._set_pad(a, ""))
+            grid.addWidget(clear_pad, row, 5)
+        layout.addLayout(grid)
+
+        self._conflict_label = QLabel()
+        self._conflict_label.setWordWrap(True)
+        layout.addWidget(self._conflict_label)
+
+        bottom = QHBoxLayout()
+        self._pad_status = QLabel()
+        self._pad_status.setStyleSheet("color: #999999; font-size: 11px;")
+        reset = QPushButton("Reset to Defaults")
+        reset.clicked.connect(self._reset_controls)
+        bottom.addWidget(self._pad_status, 1)
+        bottom.addWidget(reset)
+        layout.addLayout(bottom)
+        layout.addStretch()
+
+        if self._gamepad is not None:
+            self._gamepad.combo_recorded.connect(self._on_combo_recorded)
+            self._gamepad.connection_changed.connect(self._update_pad_status)
+        self._update_pad_status()
+        return page
+
+    # ----------------------------------------------------------------
+    # Controller binding helpers
+    # ----------------------------------------------------------------
+    def _update_pad_status(self, _connected: bool | None = None) -> None:
+        if self._gamepad is None:
+            text = "Controller support is unavailable on this system."
+        elif self._gamepad.connected:
+            text = "Controller connected ✓"
+        else:
+            text = "No controller detected: connect one to record combos."
+        self._pad_status.setText(text)
+
+    def _set_pad(self, action: str, combo: str) -> None:
+        self._pad_values[action] = combo
+        self._pad_labels[action].setText(combo_label(combo) or "Not set")
+        self._pad_labels[action].setToolTip(combo_label(combo))
+        self._refresh_conflicts()
+
+    def _start_recording(self, action: str) -> None:
+        if self._gamepad is None or not self._gamepad.connected:
+            QMessageBox.information(
+                self, "No Controller", "Connect a controller first, then click Record."
+            )
+            return
+        self._recording_action = action
+        for name, button in self._record_buttons.items():
+            button.setEnabled(name == action)
+        self._record_buttons[action].setText("Press…")
+        self._pad_labels[action].setText("Hold the buttons, then release")
+        self._gamepad.start_recording()
+
+    def _on_combo_recorded(self, combo: str) -> None:
+        action = self._recording_action
+        if action is None:
+            return
+        self._recording_action = None
+        self._set_pad(action, combo)
+        for button in self._record_buttons.values():
+            button.setEnabled(True)
+            button.setText("Record")
+
+    def _reset_controls(self) -> None:
+        for action, _label, _setting, default in CONTROL_ACTIONS:
+            self._key_edits[action].setKeySequence(QKeySequence(default))
+            self._set_pad(action, "")
+
+    def done(self, result: int) -> None:  # noqa: D102 - stop recording on close
+        if self._gamepad is not None:
+            self._gamepad.cancel_recording()
+            try:
+                self._gamepad.combo_recorded.disconnect(self._on_combo_recorded)
+                self._gamepad.connection_changed.disconnect(self._update_pad_status)
+            except (RuntimeError, TypeError):
+                pass
+        super().done(result)
+
+    def _key_available(self, key: str) -> bool:
+        """Cached probe: is a keyboard combo free of other programs' hotkeys?"""
+        if self._hotkeys is None:
+            return True
+        if key not in self._availability:
+            self._availability[key] = self._hotkeys.key_available(key)
+        return self._availability[key]
+
+    def _current_conflicts(self) -> list[Conflict]:
+        keys = {a: e.keySequence().toString().lower() for a, e in self._key_edits.items()}
+        labels = {action: label for action, label, _s, _d in CONTROL_ACTIONS}
+        return find_conflicts(keys, self._pad_values, labels, self._key_available)
+
+    def _refresh_conflicts(self) -> None:
+        """Highlight problem bindings and explain them under the table, live."""
+        if not hasattr(self, "_conflict_label"):
+            return  # still building the page
+        conflicts = self._current_conflicts()
+        worst: dict[tuple[str, str], str] = {}
+        for c in conflicts:
+            if worst.get((c.action, c.kind)) != ERROR:
+                worst[(c.action, c.kind)] = c.severity
+        colors = {ERROR: "#ff4d4d", WARNING: "#f0a030"}
+        for action, edit in self._key_edits.items():
+            severity = worst.get((action, "keyboard"))
+            edit.setStyleSheet(f"border: 2px solid {colors[severity]};" if severity else "")
+        for action, label in self._pad_labels.items():
+            severity = worst.get((action, "controller"))
+            label.setStyleSheet(f"color: {colors[severity]};" if severity else "")
+        labels = {action: name for action, name, _s, _d in CONTROL_ACTIONS}
+        lines = [
+            f"{'⛔' if c.severity == ERROR else '⚠'} {labels[c.action]}: {c.message}"
+            for c in conflicts
+        ]
+        self._conflict_label.setText("\n".join(lines) or "✓ No conflicts")
+        self._conflict_label.setStyleSheet(
+            "color: #ff4d4d;" if has_errors(conflicts)
+            else "color: #f0a030;" if conflicts else "color: #43b581;"
+        )
+
     def _update_color_button(self) -> None:
         self._color_button.setText(self._text_color)
         self._color_button.setStyleSheet(
@@ -283,8 +389,6 @@ class SettingsWindow(QDialog):
         if path:
             self._deaths_txt_path.setText(path)
 
-=======
->>>>>>> 87d3c43bd4a8cfe2e09f744eb9c535cdd5c0fb02
     # ----------------------------------------------------------------
     # Data binding
     # ----------------------------------------------------------------
@@ -292,10 +396,10 @@ class SettingsWindow(QDialog):
         settings = self._database.get_all_settings()
 
         self._theme_combo.setCurrentText(settings.get(SETTING_THEME, "dark"))
-<<<<<<< HEAD
         self._minimize_tray_check.setChecked(
             settings.get(SETTING_MINIMIZE_TO_TRAY, "false") == "true"
         )
+        self._start_with_windows_check.setChecked(startup.is_enabled())
         self._check_updates_check.setChecked(
             settings.get(SETTING_CHECK_UPDATES, "true") == "true"
         )
@@ -323,33 +427,32 @@ class SettingsWindow(QDialog):
         self._deaths_txt_path.setText(settings.get(SETTING_DEATHS_TXT_PATH, ""))
         self._deaths_txt_template.setText(
             settings.get(SETTING_DEATHS_TXT_TEMPLATE, "{game} - {boss}: {deaths}")
-=======
-        self._font_size_spin.setValue(int(settings.get(SETTING_OVERLAY_FONT_SIZE, "24")))
-        self._opacity_spin.setValue(float(settings.get(SETTING_OVERLAY_OPACITY, "0.85")))
-        self._always_on_top_check.setChecked(
-            settings.get(SETTING_OVERLAY_ALWAYS_ON_TOP, "true") == "true"
-        )
-        self._autosave_check.setChecked(settings.get(SETTING_AUTOSAVE, "true") == "true")
-        self._launch_on_startup_check.setChecked(
-            settings.get(SETTING_LAUNCH_ON_STARTUP, "false") == "true"
->>>>>>> 87d3c43bd4a8cfe2e09f744eb9c535cdd5c0fb02
         )
 
-        self._hotkey_increment.setKeySequence(settings.get(SETTING_HOTKEY_INCREMENT, "F9"))
-        self._hotkey_decrement.setKeySequence(settings.get(SETTING_HOTKEY_DECREMENT, "F10"))
-        self._hotkey_undo.setKeySequence(settings.get(SETTING_HOTKEY_UNDO, "F11"))
-        self._hotkey_toggle_overlay.setKeySequence(
-            settings.get(SETTING_HOTKEY_TOGGLE_OVERLAY, "F12")
-        )
+        for action, _label, setting_key, default in CONTROL_ACTIONS:
+            self._key_edits[action].setKeySequence(
+                QKeySequence(settings.get(setting_key, default))
+            )
+            self._set_pad(action, settings.get(pad_setting(action), ""))
 
     def _save(self) -> None:
-<<<<<<< HEAD
+        errors = [c for c in self._current_conflicts() if c.severity == ERROR]
+        if errors:
+            QMessageBox.warning(
+                self, "Fix Controls First", "\n".join(c.message for c in errors)
+            )
+            return
         db = self._database
         db.set_setting(SETTING_THEME, self._theme_combo.currentText())
         db.set_setting(
             SETTING_MINIMIZE_TO_TRAY,
             "true" if self._minimize_tray_check.isChecked() else "false",
         )
+        if startup.startup_supported():
+            try:
+                startup.set_enabled(self._start_with_windows_check.isChecked())
+            except OSError as exc:
+                QMessageBox.warning(self, "Start with Windows", f"Could not update: {exc}")
         db.set_setting(
             SETTING_CHECK_UPDATES,
             "true" if self._check_updates_check.isChecked() else "false",
@@ -373,17 +476,10 @@ class SettingsWindow(QDialog):
             "true" if self._show_stats_check.isChecked() else "false",
         )
         db.set_setting(
-=======
-        self._database.set_setting(SETTING_THEME, self._theme_combo.currentText())
-        self._database.set_setting(SETTING_OVERLAY_FONT_SIZE, self._font_size_spin.value())
-        self._database.set_setting(SETTING_OVERLAY_OPACITY, self._opacity_spin.value())
-        self._database.set_setting(
->>>>>>> 87d3c43bd4a8cfe2e09f744eb9c535cdd5c0fb02
             SETTING_OVERLAY_ALWAYS_ON_TOP,
             "true" if self._always_on_top_check.isChecked() else "false",
         )
 
-<<<<<<< HEAD
         db.set_setting(
             SETTING_DEATHS_TXT_ENABLED,
             "true" if self._deaths_txt_check.isChecked() else "false",
@@ -392,21 +488,10 @@ class SettingsWindow(QDialog):
         template = self._deaths_txt_template.text().strip() or "{game} - {boss}: {deaths}"
         db.set_setting(SETTING_DEATHS_TXT_TEMPLATE, template)
 
-=======
->>>>>>> 87d3c43bd4a8cfe2e09f744eb9c535cdd5c0fb02
-        for setting_key, edit in (
-            (SETTING_HOTKEY_INCREMENT, self._hotkey_increment),
-            (SETTING_HOTKEY_DECREMENT, self._hotkey_decrement),
-            (SETTING_HOTKEY_UNDO, self._hotkey_undo),
-            (SETTING_HOTKEY_TOGGLE_OVERLAY, self._hotkey_toggle_overlay),
-        ):
-            sequence_text = edit.keySequence().toString().lower()
-            if sequence_text:
-<<<<<<< HEAD
-                db.set_setting(setting_key, sequence_text)
-=======
-                self._database.set_setting(setting_key, sequence_text)
->>>>>>> 87d3c43bd4a8cfe2e09f744eb9c535cdd5c0fb02
+        # An empty field means "unbound" for keyboard and controller alike.
+        for action, _label, setting_key, _default in CONTROL_ACTIONS:
+            db.set_setting(setting_key, self._key_edits[action].keySequence().toString().lower())
+            db.set_setting(pad_setting(action), self._pad_values.get(action, ""))
 
         logger.info("Settings saved")
         self.settings_changed.emit()

@@ -1,0 +1,16 @@
+# Local checks run on every commit (enable once with: pre-commit install)
+# and on every push/PR in CI. They catch the leftover merge-conflict
+# markers that once broke main, plus lint errors.
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: check-merge-conflict
+        args: [--assume-in-merge]  # check every commit, not only during a merge
+      - id: check-yaml
+      - id: check-toml
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.17.3
+    hooks:
+      - id: ruff-check
