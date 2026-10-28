@@ -11,7 +11,7 @@ from __future__ import annotations
 from datetime import datetime
 
 from PySide6.QtCore import Qt, QTimer, Signal
-from PySide6.QtGui import QContextMenuEvent
+from PySide6.QtGui import QContextMenuEvent, QHideEvent, QShowEvent
 from PySide6.QtWidgets import (
     QDialog,
     QGridLayout,
@@ -209,10 +209,18 @@ class TimerWindow(CaptureWindow):
             previous.comparison,
         ):
             self._render_static(view)
-        if view.state != RUNNING:
-            self._tick.stop()  # paused, finished or idle: the time doesn't move
+        if view.state != RUNNING or not self.isVisible():
+            self._tick.stop()  # the time isn't moving, or nobody can see it
         elif not self._tick.isActive():
             self._tick.start()
+
+    def showEvent(self, event: QShowEvent) -> None:  # noqa: N802
+        super().showEvent(event)
+        self.refresh()  # catch up, and start ticking if a run is going
+
+    def hideEvent(self, event: QHideEvent) -> None:  # noqa: N802
+        super().hideEvent(event)
+        self._tick.stop()
 
     def _render_static(self, view: TimerView) -> None:
         """Everything but the big time, which changes every tick."""
