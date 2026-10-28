@@ -239,6 +239,7 @@ class SettingsWindow(QDialog):
 
             pad_label = QLabel()
             pad_label.setMinimumWidth(170)
+            pad_label.setWordWrap(True)  # long combos wrap instead of being cut off
             self._pad_labels[action] = pad_label
             grid.addWidget(pad_label, row, 3)
             record = QPushButton("Record")
@@ -288,6 +289,7 @@ class SettingsWindow(QDialog):
     def _set_pad(self, action: str, combo: str) -> None:
         self._pad_values[action] = combo
         self._pad_labels[action].setText(combo_label(combo) or "Not set")
+        self._pad_labels[action].setToolTip(combo_label(combo))
         self._refresh_conflicts()
 
     def _start_recording(self, action: str) -> None:
