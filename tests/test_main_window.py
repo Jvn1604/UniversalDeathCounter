@@ -158,7 +158,9 @@ def test_counter_labels_name_each_count(window) -> None:
     window._reload_games(select_game_id=game_id)
     window._on_increment()
     assert window._counter_caption.text() == "DEATHS THIS SESSION"
-    assert window._sub_counter_label.text().startswith("This session: 1")
+    assert window._tile_session.value.text() == "1"
+    assert window._tile_boss.value.text() == "–"  # no boss selected
+    assert window._tile_total.value.text() == "1"
     db.set_setting("overlay_counter_source", "total")
     window._refresh_counters()
     assert window._counter_caption.text() == "ALL-TIME DEATHS"
@@ -177,7 +179,7 @@ def test_custom_ui_colors_apply() -> None:
 
     base = load_stylesheet("dark")
     custom = customize_stylesheet(base, "dark", "#7fd1ff", "#00ff88")
-    assert "color: #e8e8e8;" not in custom
+    assert "color: #ececf1;" not in custom
     assert "color: #7fd1ff;" in custom
     assert custom.rstrip().endswith("QLabel#CounterLabel { color: #00ff88; }")
     assert "color: #ffffff;" in custom  # text on red buttons stays readable
@@ -192,3 +194,70 @@ def test_timeline_has_a_point_per_change(window) -> None:
         window._on_increment()
     window._counter_manager.reset_total()
     assert [row["delta"] for row in db.get_total_timeline(game_id)] == [1, 1, 1, -3]
+
+
+def test_sidebar_switches_pages(window) -> None:
+    from src.ui.main_window import _PAGE_DETECTION, _PAGE_HOME, _PAGE_STATS, _PAGE_TIMER
+
+    assert window._pages.currentIndex() == _PAGE_HOME
+    for index in (_PAGE_TIMER, _PAGE_STATS, _PAGE_DETECTION, _PAGE_HOME):
+        window._nav_buttons[index].click()
+        assert window._pages.currentIndex() == index
+        assert window._nav_buttons[index].isChecked()
+    assert window._pages.count() == 4
+
+
+def test_stats_page_shows_this_games_numbers(window) -> None:
+    from src.ui.main_window import _PAGE_STATS
+
+    db = window._database
+    game_id = db.create_game("Elden Ring")
+    margit = db.create_boss(game_id, "Margit")
+    db.create_boss(game_id, "Godrick")
+    window._reload_games(select_game_id=game_id)
+    window._boss_combo.setCurrentIndex(window._boss_combo.findData(margit))
+    window._on_increment()
+    window._on_increment()
+    window._show_page(_PAGE_STATS)
+    tiles = window._stat_tiles
+    assert tiles["total"].value.text() == "2"
+    assert tiles["today"].value.text() == "2"
+    assert tiles["bosses"].value.text() == "0 / 2"
+    assert tiles["worst"].value.text() == "2" and "MARGIT" in tiles["worst"].caption.text()
+    assert window._recent_list.count() == 2
+    window._on_increment()  # the open page follows new deaths
+    assert tiles["total"].value.text() == "3"
+
+
+def test_detection_status_shows_on_both_pages(window) -> None:
+    from src.ui.main_window import _PAGE_DETECTION
+
+    window._detect_status_label.setText("Watching game.exe for deaths")
+    assert window._detect_status_label_mirror.text() == "Watching game.exe for deaths"
+    assert window._detect_status_label.property("state") == "active"
+    window._detect_status_label.setText("Capture of game.exe is black.")
+    assert window._detect_status_label_mirror.property("state") == "warning"
+    window._toggle_detection_pause()
+    assert window._pause_btn_detect.text() == window._pause_btn.text() == "▶ Resume"
+    window._toggle_detection_pause()
+    db = window._database
+    game_id = db.create_game("Elden Ring")
+    window._reload_games(select_game_id=game_id)
+    window._show_page(_PAGE_DETECTION)
+    assert "0 death" in window._detect_page_info.text()
+
+
+def test_timer_page_mirrors_the_timer(window) -> None:
+    from src.ui.main_window import _PAGE_TIMER
+
+    db = window._database
+    game_id = db.create_game("Elden Ring")
+    db.set_speedrun_splits(game_id, ["Margit", "Godrick"])
+    window._reload_games(select_game_id=game_id)
+    window._show_page(_PAGE_TIMER)
+    assert "FIRST SPLIT: MARGIT" in window._timer_page_split.text()
+    window._timer_action("split")
+    assert window._timer_page_split.text() == "NOW: MARGIT"
+    assert window._page_timer.isActive() and window._page_timer.interval() == 50
+    window._show_page(0)
+    assert not window._page_timer.isActive()  # no ticking while hidden

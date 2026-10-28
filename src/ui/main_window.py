@@ -12,7 +12,7 @@ import dataclasses
 import json
 import time
 from collections.abc import Callable
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 
 from PySide6.QtCore import QByteArray, Qt, QTimer
@@ -27,6 +27,7 @@ from PySide6.QtGui import (
     QScreen,
 )
 from PySide6.QtWidgets import (
+    QButtonGroup,
     QComboBox,
     QFileDialog,
     QFrame,
@@ -34,11 +35,14 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QInputDialog,
     QLabel,
+    QListWidget,
     QMainWindow,
     QMenu,
     QMenuBar,
     QMessageBox,
     QPushButton,
+    QScrollArea,
+    QStackedWidget,
     QSystemTrayIcon,
     QVBoxLayout,
     QWidget,
@@ -47,7 +51,10 @@ from PySide6.QtWidgets import (
 from src.core.counter_manager import CounterManager, CounterSnapshot
 from src.core.session_manager import SessionManager
 from src.core.speedrun import (
+    AHEAD,
+    BEHIND,
     FINISHED,
+    GOLD,
     IDLE,
     RUNNING,
     SpeedrunController,
@@ -55,7 +62,7 @@ from src.core.speedrun import (
     format_time,
 )
 from src.core.statistics import StatisticsService
-from src.database.database import SCREEN_PAUSE, SCREEN_VICTORY, Database
+from src.database.database import SCREEN_DEATH, SCREEN_PAUSE, SCREEN_VICTORY, Database
 from src.detection.death_watcher import (
     ACTIVITY_BACKGROUND,
     ACTIVITY_CLOSED,
@@ -97,12 +104,24 @@ from src.ui.obs_guide_window import ObsGuideWindow
 from src.ui.settings_window import SettingsWindow
 from src.ui.statistics_window import StatisticsWindow
 from src.ui.timer_window import RunHistoryDialog, SplitsDialog, TimerWindow
+from src.ui.widgets import (
+    StatTile,
+    StatusPill,
+    card,
+    field,
+    glow,
+    nav_button,
+    page_header,
+    row,
+    section_title,
+)
 from src.utils.backgrounds import cover, load_background
 from src.utils.constants import (
     APP_BRAND,
     APP_NAME,
     APP_SHORT_NAME,
     APP_SUBTITLE,
+    APP_VERSION,
     CONTROL_ACTIONS,
     DETECTION_MODE_HEALTH,
     DETECTION_MODE_LOG,
@@ -169,6 +188,16 @@ _GAME_TIME_PAUSES = {
     ACTIVITY_NOT_RESPONDING: ("Game not responding", SETTING_TIMER_PAUSE_NOT_RESPONDING),
     ACTIVITY_BACKGROUND: ("Game in background", SETTING_TIMER_PAUSE_BACKGROUND),
 }
+# Sidebar pages, in stack order.
+_PAGE_HOME, _PAGE_TIMER, _PAGE_STATS, _PAGE_DETECTION = range(4)
+_TIMER_STATUS_COLORS = {AHEAD: "#3ad07a", BEHIND: "#ff5c5c", GOLD: "#ffd24a"}
+_MODE_NAMES = {
+    DETECTION_MODE_OFF: "Off",
+    DETECTION_MODE_TEMPLATE: "Death screen",
+    DETECTION_MODE_SOULS: "Souls preset",
+    DETECTION_MODE_HEALTH: "Health bar",
+    DETECTION_MODE_LOG: "Log file",
+}
 # Caption under the big number, by the "Big number shows" setting.
 _COUNTER_CAPTIONS = {
     "session": "DEATHS THIS SESSION",
@@ -210,7 +239,8 @@ class MainWindow(QMainWindow):
 
     def __init__(self) -> None:
         super().__init__()
-        self.setMinimumSize(480, 460)
+        self.setMinimumSize(820, 600)
+        self.resize(1000, 700)
 
         icon_path = ICONS_DIR / "app_icon.ico"  # multi-size: crisp in title bar and tray
         self._app_icon = QIcon(str(icon_path)) if icon_path.exists() else QIcon()
@@ -235,6 +265,7 @@ class MainWindow(QMainWindow):
         self._build_menu()
         self._build_ui()
         self._rebuild_profile_menu()  # again, now that the header's profile box exists
+        self._detect_status_label.add_mirror(self._detect_status_label_mirror)
         self._build_tray()
         self._setup_hotkeys()
         self._setup_death_watcher()
@@ -337,116 +368,187 @@ class MainWindow(QMainWindow):
     # Central UI
     # ----------------------------------------------------------------
     def _build_ui(self) -> None:
+        """Top bar, sidebar navigation, and a stack of pages (Home, Timer, Stats, Detection)."""
         central = self._background = _BackgroundHost()
         self.setCentralWidget(central)
-        root_layout = QVBoxLayout(central)
-        root_layout.setContentsMargins(20, 20, 20, 20)
-        root_layout.setSpacing(16)
+        shell = QVBoxLayout(central)
+        shell.setContentsMargins(0, 0, 0, 0)
+        shell.setSpacing(0)
+        shell.addWidget(self._build_top_bar())
 
-        header = QHBoxLayout()
-        header.setSpacing(12)
+        body = QHBoxLayout()
+        body.setContentsMargins(0, 0, 0, 0)
+        body.setSpacing(0)
+        self._pages = QStackedWidget()
+        body.addWidget(self._build_sidebar())
+        body.addWidget(self._pages, 1)
+        shell.addLayout(body, 1)
+
+        for builder in (
+            self._build_home_page,
+            self._build_timer_page,
+            self._build_stats_page,
+            self._build_detection_page,
+        ):
+            page = builder()
+            scroll = QScrollArea()
+            scroll.setWidgetResizable(True)
+            scroll.setFrameShape(QFrame.Shape.NoFrame)
+            scroll.setWidget(page)
+            self._pages.addWidget(scroll)
+        self._pages.currentChanged.connect(self._on_page_changed)
+        self._page_timer = QTimer(self)  # live Timer page while it's showing
+        self._page_timer.timeout.connect(self._refresh_timer_page)
+        self._show_page(_PAGE_HOME)
+
+    def _build_top_bar(self) -> QWidget:
+        bar = QFrame()
+        bar.setObjectName("TopBar")
+        layout = QHBoxLayout(bar)
+        layout.setContentsMargins(18, 10, 18, 10)
+        layout.setSpacing(12)
         logo_label = QLabel()
         logo = QPixmap(str(ICONS_DIR / "app_icon_48.png"))
         if not logo.isNull():
-            logo_label.setPixmap(logo)
-        title_layout = QVBoxLayout()
-        title_layout.setSpacing(0)
+            logo_label.setPixmap(
+                logo.scaled(
+                    36,
+                    36,
+                    Qt.AspectRatioMode.KeepAspectRatio,
+                    Qt.TransformationMode.SmoothTransformation,
+                )
+            )
+        titles = QVBoxLayout()
+        titles.setSpacing(0)
         title_label = QLabel(APP_BRAND)
         title_label.setObjectName("TitleLabel")
-        subtitle_label = QLabel(APP_SUBTITLE)
-        subtitle_label.setStyleSheet("color: #b56cff; font-size: 12px; font-weight: 600;")
-        title_layout.addWidget(title_label)
-        title_layout.addWidget(subtitle_label)
-        header.addWidget(logo_label)
-        header.addLayout(title_layout, 1)
+        subtitle_label = QLabel(APP_SUBTITLE.upper())
+        subtitle_label.setObjectName("Subtitle")
+        titles.addWidget(title_label)
+        titles.addWidget(subtitle_label)
+        layout.addWidget(logo_label)
+        layout.addLayout(titles, 1)
+
+        profile_caption = QLabel("PROFILE")
+        profile_caption.setObjectName("FieldLabel")
         self._profile_combo = QComboBox()
         self._profile_combo.setToolTip("Each profile keeps its own games and counts.")
-        self._profile_combo.setMinimumWidth(130)
+        self._profile_combo.setMinimumWidth(150)
         self._profile_combo.activated.connect(
             lambda index: self._switch_profile(self._profile_combo.itemText(index))
         )
-        header.addWidget(self._labeled("Profile", self._profile_combo))
-        root_layout.addLayout(header)
+        settings_button = QPushButton("≡")
+        settings_button.setObjectName("IconButton")
+        settings_button.setToolTip("Settings")
+        settings_button.clicked.connect(self._open_settings_window)
+        layout.addWidget(profile_caption)
+        layout.addWidget(self._profile_combo)
+        layout.addWidget(settings_button)
+        return bar
 
-        selector_layout = QHBoxLayout()
+    def _build_sidebar(self) -> QWidget:
+        sidebar = QFrame()
+        sidebar.setObjectName("Sidebar")
+        sidebar.setFixedWidth(176)
+        layout = QVBoxLayout(sidebar)
+        layout.setContentsMargins(0, 14, 0, 10)
+        layout.setSpacing(2)
+        self._nav_group = QButtonGroup(self)
+        self._nav_group.setExclusive(True)
+        self._nav_buttons: list[QPushButton] = []
+        for index, text in enumerate(
+            ("⌂   Home", "◷   Timer", "▤   Stats", "◎   Detection")
+        ):
+            button = nav_button(text)
+            button.clicked.connect(lambda _=False, i=index: self._show_page(i))
+            self._nav_group.addButton(button, index)
+            self._nav_buttons.append(button)
+            layout.addWidget(button)
+        layout.addStretch()
+        for text, handler in (
+            ("▣   Overlay", self._toggle_overlay),
+            ("◉   OBS Setup", self._open_obs_guide),
+            ("≡   Settings", self._open_settings_window),
+        ):
+            button = nav_button(text, checkable=False)
+            button.clicked.connect(handler)
+            layout.addWidget(button)
+        footer = QLabel(f"{APP_SHORT_NAME} v{APP_VERSION}")
+        footer.setObjectName("NavFooter")
+        layout.addWidget(footer)
+        return sidebar
+
+    @staticmethod
+    def _page_layout() -> tuple[QWidget, QVBoxLayout]:
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(26, 22, 26, 22)
+        layout.setSpacing(16)
+        return page, layout
+
+    # Home -------------------------------------------------------------
+    def _build_home_page(self) -> QWidget:
+        page, layout = self._page_layout()
+
         self._game_combo = QComboBox()
         self._game_combo.setPlaceholderText("Add a game: pick its .exe")
         self._game_combo.currentIndexChanged.connect(self._on_game_changed)
         self._boss_combo = QComboBox()
         self._boss_combo.currentIndexChanged.connect(self._on_boss_changed)
-        selector_layout.addWidget(self._labeled("Game", self._game_combo))
-        boss_row = QWidget()
-        boss_layout = QHBoxLayout(boss_row)
-        boss_layout.setContentsMargins(0, 0, 0, 0)
-        boss_layout.setSpacing(4)
-        boss_layout.addWidget(self._boss_combo, 1)
         self._prev_boss_btn = QPushButton("◀")
         self._prev_boss_btn.clicked.connect(lambda: self._select_adjacent_boss(-1))
         self._next_boss_btn = QPushButton("▶")
         self._next_boss_btn.clicked.connect(lambda: self._select_adjacent_boss(+1))
-        for button in (self._prev_boss_btn, self._next_boss_btn):
-            button.setStyleSheet("padding: 0;")
-            button.setFixedWidth(32)
+        self._defeated_btn = QPushButton("✓")
+        self._defeated_btn.setToolTip("Boss defeated: mark it ✓ and move to the next boss")
+        self._defeated_btn.clicked.connect(lambda: self._defeat_current_boss(detected=False))
+        for button in (self._prev_boss_btn, self._next_boss_btn, self._defeated_btn):
+            button.setObjectName("IconButton")
+        manage_button = QPushButton("Manage…")
+        manage_button.setObjectName("GhostButton")
+        manage_button.setToolTip("Games & bosses: add, rename, boss lists, defeated…")
+        manage_button.clicked.connect(self._open_boss_window)
+
+        boss_row = QWidget()
+        boss_layout = QHBoxLayout(boss_row)
+        boss_layout.setContentsMargins(0, 0, 0, 0)
+        boss_layout.setSpacing(6)
+        boss_layout.addWidget(self._boss_combo, 1)
+        for button in (self._prev_boss_btn, self._next_boss_btn, self._defeated_btn):
             boss_layout.addWidget(button)
-        selector_layout.addWidget(self._labeled("Boss", boss_row))
-        root_layout.addLayout(selector_layout)
+        selectors = QHBoxLayout()
+        selectors.setSpacing(14)
+        selectors.addWidget(field("Game", self._game_combo), 2)
+        selectors.addWidget(field("Boss", boss_row), 3)
+        selectors.addWidget(manage_button, 0, Qt.AlignmentFlag.AlignBottom)
+        layout.addLayout(selectors)
 
-        # Status lines get the full width; the three buttons sit on the row below.
-        self._detect_status_label = QLabel("Auto-detect off")
-        self._detect_status_label.setWordWrap(True)
-        self._detect_last_label = QLabel("")
-        self._detect_last_label.setStyleSheet("color: #999999; font-size: 11px;")
-        self._detect_last_label.setWordWrap(True)
-        root_layout.addWidget(self._detect_status_label)
-        root_layout.addWidget(self._detect_last_label)
-        detect_layout = QHBoxLayout()
-        death_screen_button = QPushButton("📷 Capture Screen…")
-        death_screen_button.setToolTip(
-            "A death wasn't counted? Pick the death screen from the last few seconds "
-            "(or a screenshot) so the app recognizes it next time."
-        )
-        death_screen_button.clicked.connect(self._open_death_screen_dialog)
-        detect_button = QPushButton("Auto-Detect…")
-        detect_button.clicked.connect(self._open_auto_detect_window)
-        self._pause_btn = QPushButton("⏸ Pause")
-        self._pause_btn.clicked.connect(self._toggle_detection_pause)
-        detect_layout.addWidget(self._pause_btn)
-        detect_layout.addWidget(death_screen_button)
-        detect_layout.addWidget(detect_button)
-        root_layout.addLayout(detect_layout)
-
-        card = QFrame()
-        card.setObjectName("Card")
-        card_layout = QVBoxLayout(card)
-        card_layout.setContentsMargins(24, 24, 24, 24)
-        card_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
-
+        hero, hero_layout = card("HeroCard", margins=18)
+        hero_layout.setSpacing(2)
         self._counter_label = QLabel("0")
         self._counter_label.setObjectName("CounterLabel")
         self._counter_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-
+        glow(self._counter_label)
         self._counter_caption = QLabel(_COUNTER_CAPTIONS["session"])
         self._counter_caption.setObjectName("CounterCaption")
         self._counter_caption.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._sub_counter_label = QLabel()
-        self._sub_counter_label.setObjectName("SubCounterLabel")
-        self._sub_counter_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._sub_counter_label.setToolTip(
-            "This session: deaths since the game was started or the session was reset.\n"
-            "This boss: deaths while that boss was selected (all sessions).\n"
-            "All-time: every death in this game, with or without a boss selected."
+        hero_layout.addWidget(self._counter_label)
+        hero_layout.addWidget(self._counter_caption)
+        hero_layout.addSpacing(8)
+        self._tile_session = StatTile("This session")
+        self._tile_boss = StatTile("This boss")
+        self._tile_total = StatTile("All-time")
+        self._tile_session.setToolTip(
+            "Deaths since the game was started or the session was reset."
         )
+        self._tile_total.setToolTip("Every death in this game, with or without a boss selected.")
+        tiles = QHBoxLayout()
+        tiles.setSpacing(10)
+        for tile in (self._tile_session, self._tile_boss, self._tile_total):
+            tiles.addWidget(tile, 1)
+        hero_layout.addLayout(tiles)
+        layout.addWidget(hero)
 
-        set_count_btn = QPushButton("Set Exact Count…")
-        set_count_btn.clicked.connect(self._on_set_count)
-
-        card_layout.addWidget(self._counter_label)
-        card_layout.addWidget(self._counter_caption)
-        card_layout.addWidget(self._sub_counter_label)
-        card_layout.addWidget(set_count_btn)
-        root_layout.addWidget(card)
-
-        action_layout = QHBoxLayout()
         # Labels get the current hotkeys from _update_hotkey_labels().
         self._plus_btn = QPushButton()
         self._plus_btn.setObjectName("AccentButton")
@@ -455,23 +557,321 @@ class MainWindow(QMainWindow):
         self._minus_btn.clicked.connect(self._on_decrement)
         self._undo_btn = QPushButton()
         self._undo_btn.clicked.connect(self._on_undo)
-        action_layout.addWidget(self._plus_btn)
-        action_layout.addWidget(self._minus_btn)
-        action_layout.addWidget(self._undo_btn)
-        root_layout.addLayout(action_layout)
+        for button in (self._plus_btn, self._minus_btn, self._undo_btn):
+            button.setProperty("big", True)
+            button.setMinimumHeight(48)
+            button.setStyleSheet("font-size: 15px; border-radius: 12px;")
+        layout.addLayout(row(self._plus_btn, self._minus_btn, self._undo_btn, stretch=(2, 1, 1)))
 
-        reset_layout = QGridLayout()
+        status, status_layout = card(margins=14)
+        self._detect_status_label = StatusPill("Auto-detect off")
+        self._detect_last_label = QLabel("")
+        self._detect_last_label.setObjectName("Muted")
+        self._detect_last_label.setWordWrap(True)
+        self._pause_btn = QPushButton("❚❚ Pause")
+        self._pause_btn.clicked.connect(self._toggle_detection_pause)
+        capture_button = QPushButton("📷 Capture Screen…")
+        capture_button.setToolTip(
+            "A death wasn't counted, or teach a boss victory banner: pick the screen "
+            "from the last few seconds (or a screenshot)."
+        )
+        capture_button.clicked.connect(self._open_death_screen_dialog)
+        status_layout.setSpacing(8)
+        status_top = QHBoxLayout()
+        status_top.setSpacing(10)
+        status_top.addWidget(section_title("Auto-detect"))
+        status_top.addWidget(self._detect_status_label, 1)
+        status_top.addWidget(self._pause_btn)
+        status_top.addWidget(capture_button)
+        status_layout.addLayout(status_top)
+        status_layout.addWidget(self._detect_last_label)
+        layout.addWidget(status)
+
+        set_count_btn = QPushButton("Set Exact Count…")
+        set_count_btn.setObjectName("GhostButton")
+        set_count_btn.clicked.connect(self._on_set_count)
         reset_session_btn = QPushButton("Reset Session")
         reset_session_btn.setObjectName("DangerButton")
         reset_session_btn.clicked.connect(self._on_reset_session)
         reset_total_btn = QPushButton("Reset Total")
         reset_total_btn.setObjectName("DangerButton")
         reset_total_btn.clicked.connect(self._on_reset_total)
-        reset_layout.addWidget(reset_session_btn, 0, 0)
-        reset_layout.addWidget(reset_total_btn, 0, 1)
-        root_layout.addLayout(reset_layout)
+        footer = QHBoxLayout()
+        footer.addWidget(set_count_btn)
+        footer.addStretch()
+        footer.addWidget(reset_session_btn)
+        footer.addWidget(reset_total_btn)
+        layout.addLayout(footer)
+        layout.addStretch()
+        return page
 
-        root_layout.addStretch()
+    # Timer ------------------------------------------------------------
+    def _build_timer_page(self) -> QWidget:
+        page, layout = self._page_layout()
+        layout.addWidget(
+            page_header(
+                "Speedrun Timer",
+                "Splits, personal best and game time. The hotkeys work while you play.",
+            )
+        )
+        hero, hero_layout = card("HeroCard", margins=22)
+        self._timer_page_time = QLabel("0:00.00")
+        self._timer_page_time.setObjectName("TimerValue")
+        self._timer_page_time.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._timer_page_info = QLabel("")
+        self._timer_page_info.setObjectName("Muted")
+        self._timer_page_info.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._timer_page_split = QLabel("")
+        self._timer_page_split.setObjectName("CounterCaption")
+        self._timer_page_split.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        hero_layout.addWidget(self._timer_page_split)
+        hero_layout.addWidget(self._timer_page_time)
+        hero_layout.addWidget(self._timer_page_info)
+        layout.addWidget(hero)
+
+        split_button = QPushButton("▶  Start / Split")
+        split_button.setObjectName("AccentButton")
+        buttons = [split_button]
+        for text in ("❚❚  Pause", "↶  Undo", "⤼  Skip"):
+            buttons.append(QPushButton(text))
+        reset_button = QPushButton("⟲  Reset")
+        reset_button.setObjectName("DangerButton")
+        buttons.append(reset_button)
+        for button, action in zip(
+            buttons, ("split", "pause", "undo", "skip", "reset"), strict=True
+        ):
+            button.setMinimumHeight(44)
+            button.clicked.connect(lambda _=False, a=action: self._timer_action(a))
+        layout.addLayout(row(*buttons, stretch=(2, 1, 1, 1, 1)))
+
+        self._timer_tiles = {
+            "pb": StatTile("Personal best"),
+            "sob": StatTile("Sum of best"),
+            "attempts": StatTile("Attempts"),
+            "deaths": StatTile("Deaths this run"),
+        }
+        tiles = QHBoxLayout()
+        tiles.setSpacing(10)
+        for tile in self._timer_tiles.values():
+            tiles.addWidget(tile, 1)
+        layout.addLayout(tiles)
+
+        window_button = QPushButton("Show / Hide Timer Window")
+        window_button.setToolTip("The timer window is what you capture in OBS.")
+        window_button.clicked.connect(self._toggle_timer_window)
+        splits_button = QPushButton("Edit Splits…")
+        splits_button.clicked.connect(self._open_splits_dialog)
+        history_button = QPushButton("Run History && Records…")
+        history_button.clicked.connect(self._open_run_history)
+        layout.addLayout(row(window_button, splits_button, history_button))
+        hint = QLabel(
+            "Timing method, comparison, precision and auto-pause are in "
+            "Settings → Speedrun. Splits can come from your boss list."
+        )
+        hint.setObjectName("Muted")
+        hint.setWordWrap(True)
+        layout.addWidget(hint)
+        layout.addStretch()
+        return page
+
+    # Stats ------------------------------------------------------------
+    def _build_stats_page(self) -> QWidget:
+        page, layout = self._page_layout()
+        layout.addWidget(page_header("Stats", "How it's going in the selected game."))
+        self._stat_tiles = {
+            "total": StatTile("All-time deaths"),
+            "today": StatTile("Deaths today"),
+            "sessions": StatTile("Sessions"),
+            "bosses": StatTile("Bosses defeated"),
+            "worst": StatTile("Most deaths on"),
+            "everything": StatTile("All games"),
+        }
+        grid = QGridLayout()
+        grid.setSpacing(10)
+        for index, tile in enumerate(self._stat_tiles.values()):
+            grid.addWidget(tile, index // 3, index % 3)
+        layout.addLayout(grid)
+
+        layout.addWidget(section_title("Recent deaths"))
+        self._recent_list = QListWidget()
+        self._recent_list.setMinimumHeight(180)
+        layout.addWidget(self._recent_list, 1)
+
+        buttons = []
+        for text, handler in (
+            ("Graphs…", self._show_statistics),
+            ("Death Log…", self._open_death_log),
+            ("Run History && Records…", self._open_run_history),
+            ("Export CSV…", self._export_csv),
+        ):
+            button = QPushButton(text)
+            button.clicked.connect(handler)
+            buttons.append(button)
+        layout.addLayout(row(*buttons))
+        return page
+
+    # Detection --------------------------------------------------------
+    def _build_detection_page(self) -> QWidget:
+        page, layout = self._page_layout()
+        layout.addWidget(
+            page_header(
+                "Detection",
+                "Deaths, boss kills and loads are read from the screen or a log file: "
+                "nothing is injected, so it's safe with anti-cheat.",
+            )
+        )
+        status, status_layout = card(margins=18)
+        pill = StatusPill()
+        self._detect_status_label_mirror = pill
+        status_layout.addWidget(section_title("Status"))
+        status_layout.addWidget(pill)
+        self._detect_page_info = QLabel("")
+        self._detect_page_info.setObjectName("Muted")
+        # Short fixed lines: word-wrapped rich text inside a scroll area gets
+        # squeezed by Qt's height-for-width layout, cutting the card off.
+        self._detect_page_info.setTextFormat(Qt.TextFormat.RichText)
+        status_layout.addWidget(self._detect_page_info)
+        layout.addWidget(status)
+
+        setup_button = QPushButton("Set Up Detection…")
+        setup_button.setObjectName("AccentButton")
+        setup_button.clicked.connect(self._open_auto_detect_window)
+        capture_button = QPushButton("📷 Capture Screen…")
+        capture_button.clicked.connect(self._open_death_screen_dialog)
+        self._pause_btn_detect = QPushButton("❚❚ Pause")
+        self._pause_btn_detect.clicked.connect(self._toggle_detection_pause)
+        layout.addLayout(row(setup_button, capture_button, self._pause_btn_detect))
+
+        tips, tips_layout = card(margins=18)
+        tips_layout.addWidget(section_title("How it learns"))
+        tip = QLabel(
+            "• <b>Death screen</b>: press the calibrate key (F8) on it, or pick it "
+            "afterwards with 📷 Capture Screen.<br>"
+            "• <b>Boss victory</b>: after a boss, 📷 Capture Screen → \"A boss victory "
+            "screen\". Kills then mark the boss defeated and can split the timer.<br>"
+            "• <b>No death screen?</b> Use the health bar or the game's log file in "
+            "Set Up Detection.<br>"
+            "• <b>Speedruns</b>: mark pause and loading screens there too, so game time "
+            "leaves them out."
+        )
+        tip.setWordWrap(True)
+        tip.setTextFormat(Qt.TextFormat.RichText)
+        tips_layout.addWidget(tip)
+        layout.addWidget(tips)
+        layout.addStretch()
+        return page
+
+    # Page switching and refresh --------------------------------------
+    def _show_page(self, index: int) -> None:
+        self._pages.setCurrentIndex(index)
+        self._nav_buttons[index].setChecked(True)
+
+    def _on_page_changed(self, index: int) -> None:
+        if index == _PAGE_TIMER:
+            self._refresh_timer_page()
+        else:
+            self._page_timer.stop()
+        if index == _PAGE_STATS:
+            self._refresh_stats_page()
+        elif index == _PAGE_DETECTION:
+            self._refresh_detection_page()
+
+    def _refresh_timer_page(self) -> None:
+        """Mirror the timer onto its page (ticks only while the page shows a running run)."""
+        if self._pages.currentIndex() != _PAGE_TIMER:
+            self._page_timer.stop()
+            return
+        controller = self._speedrun
+        if controller is None:
+            self._timer_page_time.setText("0:00.00")
+            self._timer_page_split.setText("SELECT A GAME")
+            self._timer_page_info.setText("")
+            self._page_timer.stop()
+            return
+        view = controller.view(max_rows=len(controller.timer.split_names))
+        color = _TIMER_STATUS_COLORS.get(view.time_status, "")
+        self._timer_page_time.setStyleSheet(f"color: {color};" if color else "")
+        self._timer_page_time.setText(view.time)
+        current = next((r.name for r in view.rows if r.current), "")
+        if view.state == IDLE:
+            first = controller.timer.split_names[0]
+            self._timer_page_split.setText(f"READY  ·  FIRST SPLIT: {first.upper()}")
+        elif view.state == FINISHED:
+            self._timer_page_split.setText("FINISHED")
+        else:
+            self._timer_page_split.setText(f"NOW: {current.upper()}" if current else "")
+        info = [part for part in (view.paused_reason, view.other_time) if part]
+        if view.previous_segment:
+            info.append(f"Previous segment {view.previous_segment}")
+        info.append(f"vs {view.comparison}")
+        self._timer_page_info.setText("   ·   ".join(info))
+        self._timer_tiles["pb"].set_value(view.pb)
+        self._timer_tiles["sob"].set_value(view.sum_of_best)
+        self._timer_tiles["attempts"].set_value(str(view.attempts))
+        self._timer_tiles["deaths"].set_value(str(view.deaths))
+        # Fast while the clock moves, slow otherwise (to catch hotkeys and auto-pause).
+        interval = 50 if view.state == RUNNING else 500
+        if not self._page_timer.isActive() or self._page_timer.interval() != interval:
+            self._page_timer.start(interval)
+
+    def _refresh_stats_page(self) -> None:
+        game_id = self._counter_manager.current_game_id
+        db = self._database
+        tiles = self._stat_tiles
+        tiles["everything"].set_value(str(db.get_total_deaths()))
+        self._recent_list.clear()
+        if game_id is None:
+            for key in ("total", "today", "sessions", "bosses", "worst"):
+                tiles[key].set_value("–")
+            return
+        tiles["total"].set_value(str(db.get_total_deaths(game_id)))
+        today = datetime.now(UTC).date().isoformat()
+        per_day = {row["day"]: row["deaths"] for row in db.get_deaths_per_day(game_id)}
+        tiles["today"].set_value(str(per_day.get(today, 0)))
+        tiles["sessions"].set_value(str(db.get_total_sessions(game_id)))
+        bosses = db.get_bosses(game_id)
+        beaten = sum(1 for boss in bosses if boss["defeated"])
+        tiles["bosses"].set_value(f"{beaten} / {len(bosses)}" if bosses else "–")
+        totals = [row for row in db.get_boss_death_totals(game_id) if row["total"] > 0]
+        if totals:
+            worst = max(totals, key=lambda row: row["total"])
+            tiles["worst"].set_value(f"{worst['total']}", tooltip=worst["name"])
+            tiles["worst"].caption.setText(f"MOST DEATHS: {worst['name'].upper()[:22]}")
+        else:
+            tiles["worst"].set_value("–")
+            tiles["worst"].caption.setText("MOST DEATHS ON")
+        for event in db.get_recent_events(game_id, limit=40):
+            if event["delta"] <= 0:
+                continue
+            when = datetime.fromisoformat(event["timestamp"]).astimezone()
+            where = event["boss_name"] or "No boss"
+            text = f"✝  {when:%a %H:%M}   ·   {where}"
+            if event["note"]:
+                text += f"   ·   {event['note']}"
+            self._recent_list.addItem(text)
+            if self._recent_list.count() >= 15:
+                break
+        if self._recent_list.count() == 0:
+            self._recent_list.addItem("No deaths yet. Go get 'em.")
+
+    def _refresh_detection_page(self) -> None:
+        game_id = self._counter_manager.current_game_id
+        if game_id is None:
+            self._detect_page_info.setText("Select or add a game first.")
+            return
+        row_ = self._database.get_game_detection(game_id)
+        mode = row_["mode"] if row_ is not None else DETECTION_MODE_OFF
+        exe = Path(row_["exe_path"]).name if row_ is not None and row_["exe_path"] else "not set"
+        counts = {
+            kind: len(self._database.get_death_templates(game_id, kind))
+            for kind in (SCREEN_DEATH, SCREEN_VICTORY, SCREEN_PAUSE)
+        }
+        self._detect_page_info.setText(
+            f"<b>Method:</b> {_MODE_NAMES.get(mode, mode)} &nbsp; · &nbsp; "
+            f"<b>Game:</b> {exe}<br>"
+            f"<b>Saved screens:</b> {counts[SCREEN_DEATH]} death · "
+            f"{counts[SCREEN_VICTORY]} boss victory · {counts[SCREEN_PAUSE]} pause/loading"
+        )
 
     @staticmethod
     def _labeled(label_text: str, widget: QWidget) -> QWidget:
@@ -701,6 +1101,8 @@ class MainWindow(QMainWindow):
         self._log_watcher.configure(log_config)
         if status is not None:
             self._detect_status_label.setText(status)
+        if self._pages.currentIndex() == _PAGE_DETECTION:
+            self._refresh_detection_page()
 
     def _victory_matcher(self, game_id: int | None, row):
         """The saved victory screens to watch for, while an undefeated boss is selected."""
@@ -798,7 +1200,8 @@ class MainWindow(QMainWindow):
 
     def _toggle_detection_pause(self) -> None:
         self._detection_paused = not self._detection_paused
-        self._pause_btn.setText("▶ Resume" if self._detection_paused else "⏸ Pause")
+        for button in (self._pause_btn, self._pause_btn_detect):
+            button.setText("▶ Resume" if self._detection_paused else "❚❚ Pause")
         self._configure_detection()
         if self._tray is not None:  # the hotkey is usually pressed in-game
             self._tray.showMessage(
@@ -954,7 +1357,7 @@ class MainWindow(QMainWindow):
         settings = self._database.get_all_settings()
         theme = settings.get(SETTING_THEME, "dark")
         image = load_background(settings.get(SETTING_UI_BG_IMAGE, ""))
-        dim = QColor(THEME_BASE_COLORS.get(theme, "#1e1f22"))
+        dim = QColor(THEME_BASE_COLORS.get(theme, THEME_BASE_COLORS["dark"]))
         try:
             dim.setAlphaF(min(max(int(settings.get(SETTING_UI_BG_DIM, "60")), 0), 90) / 100)
         except ValueError:
@@ -1252,11 +1655,16 @@ class MainWindow(QMainWindow):
         }
         self._counter_label.setText(str(big_numbers.get(source, snapshot.session_deaths)))
         self._counter_caption.setText(_COUNTER_CAPTIONS.get(source, _COUNTER_CAPTIONS["session"]))
+        self._tile_session.set_value(str(snapshot.session_deaths))
         boss = str(snapshot.boss_deaths) if snapshot.boss_name else "–"
-        self._sub_counter_label.setText(
-            f"This session: {snapshot.session_deaths}   |   "
-            f"This boss: {boss}   |   All-time: {snapshot.total_deaths}"
+        self._tile_boss.set_value(
+            boss, tooltip=f"Deaths while {snapshot.boss_name} was selected (all sessions)."
+            if snapshot.boss_name
+            else "Select a boss to count deaths against it."
         )
+        self._tile_total.set_value(str(snapshot.total_deaths))
+        if self._pages.currentIndex() == _PAGE_STATS:
+            self._refresh_stats_page()
         self._overlay.update_counters(snapshot)
         self._write_deaths_txt(snapshot)
 
@@ -1638,6 +2046,7 @@ class MainWindow(QMainWindow):
             self._configure_detection()  # start/stop watching for loads and crashes
         self._autosave()
         self._timer_window.refresh()
+        self._refresh_timer_page()
 
     def _on_timer_window_action(self, action: str) -> None:
         if action == "edit_splits":

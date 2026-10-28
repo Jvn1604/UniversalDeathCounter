@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from PySide6.QtWidgets import QWidget
 
-from src.utils.constants import AVAILABLE_THEMES, THEMES_DIR
+from src.utils.constants import AVAILABLE_THEMES, ICONS_DIR, THEMES_DIR
 from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -33,7 +33,9 @@ def load_stylesheet(theme_name: str) -> str:
 
     qss_path = THEMES_DIR / f"{theme_name}.qss"
     try:
-        return qss_path.read_text(encoding="utf-8")
+        # @ICONS@ lets the stylesheets use images from assets/icons wherever
+        # the app is installed.
+        return qss_path.read_text(encoding="utf-8").replace("@ICONS@", ICONS_DIR.as_posix())
     except OSError:
         logger.exception("Failed to load theme file %s", qss_path)
         return ""
@@ -41,13 +43,13 @@ def load_stylesheet(theme_name: str) -> str:
 
 # Each theme's main text color, swapped for the player's own text color.
 _THEME_TEXT_COLORS: dict[str, str] = {
-    "dark": "#e8e8e8",
-    "light": "#1c1c1e",
+    "dark": "#ececf1",
+    "light": "#1b1c21",
 }
 # Each theme's window color; with a background image it becomes the dim layer.
 THEME_BASE_COLORS: dict[str, str] = {
-    "dark": "#1e1f22",
-    "light": "#f5f5f7",
+    "dark": "#0e0f13",
+    "light": "#f4f5f8",
 }
 
 
