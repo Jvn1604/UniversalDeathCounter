@@ -15,8 +15,16 @@ through :meth:`apply_display_settings`.
 
 from __future__ import annotations
 
-from PySide6.QtCore import QPoint, QRect, Qt
-from PySide6.QtGui import QGuiApplication, QMouseEvent, QScreen
+from PySide6.QtCore import QPoint, QRect, QRectF, Qt
+from PySide6.QtGui import (
+    QColor,
+    QGuiApplication,
+    QMouseEvent,
+    QPainter,
+    QPaintEvent,
+    QPen,
+    QScreen,
+)
 from PySide6.QtWidgets import QLabel, QSizeGrip, QVBoxLayout, QWidget
 
 from src.core.counter_manager import CounterSnapshot
@@ -67,6 +75,9 @@ class OverlayWindow(QWidget):
             | Qt.WindowType.WindowStaysOnTopHint
             | Qt.WindowType.Tool
         )
+        # Translucent so the dark card's rounded corners and opacity show through.
+        # Qt doesn't paint stylesheet backgrounds on translucent windows, so the
+        # card / chroma green is drawn in paintEvent instead.
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setMinimumSize(220, 110)
         self.resize(280, 150)
@@ -99,19 +110,9 @@ class OverlayWindow(QWidget):
 
     def _restyle(self) -> None:
         """Re-apply all label styles and the background for current config."""
-        if self._bg_mode == "chroma":
-            # Solid keyable green, square corners so the key is clean.
-            self.setStyleSheet(
-                f"OverlayWindow {{ background-color: {CHROMA_GREEN}; border-radius: 0px; }}"
-            )
-            secondary = "#101113"  # dark text reads best over pure green
-        else:
-            alpha = max(0, min(255, int(self._opacity * 255)))
-            self.setStyleSheet(
-                f"OverlayWindow {{ background-color: rgba(20, 20, 22, {alpha}); "
-                f"border-radius: 12px; border: 1px solid rgba(255, 77, 77, 120); }}"
-            )
-            secondary = "#dddddd"
+        # Background itself is drawn in paintEvent; here only text colors.
+        secondary = "#101113" if self._bg_mode == "chroma" else "#dddddd"
+        self.update()
 
         self._game_label.setStyleSheet(f"color: {secondary}; font-size: 13px; font-weight: 500;")
         self._boss_label.setStyleSheet(f"color: {secondary}; font-size: 12px;")
@@ -186,6 +187,21 @@ class OverlayWindow(QWidget):
         """Show the overlay if hidden, hide it if shown."""
         self.setVisible(not self.isVisible())
         logger.info("Overlay visibility toggled to %s", self.isVisible())
+
+    def paintEvent(self, event: QPaintEvent) -> None:  # noqa: N802
+        """Draw the background: solid chroma green, or the translucent dark card."""
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        if self._bg_mode == "chroma":
+            # Solid keyable green, square corners so OBS's Chroma Key is clean.
+            painter.fillRect(self.rect(), QColor(CHROMA_GREEN))
+        else:
+            alpha = max(0, min(255, int(self._opacity * 255)))
+            painter.setBrush(QColor(20, 20, 22, alpha))
+            painter.setPen(QPen(QColor(255, 77, 77, 120), 1))
+            painter.drawRoundedRect(QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5), 12, 12)
+        painter.end()
+        super().paintEvent(event)
 
     # ----------------------------------------------------------------
     # Drag-to-move support (frameless windows have no title bar)
