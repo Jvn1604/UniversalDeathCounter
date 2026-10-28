@@ -39,14 +39,50 @@ def load_stylesheet(theme_name: str) -> str:
         return ""
 
 
-def apply_theme(widget: QWidget, theme_name: str) -> None:
+# Each theme's main text color, swapped for the player's own text color.
+_THEME_TEXT_COLORS: dict[str, str] = {
+    "dark": "#e8e8e8",
+    "light": "#1c1c1e",
+}
+
+
+def customize_stylesheet(
+    stylesheet: str, theme_name: str, text_color: str = "", counter_color: str = ""
+) -> str:
+    """
+    Apply the player's colors to a theme stylesheet.
+
+    Args:
+        stylesheet: The theme's QSS.
+        theme_name: The theme it came from.
+        text_color: Replaces the theme's main text color ("" keeps it).
+        counter_color: Color of the big death number ("" keeps the theme's).
+    """
+    # Appended rules use the theme's own selectors, so coming later makes them win.
+    if text_color:
+        theme_color = _THEME_TEXT_COLORS.get(theme_name)
+        if theme_color:
+            stylesheet = stylesheet.replace(f"color: {theme_color};", f"color: {text_color};")
+        stylesheet += f"\nQLabel#TitleLabel {{ color: {text_color}; }}\n"
+    if counter_color:
+        stylesheet += f"\nQLabel#CounterLabel {{ color: {counter_color}; }}\n"
+    return stylesheet
+
+
+def apply_theme(
+    widget: QWidget, theme_name: str, text_color: str = "", counter_color: str = ""
+) -> None:
     """
     Apply a theme's stylesheet to a widget (typically the top-level window).
 
     Args:
         widget: The widget to style. Stylesheets cascade to children.
         theme_name: One of :data:`AVAILABLE_THEMES`.
+        text_color: Optional custom text color (e.g. ``"#7fd1ff"``).
+        counter_color: Optional custom color for the big death number.
     """
-    stylesheet = load_stylesheet(theme_name)
+    stylesheet = customize_stylesheet(
+        load_stylesheet(theme_name), theme_name, text_color, counter_color
+    )
     widget.setStyleSheet(stylesheet)
     logger.info("Applied theme '%s'", theme_name)

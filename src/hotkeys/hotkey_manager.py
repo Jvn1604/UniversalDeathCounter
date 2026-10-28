@@ -185,6 +185,8 @@ class HotkeyManager(QObject):
     toggle_overlay_triggered = Signal()
     calibrate_triggered = Signal()
     pause_detection_triggered = Signal()
+    prev_boss_triggered = Signal()
+    next_boss_triggered = Signal()
     registration_failed = Signal(list)
 
     def __init__(
@@ -195,6 +197,8 @@ class HotkeyManager(QObject):
         toggle_overlay_key: str,
         calibrate_key: str = "f8",
         pause_detection_key: str = "ctrl+f8",
+        prev_boss_key: str = "",
+        next_boss_key: str = "",
         parent: QObject | None = None,
     ) -> None:
         """
@@ -205,6 +209,8 @@ class HotkeyManager(QObject):
             toggle_overlay_key: Key combo for toggling the overlay.
             calibrate_key: Key combo for capturing a death-screen calibration.
             pause_detection_key: Key combo for pausing/resuming auto-detection.
+            prev_boss_key: Key combo for selecting the previous boss.
+            next_boss_key: Key combo for selecting the next boss.
             parent: Optional Qt parent object.
         """
         super().__init__(parent)
@@ -215,6 +221,8 @@ class HotkeyManager(QObject):
             "toggle_overlay": toggle_overlay_key,
             "calibrate": calibrate_key,
             "pause_detection": pause_detection_key,
+            "prev_boss": prev_boss_key,
+            "next_boss": next_boss_key,
         }
         self._signals: dict[str, Signal] = {
             "increment": self.increment_triggered,
@@ -223,6 +231,8 @@ class HotkeyManager(QObject):
             "toggle_overlay": self.toggle_overlay_triggered,
             "calibrate": self.calibrate_triggered,
             "pause_detection": self.pause_detection_triggered,
+            "prev_boss": self.prev_boss_triggered,
+            "next_boss": self.next_boss_triggered,
         }
         self._thread: _HotkeyThread | None = None
 
@@ -268,6 +278,8 @@ class HotkeyManager(QObject):
         toggle_overlay_key: str,
         calibrate_key: str = "f8",
         pause_detection_key: str = "ctrl+f8",
+        prev_boss_key: str = "",
+        next_boss_key: str = "",
     ) -> None:
         """Stop, rebind, and restart hotkeys with new key combinations."""
         was_active = self._thread is not None
@@ -279,6 +291,8 @@ class HotkeyManager(QObject):
             "toggle_overlay": toggle_overlay_key,
             "calibrate": calibrate_key,
             "pause_detection": pause_detection_key,
+            "prev_boss": prev_boss_key,
+            "next_boss": next_boss_key,
         }
         if was_active:
             self.start()

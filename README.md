@@ -66,11 +66,13 @@ No Python or anything else needed. Windows 10 or 11.
 - **Multi-monitor:** move the overlay to any display. Windows come back on-screen if a monitor is unplugged.
 
 ### 📊 Tracking & stats
-- Session, boss and lifetime counts, all at once. **Set Exact Count** and **Undo** are always available.
+- Session, boss and all-time counts, all at once, and they're independent: **Reset Session** starts a fresh session without touching the all-time total, and **Reset Total** zeroes the total without touching the session. Counts never go below zero.
+- Switch bosses with the ◀ ▶ buttons or `Ctrl+F9` / `Ctrl+F10` from in-game. Defeated bosses are skipped.
 - Mark bosses **Defeated ✓** to keep your "deaths until victory" forever.
 - Notes on individual deaths, session history, and graphs: per boss, over time, and per session.
 - Ready-made boss lists for Elden Ring, Dark Souls III, Sekiro, Bloodborne, Hollow Knight and Cuphead.
-- **Multiple profiles**, JSON backup and restore, and CSV export.
+- **Multiple profiles** (switch from the box at the top), JSON backup and restore, and CSV export.
+- Your own text and death-number colors in **Settings → General**.
 
 ### 🪶 Lightweight
 - The whole app is ~100 MB installed and adds **no** background services.
@@ -100,6 +102,7 @@ You can always count by hand too: **+1 Death** (`F9`), **-1** (`F10`), **Undo** 
 | Toggle overlay | `Ctrl+F12` | not set |
 | Calibrate death screen | `F8` | not set |
 | Pause / resume auto-detect | `Ctrl+F8` | not set |
+| Previous / next boss | `Ctrl+F9` / `Ctrl+F10` | not set |
 
 To change any of them, go to **Settings → Preferences… → Controls**:
 - **Keyboard:** click a field and press a key.

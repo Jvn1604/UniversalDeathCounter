@@ -95,6 +95,8 @@ from src.utils.constants import (
     SETTING_OVERLAY_COUNTER_SOURCE,
     SETTING_OVERLAY_GEOMETRY,
     SETTING_THEME,
+    SETTING_UI_COUNTER_COLOR,
+    SETTING_UI_TEXT_COLOR,
     pad_setting,
 )
 from src.utils.exporters import write_csv_summary
@@ -110,6 +112,12 @@ logger = get_logger(__name__)
 _ADD_GAME_SENTINEL = "__add_game_from_exe__"
 _ADD_GAME_LABEL = "+ Add game from .exe…"
 _GAME_LAUNCH_POLL_MS = 3000
+# Caption under the big number, by the "Big number shows" setting.
+_COUNTER_CAPTIONS = {
+    "session": "DEATHS THIS SESSION",
+    "boss": "DEATHS ON THIS BOSS",
+    "total": "ALL-TIME DEATHS",
+}
 
 
 class MainWindow(QMainWindow):
@@ -138,6 +146,7 @@ class MainWindow(QMainWindow):
         self._update_window_title()
         self._build_menu()
         self._build_ui()
+        self._rebuild_profile_menu()  # again, now that the header's profile box exists
         self._build_tray()
         self._setup_hotkeys()
         self._setup_death_watcher()
@@ -205,6 +214,13 @@ class MainWindow(QMainWindow):
     def _rebuild_profile_menu(self) -> None:
         self._profile_menu.clear()
         active = self._profile_manager.active_profile
+        combo = getattr(self, "_profile_combo", None)  # built after the menu
+        if combo is not None:
+            combo.blockSignals(True)
+            combo.clear()
+            combo.addItems(self._profile_manager.list_profiles())
+            combo.setCurrentText(active)
+            combo.blockSignals(False)
         for name in self._profile_manager.list_profiles():
             action = self._profile_menu.addAction(f"{'● ' if name == active else '   '}{name}")
             action.triggered.connect(lambda _=False, n=name: self._switch_profile(n))
@@ -240,6 +256,13 @@ class MainWindow(QMainWindow):
         title_layout.addWidget(subtitle_label)
         header.addWidget(logo_label)
         header.addLayout(title_layout, 1)
+        self._profile_combo = QComboBox()
+        self._profile_combo.setToolTip("Each profile keeps its own games and counts.")
+        self._profile_combo.setMinimumWidth(130)
+        self._profile_combo.activated.connect(
+            lambda index: self._switch_profile(self._profile_combo.itemText(index))
+        )
+        header.addWidget(self._labeled("Profile", self._profile_combo))
         root_layout.addLayout(header)
 
         selector_layout = QHBoxLayout()
@@ -249,7 +272,20 @@ class MainWindow(QMainWindow):
         self._boss_combo = QComboBox()
         self._boss_combo.currentIndexChanged.connect(self._on_boss_changed)
         selector_layout.addWidget(self._labeled("Game", self._game_combo))
-        selector_layout.addWidget(self._labeled("Boss", self._boss_combo))
+        boss_row = QWidget()
+        boss_layout = QHBoxLayout(boss_row)
+        boss_layout.setContentsMargins(0, 0, 0, 0)
+        boss_layout.setSpacing(4)
+        boss_layout.addWidget(self._boss_combo, 1)
+        self._prev_boss_btn = QPushButton("◀")
+        self._prev_boss_btn.clicked.connect(lambda: self._select_adjacent_boss(-1))
+        self._next_boss_btn = QPushButton("▶")
+        self._next_boss_btn.clicked.connect(lambda: self._select_adjacent_boss(+1))
+        for button in (self._prev_boss_btn, self._next_boss_btn):
+            button.setStyleSheet("padding: 0;")
+            button.setFixedWidth(32)
+            boss_layout.addWidget(button)
+        selector_layout.addWidget(self._labeled("Boss", boss_row))
         root_layout.addLayout(selector_layout)
 
         # Status lines get the full width; the three buttons sit on the row below.
@@ -286,14 +322,23 @@ class MainWindow(QMainWindow):
         self._counter_label.setObjectName("CounterLabel")
         self._counter_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
-        self._sub_counter_label = QLabel("Session: 0   |   Boss: 0   |   Total: 0")
+        self._counter_caption = QLabel(_COUNTER_CAPTIONS["session"])
+        self._counter_caption.setObjectName("CounterCaption")
+        self._counter_caption.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._sub_counter_label = QLabel()
         self._sub_counter_label.setObjectName("SubCounterLabel")
         self._sub_counter_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._sub_counter_label.setToolTip(
+            "This session: deaths since the game was started or the session was reset.\n"
+            "This boss: deaths while that boss was selected (all sessions).\n"
+            "All-time: every death in this game, with or without a boss selected."
+        )
 
         set_count_btn = QPushButton("Set Exact Count…")
         set_count_btn.clicked.connect(self._on_set_count)
 
         card_layout.addWidget(self._counter_label)
+        card_layout.addWidget(self._counter_caption)
         card_layout.addWidget(self._sub_counter_label)
         card_layout.addWidget(set_count_btn)
         root_layout.addWidget(card)
@@ -428,6 +473,8 @@ class MainWindow(QMainWindow):
         self._pause_btn.setToolTip(
             tooltip("pause_detection", "Pause/resume auto-detection (cutscenes, co-op…)")
         )
+        self._prev_boss_btn.setToolTip(tooltip("prev_boss", "Previous boss"))
+        self._next_boss_btn.setToolTip(tooltip("next_boss", "Next boss not yet defeated"))
 
     def _setup_hotkeys(self) -> None:
         self._action_handlers = {
@@ -437,6 +484,8 @@ class MainWindow(QMainWindow):
             "toggle_overlay": self._toggle_overlay,
             "calibrate": self._on_calibrate_hotkey,
             "pause_detection": self._toggle_detection_pause,
+            "prev_boss": lambda: self._select_adjacent_boss(-1),
+            "next_boss": lambda: self._select_adjacent_boss(+1),
         }
         bindings = self._hotkey_bindings()
         self._hotkey_manager = HotkeyManager(**bindings, parent=self)
@@ -446,6 +495,8 @@ class MainWindow(QMainWindow):
         self._hotkey_manager.toggle_overlay_triggered.connect(self._toggle_overlay)
         self._hotkey_manager.calibrate_triggered.connect(self._on_calibrate_hotkey)
         self._hotkey_manager.pause_detection_triggered.connect(self._toggle_detection_pause)
+        self._hotkey_manager.prev_boss_triggered.connect(self._action_handlers["prev_boss"])
+        self._hotkey_manager.next_boss_triggered.connect(self._action_handlers["next_boss"])
         self._hotkey_manager.registration_failed.connect(self._on_hotkeys_failed)
         self._hotkey_manager.start()
 
@@ -458,14 +509,7 @@ class MainWindow(QMainWindow):
         self._update_hotkey_labels(bindings, pads)
 
     def _on_hotkeys_failed(self, failures: list) -> None:
-        labels = {
-            "increment": "+1 Death",
-            "decrement": "-1 Death",
-            "undo": "Undo",
-            "toggle_overlay": "Toggle Overlay",
-            "calibrate": "Calibrate Death Screen",
-            "pause_detection": "Pause Auto-Detect",
-        }
+        labels = {action: label for action, label, _key, _default in CONTROL_ACTIONS}
         keys = ", ".join(
             f"{key.upper()} ({labels.get(action, action)})" for action, key in failures
         )
@@ -700,7 +744,12 @@ class MainWindow(QMainWindow):
 
     def _apply_saved_settings(self) -> None:
         settings = self._database.get_all_settings()
-        apply_theme(self, settings.get(SETTING_THEME, "dark"))
+        apply_theme(
+            self,
+            settings.get(SETTING_THEME, "dark"),
+            text_color=settings.get(SETTING_UI_TEXT_COLOR, ""),
+            counter_color=settings.get(SETTING_UI_COUNTER_COLOR, ""),
+        )
         self._overlay.apply_display_settings(settings)
         self._overlay.set_always_on_top(
             settings.get(SETTING_OVERLAY_ALWAYS_ON_TOP, "true") == "true"
@@ -851,6 +900,18 @@ class MainWindow(QMainWindow):
         self._boss_combo.blockSignals(False)
         self._on_boss_changed(index)
 
+    def _select_adjacent_boss(self, step: int) -> None:
+        """Select the next (+1) or previous (-1) boss, skipping defeated ones."""
+        combo = self._boss_combo
+        index = combo.currentIndex() + step
+        while 0 <= index < combo.count():
+            boss_id = combo.itemData(index)
+            boss = self._database.get_boss(boss_id) if boss_id is not None else None
+            if boss is None or not boss["defeated"]:
+                combo.setCurrentIndex(index)  # the overlay shows the new boss
+                return
+            index += step
+
     # ----------------------------------------------------------------
     # Selector event handlers
     # ----------------------------------------------------------------
@@ -896,13 +957,21 @@ class MainWindow(QMainWindow):
         self._apply_snapshot(self._counter_manager.undo())
 
     def _on_reset_session(self) -> None:
-        confirm = QMessageBox.question(self, "Reset Session", "Reset the current session count?")
+        confirm = QMessageBox.question(
+            self,
+            "Reset Session",
+            "Start the session count over at 0?\n\n"
+            "The all-time total and boss counts keep these deaths.",
+        )
         if confirm == QMessageBox.StandardButton.Yes:
             self._apply_snapshot(self._counter_manager.reset_session())
 
     def _on_reset_total(self) -> None:
         confirm = QMessageBox.question(
-            self, "Reset Total", "Reset the TOTAL death count for this game? This cannot be undone."
+            self,
+            "Reset Total",
+            "Set this game's all-time total to 0?\n\n"
+            "The session count and boss counts stay as they are.",
         )
         if confirm == QMessageBox.StandardButton.Yes:
             self._apply_snapshot(self._counter_manager.reset_total())
@@ -912,26 +981,44 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, "Select a Game", "Select a game first.")
             return
         snapshot = self._counter_manager.get_snapshot()
+        choices = ["This session", "All-time total"]
+        which, ok = QInputDialog.getItem(
+            self, "Set Exact Count", "Which count?", choices, 0, False
+        )
+        if not ok:
+            return
+        is_session = which == choices[0]
         target, ok = QInputDialog.getInt(
             self,
-            "Set Exact Session Count",
-            "New session death count:",
-            value=snapshot.session_deaths,
+            "Set Exact Count",
+            f"New {which.lower()} death count:",
+            value=snapshot.session_deaths if is_session else snapshot.total_deaths,
             minValue=0,
             maxValue=999_999,
         )
         if not ok:
             return
-        self._apply_snapshot(self._counter_manager.set_session_count(target))
+        if is_session:
+            self._apply_snapshot(self._counter_manager.set_session_count(target))
+        else:
+            self._apply_snapshot(self._counter_manager.set_total_count(target))
 
     def _refresh_counters(self) -> None:
         self._apply_snapshot(self._counter_manager.get_snapshot())
 
     def _apply_snapshot(self, snapshot: CounterSnapshot) -> None:
-        self._counter_label.setText(str(snapshot.session_deaths))
+        source = self._database.get_setting(SETTING_OVERLAY_COUNTER_SOURCE, "session")
+        big_numbers = {
+            "session": snapshot.session_deaths,
+            "boss": snapshot.boss_deaths,
+            "total": snapshot.total_deaths,
+        }
+        self._counter_label.setText(str(big_numbers.get(source, snapshot.session_deaths)))
+        self._counter_caption.setText(_COUNTER_CAPTIONS.get(source, _COUNTER_CAPTIONS["session"]))
+        boss = str(snapshot.boss_deaths) if snapshot.boss_name else "–"
         self._sub_counter_label.setText(
-            f"Session: {snapshot.session_deaths}   |   "
-            f"Boss: {snapshot.boss_deaths}   |   Total: {snapshot.total_deaths}"
+            f"This session: {snapshot.session_deaths}   |   "
+            f"This boss: {boss}   |   All-time: {snapshot.total_deaths}"
         )
         self._overlay.update_counters(snapshot)
         self._write_deaths_txt(snapshot)

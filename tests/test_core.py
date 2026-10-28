@@ -86,10 +86,7 @@ def test_reset_session_does_not_affect_total(setup) -> None:
     snapshot = counter_manager.get_snapshot()
 
     assert snapshot.session_deaths == 0
-    # Total tracks the whole game across all events, including the reset
-    # session's now-deleted events, so it returns to 0 as well since the
-    # events were removed by reset_session (session-scoped wipe).
-    assert snapshot.total_deaths == 0
+    assert snapshot.total_deaths == 2  # those deaths still happened
 
 
 def test_statistics_service_game_summary(setup) -> None:

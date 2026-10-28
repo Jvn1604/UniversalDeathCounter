@@ -35,6 +35,13 @@ from src.utils.logger import get_logger
 logger = get_logger(__name__)
 
 
+# death_events.kind: a real death (or -1 correction) that counts toward the
+# session, boss and total; or a correction to the total alone (Reset Total /
+# Set Total), which leaves the session and boss counts untouched.
+EVENT_DEATH: str = "death"
+EVENT_TOTAL_ADJUST: str = "total_adjust"
+
+
 def _utc_now_iso() -> str:
     """Return the current UTC time as an ISO-8601 string."""
     return datetime.now(UTC).isoformat(timespec="seconds")
@@ -109,6 +116,7 @@ class Database:
                 delta INTEGER NOT NULL,
                 timestamp TEXT NOT NULL,
                 note TEXT,
+                kind TEXT NOT NULL DEFAULT 'death',
                 FOREIGN KEY (game_id) REFERENCES games (id) ON DELETE CASCADE,
                 FOREIGN KEY (boss_id) REFERENCES bosses (id) ON DELETE CASCADE,
                 FOREIGN KEY (session_id) REFERENCES sessions (id) ON DELETE CASCADE
@@ -173,6 +181,11 @@ class Database:
             if "note" not in event_columns:
                 cursor.execute("ALTER TABLE death_events ADD COLUMN note TEXT")
                 logger.info("Migrated schema: added note column to death_events")
+            if "kind" not in event_columns:
+                cursor.execute(
+                    "ALTER TABLE death_events ADD COLUMN kind TEXT NOT NULL DEFAULT 'death'"
+                )
+                logger.info("Migrated schema: added kind column to death_events")
 
             cursor.execute("PRAGMA table_info(game_detection)")
             detection_columns = {row["name"] for row in cursor.fetchall()}
@@ -486,8 +499,9 @@ class Database:
         """Return the net death count (sum of deltas) for one session."""
         with self._cursor() as cursor:
             cursor.execute(
-                "SELECT COALESCE(SUM(delta), 0) AS total FROM death_events WHERE session_id = ?",
-                (session_id,),
+                "SELECT COALESCE(SUM(delta), 0) AS total FROM death_events "
+                "WHERE session_id = ? AND kind = ?",
+                (session_id, EVENT_DEATH),
             )
             row = cursor.fetchone()
             return int(row["total"])
@@ -505,12 +519,12 @@ class Database:
                 SELECT s.id, s.started_at, s.ended_at,
                        COALESCE(SUM(d.delta), 0) AS deaths
                 FROM sessions s
-                LEFT JOIN death_events d ON d.session_id = s.id
+                LEFT JOIN death_events d ON d.session_id = s.id AND d.kind = ?
                 WHERE s.game_id = ?
                 GROUP BY s.id
                 ORDER BY s.id DESC
                 """,
-                (game_id,),
+                (EVENT_DEATH, game_id),
             )
             return cursor.fetchall()
 
@@ -530,6 +544,7 @@ class Database:
         session_id: int,
         delta: int,
         note: str | None = None,
+        kind: str = EVENT_DEATH,
     ) -> int:
         """
         Record a death-count change.
@@ -540,6 +555,8 @@ class Database:
             session_id: The active session's id.
             delta: +1 for a death, -1 for a decrement/undo.
             note: Optional free-text note attached to this event.
+            kind: ``EVENT_DEATH``, or ``EVENT_TOTAL_ADJUST`` for a correction
+                that changes only the game's total.
 
         Returns:
             The id of the newly inserted event (used for fine-grained undo).
@@ -547,10 +564,11 @@ class Database:
         with self._cursor() as cursor:
             cursor.execute(
                 """
-                INSERT INTO death_events (game_id, boss_id, session_id, delta, timestamp, note)
-                VALUES (?, ?, ?, ?, ?, ?)
+                INSERT INTO death_events
+                    (game_id, boss_id, session_id, delta, timestamp, note, kind)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
-                (game_id, boss_id, session_id, delta, _utc_now_iso(), note),
+                (game_id, boss_id, session_id, delta, _utc_now_iso(), note, kind),
             )
             event_id = cursor.lastrowid
         return int(event_id)
@@ -586,6 +604,15 @@ class Database:
             cursor.execute(query, params)
             return cursor.fetchall()
 
+    def get_total_timeline(self, game_id: int) -> list[sqlite3.Row]:
+        """Return every (timestamp, delta) change to a game's total, oldest first."""
+        with self._cursor() as cursor:
+            cursor.execute(
+                "SELECT timestamp, delta FROM death_events WHERE game_id = ? ORDER BY id",
+                (game_id,),
+            )
+            return cursor.fetchall()
+
     def get_deaths_per_day(self, game_id: int) -> list[sqlite3.Row]:
         """Return (day, deaths) rows for a game, oldest first (for graphs)."""
         with self._cursor() as cursor:
@@ -601,9 +628,25 @@ class Database:
             )
             return cursor.fetchall()
 
+    def get_last_event(self, session_id: int) -> sqlite3.Row | None:
+        """Return a session's most recent death (or -1) event, if any."""
+        with self._cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT * FROM death_events
+                WHERE session_id = ? AND kind = ?
+                ORDER BY id DESC
+                LIMIT 1
+                """,
+                (session_id, EVENT_DEATH),
+            )
+            return cursor.fetchone()
+
     def remove_last_event(self, session_id: int) -> bool:
         """
         Remove the most recent death event for a session (true undo).
+
+        Total-only corrections are skipped: undo is about deaths.
 
         Args:
             session_id: The session to undo the last action for.
@@ -611,19 +654,10 @@ class Database:
         Returns:
             ``True`` if an event was removed, ``False`` if none existed.
         """
+        row = self.get_last_event(session_id)
+        if row is None:
+            return False
         with self._cursor() as cursor:
-            cursor.execute(
-                """
-                SELECT id FROM death_events
-                WHERE session_id = ?
-                ORDER BY id DESC
-                LIMIT 1
-                """,
-                (session_id,),
-            )
-            row = cursor.fetchone()
-            if row is None:
-                return False
             cursor.execute("DELETE FROM death_events WHERE id = ?", (row["id"],))
         logger.info("Removed last death event (id=%s) for session_id=%s", row["id"], session_id)
         return True
@@ -651,22 +685,23 @@ class Database:
             self.add_death_event(game_id, boss_id, session_id, delta)
         logger.info("Set session id=%s death count to %s (delta=%s)", session_id, target, delta)
 
-    def set_total_death_count(self, game_id: int, boss_id: int | None, target: int) -> None:
+    def set_total_death_count(self, game_id: int, target: int) -> None:
         """
         Force a game's total death count to an exact value.
 
+        Inserts one total-only corrective event, so the current session's
+        and every boss's counts stay as they are.
+
         Args:
             game_id: The game to correct.
-            boss_id: An optional boss to attribute the corrective event to.
             target: The desired resulting total death count (>= 0).
         """
         target = max(0, target)
         current = self.get_total_deaths(game_id)
         delta = target - current
         if delta != 0:
-            # Corrective events for the total are attached to a synthetic
-            # session-less bucket by reusing the most recent session, or -1
-            # if none exists yet, to keep the NOT NULL constraint satisfied.
+            # session_id is NOT NULL, so the correction is filed under the most
+            # recent session; its kind keeps it out of that session's count.
             with self._cursor() as cursor:
                 cursor.execute(
                     "SELECT id FROM sessions WHERE game_id = ? ORDER BY id DESC LIMIT 1",
@@ -674,7 +709,7 @@ class Database:
                 )
                 row = cursor.fetchone()
             session_id = row["id"] if row is not None else self.start_session(game_id)
-            self.add_death_event(game_id, boss_id, session_id, delta)
+            self.add_death_event(game_id, None, session_id, delta, kind=EVENT_TOTAL_ADJUST)
         logger.info("Set total deaths for game_id=%s to %s (delta=%s)", game_id, target, delta)
 
     def get_total_deaths(self, game_id: int | None = None) -> int:
@@ -699,10 +734,10 @@ class Database:
             return int(cursor.fetchone()["total"])
 
     def reset_total(self, game_id: int) -> None:
-        """Wipe all death events for a game, resetting its total to zero."""
-        with self._cursor() as cursor:
-            cursor.execute("DELETE FROM death_events WHERE game_id = ?", (game_id,))
-        logger.info("Reset total deaths for game_id=%s", game_id)
+        """
+        Set a game's total to zero, keeping session and boss counts and history.
+        """
+        self.set_total_death_count(game_id, 0)
 
     def reset_session(self, session_id: int) -> None:
         """Wipe all death events for a single session."""
@@ -878,7 +913,12 @@ class Database:
                 continue
             new_boss_id = boss_id_map.get(event["boss_id"]) if event.get("boss_id") else None
             self.add_death_event(
-                new_game_id, new_boss_id, new_session_id, event["delta"], event.get("note")
+                new_game_id,
+                new_boss_id,
+                new_session_id,
+                event["delta"],
+                event.get("note"),
+                kind=event.get("kind") or EVENT_DEATH,
             )
 
         logger.info(
