@@ -26,6 +26,9 @@ APP_ORG: str = "UniversalDeathCounter"
 # GitHub repository ("owner/repo") used by the update checker. Edit this
 # to match the actual repository the project is published under.
 GITHUB_REPO: str = "Jvn1604/UniversalDeathCounter"
+# The maker, credited in the sidebar and About.
+CREATOR_NAME: str = "DePhantom"
+CREATOR_CHANNEL_URL: str = "https://www.youtube.com/@ImDePhantom"
 
 # --------------------------------------------------------------------------
 # Filesystem paths
@@ -138,6 +141,7 @@ SETTING_OVERLAY_COUNTER_SOURCE: str = "overlay_counter_source"  # session|boss|t
 SETTING_OVERLAY_SHOW_GAME: str = "overlay_show_game"
 SETTING_OVERLAY_SHOW_BOSS: str = "overlay_show_boss"
 SETTING_OVERLAY_SHOW_STATS: str = "overlay_show_stats"
+SETTING_OVERLAY_LOCKED: str = "overlay_locked"  # "true" = can't be dragged
 SETTING_DEATHS_TXT_ENABLED: str = "deaths_txt_enabled"
 SETTING_DEATHS_TXT_PATH: str = "deaths_txt_path"
 SETTING_DEATHS_TXT_TEMPLATE: str = "deaths_txt_template"
@@ -279,4 +283,3 @@ DEFAULT_SETTINGS: dict[str, str] = {
 # UI styling
 # --------------------------------------------------------------------------
 ACCENT_COLOR: str = "#ff4d4d"
-AVAILABLE_THEMES: list[str] = ["dark", "light"]

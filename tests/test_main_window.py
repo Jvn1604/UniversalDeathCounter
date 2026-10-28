@@ -238,7 +238,7 @@ def test_detection_status_shows_on_both_pages(window) -> None:
     window._detect_status_label.setText("Capture of game.exe is black.")
     assert window._detect_status_label_mirror.property("state") == "warning"
     window._toggle_detection_pause()
-    assert window._pause_btn_detect.text() == window._pause_btn.text() == "▶ Resume"
+    assert window._pause_btn_detect.text() == window._pause_btn.text() == " Resume"
     window._toggle_detection_pause()
     db = window._database
     game_id = db.create_game("Elden Ring")

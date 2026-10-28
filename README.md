@@ -63,37 +63,44 @@ No Python or anything else needed. Windows 10 or 11.
 - **Keybind editor with live conflict detection.** It flags duplicates, keys that would block typing, keys another program already took, and overlapping combos.
 
 ### ⏱ Speedrun timer
-- **Splits per game.** Set them up in **Manage → Speedrun Splits…**, or fill them from your boss list in one click.
+- **Splits per game.** Set them up on the **Timer** page (**Edit Splits**), or fill them from your boss list in one click.
 - **Compares against your PB, your previous run, or your best segments:** a delta for every split (like `-12.42` or `+5.31`), the previous segment, **gold** for best-ever segments, plus your PB, sum of best and attempt count. A new PB is detected and announced automatically.
 - **Real time and game time.** Game time leaves out loads and pauses. Choose which one the timer shows; the other appears underneath.
 - **Pauses itself:** the whole timer pauses if the game closes or crashes. Game time also stops while the game is frozen, on black loading screens, and on pause, loading or cutscene screens you mark.
 - **Never lose a run:** the run in progress is auto-saved every 10 seconds. After a crash, the next start offers to resume it or save it as an attempt.
-- **Run history and personal records** (**View → Run History & Records…**): every attempt with its real time, game time and deaths; your PB, fewest-death run and best segments; and death records such as the fewest deaths to beat a boss.
+- **Run history and personal records** (**Timer → Run History & Records**): every attempt with its real time, game time and deaths; your PB, fewest-death run and best segments; and death records such as the fewest deaths to beat a boss.
 - **Precision from seconds to milliseconds** (Settings → Speedrun).
 - **Counts deaths per run**, including auto-detected ones, so you also see how many deaths your PB run had.
 - **LiveSplit-style controls:** start/split, pause, undo, skip and reset, from hotkeys, a controller combo, or a right-click on the timer.
-- **Its own OBS-ready window** (**View → Speedrun Timer**), styled like the overlay. It only redraws while a run is going.
+- **Its own OBS-ready window** (**Timer → Timer Window**, with an ON/OFF tag), styled like the overlay. It only redraws while a run is going.
 
 ### 📺 Made for streaming
 - **OBS-ready overlay, styled your way:** a card in any color, your own picture as the background, or green-screen mode for OBS's Chroma Key. Choose the font, number and text colors, size, corner roundness, opacity, a shadow that keeps text readable, and which lines show.
 - **`deaths.txt`** for OBS Text sources, with your own template, e.g. `{game} - {boss}: {deaths}`.
-- **Help → Set Up OBS Overlay** walks you through both methods, with one-click setup buttons.
+- **OBS Setup** (sidebar) walks you through both methods, with one-click setup buttons.
+- **Right-click the overlay** to count from it, switch what the big number shows, change the background or number size, lock it in place, keep it on top, or move it to another display. Double-click it for all its settings. The sidebar's **Overlay** entry shows whether it's ON or OFF.
 - **Multi-monitor:** move the overlay to any display. Windows come back on-screen if a monitor is unplugged.
 
 ### 📊 Tracking & stats
 - Session, boss and all-time counts, all at once, and they're independent: **Reset Session** starts a fresh session without touching the all-time total, and **Reset Total** zeroes the total without touching the session. Counts never go below zero.
 - Switch bosses with the ◀ ▶ buttons or `Ctrl+F9` / `Ctrl+F10` from in-game. Defeated bosses are skipped.
-- **Boss kills are detected too.** After your first boss of a game, use **📷 Capture Screen…** to teach it that game's victory banner (e.g. *GREAT ENEMY FELLED*). Every later kill of the selected boss then marks it **Defeated ✓**, keeps your "deaths until victory", selects the next boss, and can split the speedrun timer. There's also a **Boss Defeated** key (`Ctrl+F11`) for doing it by hand.
+- **Boss kills are detected too.** After your first boss of a game, use **Capture Screen** (Detection page) to teach it that game's victory banner (e.g. *GREAT ENEMY FELLED*). Every later kill of the selected boss then marks it **Defeated ✓**, keeps your "deaths until victory", selects the next boss, and can split the speedrun timer. There's also a **Boss Defeated** key (`Ctrl+F11`) for doing it by hand.
 - Notes on individual deaths, session history, and graphs: per boss, over time, and per session.
 - Ready-made boss lists for Elden Ring, Dark Souls III, Sekiro, Bloodborne, Hollow Knight and Cuphead.
 - **Multiple profiles** (switch from the box at the top), JSON backup and restore, and CSV export.
-- **Make the main window yours** in **Settings → Appearance**: any installed font, text and death-number colors, and a background image with adjustable dimming. Click **Apply** to preview without closing Settings.
+- **Make the main window yours** in **Settings → Appearance**: any installed font (each shown in its own style), text and death-number colors, and a background image with adjustable dimming. **Changes preview live** as you edit, on the main window and the overlay; Cancel puts everything back.
+
+### 🎨 Themes
+- **Phantom Dark** and **Daylight** are built in.
+- **Glass** (frosted panels over a violet glow) and **Clay** (soft, puffy pastel buttons) are **downloaded only when you pick them** in Settings → Appearance (about 16 KB each, from this repository) and can be **uninstalled** again, so the install stays small.
+- Every button has a clear icon ([Lucide](https://lucide.dev), ISC licence).
 
 ### ✨ Comfort
-- **Welcome guide** on first launch: add your game (from its .exe or a built-in boss list), learn the keys, set up OBS. Reopen it from Help.
-- **Mini mode:** a tiny always-on-top window with the count, +1 and Undo, for one-monitor setups. Sidebar, View menu or tray.
+- **Guide** on first launch: add your game (from its .exe or a built-in boss list), then a short tour of the keys, auto-detect, the timer and the overlay. Reopen it any time with the **?** at the top.
+- **Mini mode:** a tiny always-on-top window with the count, +1 and Undo, for one-monitor setups. Sidebar or tray.
 - **Right-click the Game or Boss box** to rename it or mark the boss defeated, without opening Games & Bosses.
-- **Tray menu** has +1, Undo, Boss Defeated, pause detection, start/split the timer, the timer window and mini mode.
+- **Tray menu** has +1, Undo, Boss Defeated, pause detection, start/split the timer, the timer window, mini mode and the overlay.
+- **One place for everything:** pages and tools in the sidebar, profiles and backups at the top right. No duplicated menus.
 - **One-click updates:** when a new version is out, click **Update** at the top; the installed app downloads it, updates itself and reopens. (Portable copies open the download page.)
 - Deleting a game tells you exactly what goes with it (deaths, bosses, sessions, runs).
 
@@ -101,7 +108,7 @@ No Python or anything else needed. Windows 10 or 11.
 - The whole app is ~100 MB installed and adds **no** background services.
 - Detection checks the game window 5 times a second and stops when the game isn't running.
 - Controller polling only runs while a pad is connected.
-- Your data is a local SQLite file, and nothing is uploaded. The only network request is an optional update check against GitHub Releases.
+- Your data is a local SQLite file, and nothing is uploaded. The only network requests are an optional update check against GitHub Releases and, if you pick Glass or Clay, that theme's download.
 
 ## Quick start
 
@@ -111,7 +118,7 @@ No Python or anything else needed. Windows 10 or 11.
 4. Die. 💀
    - **Souls games** are counted automatically.
    - **Any other game:** the first time, press `F8` on the death screen and drag a box around the death text. From then on deaths are counted automatically.
-5. Streaming? Open **Help → Set Up OBS Overlay…**.
+5. Streaming? Click **OBS Setup** in the sidebar.
 
 You can always count by hand too: **+1 Death** (`F9`), **-1** (`F10`), **Undo** (`F11`).
 
@@ -141,7 +148,7 @@ Controller presses also reach the game, so use a combo, not a single button.
 
 ## Auto death detection: how it works
 
-Pick a method per game in **Manage → Auto Death Detection…**:
+Pick a method per game on the **Detection** page (**Set Up Detection**):
 
 | Method | Best for | Setup |
 |---|---|---|
@@ -180,7 +187,7 @@ Another program has already registered that key. On many PCs plain `F12` is take
 3. If it's watching but misses deaths, use **📷 Capture Screen…** right after a death to add that screen.
 
 **The overlay shows a green box in OBS**
-Add a **Chroma Key** filter to the source (Key Color Type: Green). See **Help → Set Up OBS Overlay**.
+Add a **Chroma Key** filter to the source (Key Color Type: Green). See **OBS Setup** in the sidebar.
 
 **My antivirus complains**
 False positives happen with unsigned apps. DUDC uses Windows' own hotkey API (no keyboard hook) and ships as a normal folder build to keep this to a minimum. You can check every build's source and logs under [Actions](https://github.com/Jvn1604/UniversalDeathCounter/actions).
@@ -189,7 +196,7 @@ False positives happen with unsigned apps. DUDC uses Windows' own hotkey API (no
 - **Installer:** `%APPDATA%\UniversalDeathCounter\saves\`
 - **Portable:** the `saves` folder next to the exe.
 
-**File → Export Backup** saves everything to one JSON file.
+**⋮ (top right) → Export Backup** saves everything to one JSON file.
 
 ## Build from source
 
@@ -230,9 +237,10 @@ src/
 ├── hotkeys/          # Windows hotkeys, controllers, conflict detection
 ├── overlay/          # OBS overlay window
 ├── ui/               # Main window and dialogs
-├── themes/           # Dark / light stylesheets
+├── themes/           # Built-in stylesheets (Phantom Dark, Daylight) + theme catalog
 └── utils/            # Constants, logging, profiles, startup, screens, exporters
 packaging/            # PyInstaller spec, Inno Setup script, signing, icon/screenshot tools
+themes/               # Downloadable themes (Glass, Clay), fetched by the app on request
 tests/                # pytest suite (130+ tests)
 ```
 
