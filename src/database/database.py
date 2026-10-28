@@ -29,6 +29,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from src.core.speedrun import RunRecord
 from src.utils.constants import DATABASE_PATH, DEFAULT_SETTINGS
 from src.utils.logger import get_logger
 
@@ -137,6 +138,31 @@ class Database:
                 exe_path TEXT,
                 mode TEXT NOT NULL DEFAULT 'off',
                 options TEXT NOT NULL DEFAULT '{}',
+                FOREIGN KEY (game_id) REFERENCES games (id) ON DELETE CASCADE
+            )
+            """,
+            # Speedrun splits per game (in order), and every attempt. An
+            # attempt's split names and cumulative times are JSON lists, so
+            # comparisons only use attempts made with the same splits.
+            """
+            CREATE TABLE IF NOT EXISTS speedrun_splits (
+                game_id INTEGER NOT NULL,
+                position INTEGER NOT NULL,
+                name TEXT NOT NULL,
+                PRIMARY KEY (game_id, position),
+                FOREIGN KEY (game_id) REFERENCES games (id) ON DELETE CASCADE
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS speedrun_runs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                game_id INTEGER NOT NULL,
+                started_at TEXT NOT NULL,
+                ended_at TEXT NOT NULL,
+                finished INTEGER NOT NULL,
+                deaths INTEGER NOT NULL DEFAULT 0,
+                split_names TEXT NOT NULL,
+                split_times TEXT NOT NULL,
                 FOREIGN KEY (game_id) REFERENCES games (id) ON DELETE CASCADE
             )
             """,
@@ -377,6 +403,82 @@ class Database:
         with self._cursor() as cursor:
             cursor.execute("DELETE FROM death_templates WHERE game_id = ?", (game_id,))
         logger.info("Cleared death-screen templates for game_id=%s", game_id)
+
+    # ----------------------------------------------------------------
+    # Speedrun splits and attempts
+    # ----------------------------------------------------------------
+    def get_speedrun_splits(self, game_id: int) -> list[str]:
+        """A game's split names, in order (empty if none set up)."""
+        with self._cursor() as cursor:
+            cursor.execute(
+                "SELECT name FROM speedrun_splits WHERE game_id = ? ORDER BY position",
+                (game_id,),
+            )
+            return [row["name"] for row in cursor.fetchall()]
+
+    def set_speedrun_splits(self, game_id: int, names: list[str]) -> None:
+        """Replace a game's split names (earlier attempts are kept)."""
+        with self._cursor() as cursor:
+            cursor.execute("DELETE FROM speedrun_splits WHERE game_id = ?", (game_id,))
+            cursor.executemany(
+                "INSERT INTO speedrun_splits (game_id, position, name) VALUES (?, ?, ?)",
+                [(game_id, index, name) for index, name in enumerate(names)],
+            )
+        logger.info("Set %d speedrun split(s) for game_id=%s", len(names), game_id)
+
+    def add_speedrun_run(self, game_id: int, run: RunRecord) -> None:
+        """Store one attempt (finished or reset)."""
+        with self._cursor() as cursor:
+            cursor.execute(
+                """
+                INSERT INTO speedrun_runs (game_id, started_at, ended_at, finished, deaths,
+                                           split_names, split_times)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    game_id,
+                    run.started_at or _utc_now_iso(),
+                    run.ended_at or _utc_now_iso(),
+                    int(run.finished),
+                    run.deaths,
+                    json.dumps(run.split_names),
+                    json.dumps(run.split_times),
+                ),
+            )
+
+    def get_speedrun_runs(self, game_id: int, split_names: list[str]) -> list[RunRecord]:
+        """A game's attempts made with exactly these splits, oldest first."""
+        with self._cursor() as cursor:
+            cursor.execute(
+                "SELECT * FROM speedrun_runs WHERE game_id = ? AND split_names = ? ORDER BY id",
+                (game_id, json.dumps(split_names)),
+            )
+            rows = cursor.fetchall()
+        return [
+            RunRecord(
+                split_names=json.loads(row["split_names"]),
+                split_times=json.loads(row["split_times"]),
+                finished=bool(row["finished"]),
+                deaths=row["deaths"],
+                started_at=row["started_at"],
+                ended_at=row["ended_at"],
+            )
+            for row in rows
+        ]
+
+    def count_speedrun_attempts(self, game_id: int) -> int:
+        """Every attempt for a game, whatever its splits."""
+        with self._cursor() as cursor:
+            cursor.execute(
+                "SELECT COUNT(*) AS n FROM speedrun_runs WHERE game_id = ?", (game_id,)
+            )
+            return int(cursor.fetchone()["n"])
+
+    def clear_speedrun_runs(self, game_id: int) -> None:
+        """Delete a game's attempts (resets PB, golds and the attempt count)."""
+        with self._cursor() as cursor:
+            cursor.execute("DELETE FROM speedrun_runs WHERE game_id = ?", (game_id,))
+        logger.info("Cleared speedrun attempts for game_id=%s", game_id)
 
     # ----------------------------------------------------------------
     # Bosses

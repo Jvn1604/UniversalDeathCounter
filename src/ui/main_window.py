@@ -9,6 +9,7 @@ system into the primary user-facing UI.
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
 
@@ -43,6 +44,7 @@ from PySide6.QtWidgets import (
 
 from src.core.counter_manager import CounterManager, CounterSnapshot
 from src.core.session_manager import SessionManager
+from src.core.speedrun import SpeedrunController
 from src.core.statistics import StatisticsService
 from src.database.database import Database
 from src.detection.death_watcher import DeathWatcher, WatchConfig
@@ -76,6 +78,7 @@ from src.ui.death_log_window import DeathLogWindow
 from src.ui.obs_guide_window import ObsGuideWindow
 from src.ui.settings_window import SettingsWindow
 from src.ui.statistics_window import StatisticsWindow
+from src.ui.timer_window import SplitsDialog, TimerWindow
 from src.utils.backgrounds import cover, load_background
 from src.utils.constants import (
     APP_BRAND,
@@ -105,6 +108,8 @@ from src.utils.constants import (
     SETTING_OVERLAY_COUNTER_SOURCE,
     SETTING_OVERLAY_GEOMETRY,
     SETTING_THEME,
+    SETTING_TIMER_GEOMETRY,
+    SETTING_TIMER_VISIBLE,
     SETTING_UI_BG_DIM,
     SETTING_UI_BG_IMAGE,
     SETTING_UI_COUNTER_COLOR,
@@ -179,6 +184,9 @@ class MainWindow(QMainWindow):
         self._counter_manager = CounterManager(self._database, self._session_manager)
         self._statistics_service = StatisticsService(self._database)
         self._overlay = OverlayWindow()
+        self._timer_window = TimerWindow()
+        self._timer_window.action_requested.connect(self._on_timer_window_action)
+        self._speedrun: SpeedrunController | None = None
         self._death_watcher = DeathWatcher(parent=self)
         self._log_watcher = LogWatcher(parent=self)
         self._detection_paused = False  # not persisted: every launch starts active
@@ -231,11 +239,15 @@ class MainWindow(QMainWindow):
         manage_action.triggered.connect(self._open_boss_window)
         detect_action = manage_menu.addAction("Auto Death Detection…")
         detect_action.triggered.connect(self._open_auto_detect_window)
+        splits_action = manage_menu.addAction("Speedrun Splits…")
+        splits_action.triggered.connect(self._open_splits_dialog)
 
         view_menu = menu_bar.addMenu("&View")
         overlay_action = view_menu.addAction("Toggle Overlay")
         overlay_action.triggered.connect(self._toggle_overlay)
         self._add_display_menu(view_menu)
+        timer_action = view_menu.addAction("Speedrun Timer")
+        timer_action.triggered.connect(self._toggle_timer_window)
         stats_action = view_menu.addAction("Statistics && Graphs…")
         stats_action.triggered.connect(self._show_statistics)
         log_action = view_menu.addAction("Death Log…")
@@ -527,17 +539,17 @@ class MainWindow(QMainWindow):
             "pause_detection": self._toggle_detection_pause,
             "prev_boss": lambda: self._select_adjacent_boss(-1),
             "next_boss": lambda: self._select_adjacent_boss(+1),
+            "timer_split": lambda: self._timer_action("split"),
+            "timer_pause": lambda: self._timer_action("pause"),
+            "timer_reset": lambda: self._timer_action("reset"),
+            "timer_undo": lambda: self._timer_action("undo"),
+            "timer_skip": lambda: self._timer_action("skip"),
         }
         bindings = self._hotkey_bindings()
         self._hotkey_manager = HotkeyManager(**bindings, parent=self)
-        self._hotkey_manager.increment_triggered.connect(self._on_increment)
-        self._hotkey_manager.decrement_triggered.connect(self._on_decrement)
-        self._hotkey_manager.undo_triggered.connect(self._on_undo)
-        self._hotkey_manager.toggle_overlay_triggered.connect(self._toggle_overlay)
-        self._hotkey_manager.calibrate_triggered.connect(self._on_calibrate_hotkey)
-        self._hotkey_manager.pause_detection_triggered.connect(self._toggle_detection_pause)
-        self._hotkey_manager.prev_boss_triggered.connect(self._action_handlers["prev_boss"])
-        self._hotkey_manager.next_boss_triggered.connect(self._action_handlers["next_boss"])
+        self._hotkey_manager.action_triggered.connect(
+            lambda action: self._action_handlers[action]()
+        )
         self._hotkey_manager.registration_failed.connect(self._on_hotkeys_failed)
         self._hotkey_manager.start()
 
@@ -802,6 +814,9 @@ class MainWindow(QMainWindow):
             see_through=image is not None,
         )
         self._overlay.apply_display_settings(settings)
+        self._timer_window.apply_display_settings(settings)
+        self._timer_window.restore_geometry_string(settings.get(SETTING_TIMER_GEOMETRY, ""))
+        self._timer_window.setVisible(settings.get(SETTING_TIMER_VISIBLE, "false") == "true")
         self._overlay.set_always_on_top(
             settings.get(SETTING_OVERLAY_ALWAYS_ON_TOP, "true") == "true"
         )
@@ -834,6 +849,7 @@ class MainWindow(QMainWindow):
         if name == self._profile_manager.active_profile:
             return
         # Persist current state, tear down, and rebuild on the new database.
+        self._end_speedrun()
         self._database.set_setting(SETTING_OVERLAY_GEOMETRY, self._overlay.geometry_string())
         self._session_manager.end_current_session()
         self._database.close()
@@ -983,6 +999,7 @@ class MainWindow(QMainWindow):
         self._refresh_counters()
         self._detect_last_label.setText("")
         self._configure_detection()
+        self._load_speedrun()
 
     def _on_boss_changed(self, index: int) -> None:
         boss_id = self._boss_combo.itemData(index)
@@ -999,13 +1016,24 @@ class MainWindow(QMainWindow):
     # Counter actions
     # ----------------------------------------------------------------
     def _on_increment(self) -> None:
-        self._apply_snapshot(self._counter_manager.increment())
+        self._apply_counted(self._counter_manager.increment)
 
     def _on_decrement(self) -> None:
-        self._apply_snapshot(self._counter_manager.decrement())
+        self._apply_counted(self._counter_manager.decrement)
 
     def _on_undo(self) -> None:
-        self._apply_snapshot(self._counter_manager.undo())
+        self._apply_counted(self._counter_manager.undo)
+
+    def _apply_counted(self, action: Callable[[], CounterSnapshot]) -> None:
+        """Run a +1/-1/undo and pass the change on to a speedrun in progress."""
+        before = self._counter_manager.get_snapshot().session_deaths
+        snapshot = action()
+        if self._speedrun is not None:
+            self._speedrun.add_deaths(
+                self._counter_manager.current_game_id, snapshot.session_deaths - before
+            )
+            self._timer_window.refresh()
+        self._apply_snapshot(snapshot)
 
     def _on_reset_session(self) -> None:
         confirm = QMessageBox.question(
@@ -1245,6 +1273,96 @@ class MainWindow(QMainWindow):
         dialog.exec()
 
     # ----------------------------------------------------------------
+    # Speedrun timer
+    # ----------------------------------------------------------------
+    def _load_speedrun(self, force: bool = False) -> None:
+        """
+        Point the timer at the current game's splits and attempts.
+
+        A run already going for this game is kept (re-selecting the game
+        mustn't reset it), and so is one for another game, so switching
+        games mid-run doesn't lose it. ``force`` reloads anyway (new splits).
+        """
+        game_id = self._counter_manager.current_game_id
+        current = self._speedrun
+        if current is not None and not force:
+            if current.game_id == game_id or current.running:
+                return
+        self._end_speedrun()
+        names = self._database.get_speedrun_splits(game_id) if game_id else []
+        controller = SpeedrunController(
+            game_id=game_id,
+            game_name=self._game_combo.currentText() if game_id else "",
+            split_names=names,
+            runs=[],
+            attempts=self._database.count_speedrun_attempts(game_id) if game_id else 0,
+            store=lambda gid, run: self._database.add_speedrun_run(gid, run),
+        )
+        if game_id is not None:
+            # Same split names as the controller resolved ("Finish" if none).
+            controller.set_runs(
+                self._database.get_speedrun_runs(game_id, controller.timer.split_names)
+            )
+        self._speedrun = controller
+        self._timer_window.set_controller(controller)
+
+    def _end_speedrun(self) -> None:
+        """Save the attempt in progress (if any), e.g. before closing or switching."""
+        if self._speedrun is not None:
+            self._speedrun.reset()
+            self._speedrun = None
+            self._timer_window.set_controller(None)
+
+    def _timer_action(self, action: str) -> None:
+        controller = self._speedrun
+        if controller is None or controller.game_id is None:
+            return
+        timer = controller.timer
+        handlers = {
+            "split": controller.split,
+            "pause": timer.toggle_pause,
+            "reset": controller.reset,
+            "undo": timer.undo_split,
+            "skip": timer.skip_split,
+        }
+        handlers[action]()
+        if action == "reset" and controller.game_id != self._counter_manager.current_game_id:
+            self._load_speedrun()  # the finished-with game's run is saved; follow the UI
+        if action == "split" and not self._timer_window.isVisible():
+            self._toggle_timer_window()  # starting a run shows the timer
+        self._timer_window.refresh()
+
+    def _on_timer_window_action(self, action: str) -> None:
+        if action == "edit_splits":
+            self._open_splits_dialog()
+        elif action == "hide":
+            self._toggle_timer_window()
+        else:
+            self._timer_action(action)
+
+    def _toggle_timer_window(self) -> None:
+        self._timer_window.toggle_visibility()
+        self._database.set_setting(
+            SETTING_TIMER_VISIBLE, "true" if self._timer_window.isVisible() else "false"
+        )
+
+    def _open_splits_dialog(self) -> None:
+        game_id = self._counter_manager.current_game_id
+        if game_id is None:
+            QMessageBox.information(self, "Select a Game", "Select a game first.")
+            return
+        if self._speedrun is not None and self._speedrun.running:
+            QMessageBox.information(
+                self, "Run in Progress", "Reset the timer before editing the splits."
+            )
+            return
+        dialog = SplitsDialog(
+            self._database, game_id, self._game_combo.currentText(), parent=self
+        )
+        if dialog.exec() == SplitsDialog.DialogCode.Accepted or dialog.history_cleared:
+            self._load_speedrun(force=True)
+
+    # ----------------------------------------------------------------
     # Lifecycle
     # ----------------------------------------------------------------
     def _quit_app(self) -> None:
@@ -1290,6 +1408,7 @@ class MainWindow(QMainWindow):
         if fitted.topLeft() != self.frameGeometry().topLeft():
             self.move(fitted.topLeft())
         self._overlay.keep_on_screen()
+        self._timer_window.keep_on_screen()
 
     def _on_screen_removed(self, _screen: QScreen) -> None:
         # Let Qt finish re-laying out the remaining displays first.
@@ -1311,6 +1430,7 @@ class MainWindow(QMainWindow):
             )
             return
 
+        self._end_speedrun()
         self._database.set_setting(SETTING_OVERLAY_GEOMETRY, self._overlay.geometry_string())
         self._database.set_setting(
             SETTING_MAIN_WINDOW_GEOMETRY, bytes(self.saveGeometry().toBase64()).decode("ascii")
@@ -1321,6 +1441,7 @@ class MainWindow(QMainWindow):
         self._death_watcher.stop()
         self._log_watcher.stop()
         self._overlay.close()
+        self._timer_window.close()
         if self._tray is not None:
             self._tray.hide()
         self._database.close()
