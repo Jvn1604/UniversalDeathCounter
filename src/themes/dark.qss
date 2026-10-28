@@ -707,3 +707,53 @@ QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
 QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {
     background: transparent;
 }
+
+/* ---------------------------------------------------------------- update card */
+
+QFrame#UpdateCard {
+    background-color: rgba(255, 255, 255, 0.03);
+    border: 1px solid #22242d;
+    border-radius: 12px;
+}
+
+QFrame#UpdateCard[state="available"] {
+    background-color: qlineargradient(x1: 0, y1: 0, x2: 1, y2: 1,
+                                      stop: 0 rgba(255, 61, 85, 0.16), stop: 1 rgba(255, 61, 85, 0.03));
+    border: 1px solid rgba(255, 61, 85, 0.45);
+}
+
+QFrame#UpdateCard QWidget {
+    background-color: transparent;
+}
+
+QLabel#UpdateTitle {
+    color: #ffffff;
+    font-size: 12px;
+    font-weight: 800;
+}
+
+QLabel#UpdateDetail {
+    color: #8a8f9c;
+    font-size: 11px;
+}
+
+QPushButton#UpdateCheck {
+    background-color: transparent;
+    border: 1px solid transparent;
+    border-radius: 7px;
+    padding: 0;
+    min-width: 26px;
+    max-width: 26px;
+    min-height: 26px;
+    max-height: 26px;
+}
+
+QPushButton#UpdateCheck:hover {
+    background-color: #1a1c24;
+    border: 1px solid #22242d;
+}
+
+QFrame#UpdateCard QPushButton#AccentButton {
+    padding: 7px 10px;
+    font-size: 12px;
+}

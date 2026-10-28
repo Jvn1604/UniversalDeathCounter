@@ -121,6 +121,7 @@ from src.ui.widgets import (
     NavToggle,
     StatTile,
     StatusPill,
+    UpdateCard,
     card,
     field,
     glow,
@@ -210,6 +211,7 @@ _ADD_GAME_SENTINEL = "__add_game_from_exe__"
 _ADD_GAME_LABEL = "+ Add game from .exe…"
 _GAME_LAUNCH_POLL_MS = 3000
 _AUTOSAVE_MS = 10_000  # a run in progress is saved this often (crash recovery)
+_UPDATE_RECHECK_MS = 6 * 60 * 60 * 1000  # while open, look for a new version this often
 # What makes the speedrun timer's game time stop: (reason shown, setting).
 _GAME_TIME_PAUSES = {
     ACTIVITY_LOADING: ("Loading", SETTING_TIMER_PAUSE_LOADING),
@@ -494,15 +496,6 @@ class MainWindow(QMainWindow):
         layout.addWidget(self._page_badge)
         layout.addStretch(1)
 
-        self._update_btn = QPushButton()
-        self._update_btn.setObjectName("AccentButton")
-        self._update_btn.setToolTip("Download and install the new version")
-        icons.set_icon(self._update_btn, "circle-arrow-up", icons.ACCENT, size=16)
-        self._update_btn.clicked.connect(self._start_update)
-        self._update_btn.hide()
-        layout.addWidget(self._update_btn)
-        layout.addSpacing(6)
-
         self._profile_combo = QComboBox()
         self._profile_combo.setToolTip("Profile: each one keeps its own games and counts.")
         self._profile_combo.setMinimumWidth(150)
@@ -574,16 +567,23 @@ class MainWindow(QMainWindow):
             layout.addWidget(button)
         layout.addStretch()
 
+        self._update_card = UpdateCard(APP_VERSION)
+        self._update_btn = self._update_card.button
+        self._update_btn.clicked.connect(self._start_update)
+        self._update_card.check_requested.connect(self._check_updates)
+        update_row = QHBoxLayout()
+        update_row.setContentsMargins(12, 0, 12, 8)
+        update_row.addWidget(self._update_card)
+        layout.addLayout(update_row)
+
         credit = self._credit = CreditCard(
             QPixmap(str(ICONS_DIR / "channel_logo.png")), CREATOR_NAME, CREATOR_CHANNEL_URL
         )
         credit_row = QHBoxLayout()
         credit_row.setContentsMargins(12, 0, 12, 0)
         credit_row.addWidget(credit)
+        credit_row.setContentsMargins(12, 0, 12, 4)
         layout.addLayout(credit_row)
-        footer = QLabel(f"{APP_SHORT_NAME} v{APP_VERSION}")
-        footer.setObjectName("NavFooter")
-        layout.addWidget(footer)
         return sidebar
 
     @staticmethod
@@ -1590,6 +1590,7 @@ class MainWindow(QMainWindow):
         for action, icon_name in self._menu_icons:
             action.setIcon(icons.icon(icon_name, icons.color(icons.NORMAL), size=16))
         self._credit.refresh_icon()
+        self._update_card.refresh_icon()
         glow(self._counter_label, glow_color, radius=48)
 
     def _preview_appearance(self, values: dict[str, str]) -> None:
@@ -1599,26 +1600,34 @@ class MainWindow(QMainWindow):
         self._apply_appearance(settings)
 
     def _maybe_check_updates(self) -> None:
-        if self._database.get_setting(SETTING_CHECK_UPDATES, "true") != "true":
-            return
-        self._update_checker = UpdateChecker(self)
-        self._update_checker.update_available.connect(self._on_update_available)
+        """Check now and every few hours (if enabled); the sidebar card shows the result."""
+        checker = self._update_checker = UpdateChecker(self)
+        checker.update_available.connect(self._on_update_available)
+        checker.up_to_date.connect(lambda _latest: self._update_card.set_state("current"))
+        checker.check_failed.connect(lambda: self._update_card.set_state("failed"))
+        self._update_recheck = QTimer(self)
+        self._update_recheck.setInterval(_UPDATE_RECHECK_MS)
+        self._update_recheck.timeout.connect(self._check_updates)
+        if self._database.get_setting(SETTING_CHECK_UPDATES, "true") == "true":
+            self._check_updates()
+            self._update_recheck.start()
+
+    def _check_updates(self) -> None:
+        if self._update_card.state() in ("checking", "available"):
+            return  # one at a time; a found update stays until it's installed
+        self._update_card.set_state("checking")
         self._update_checker.check_async()
 
     def _on_update_available(self, latest: str, url: str) -> None:
+        announced = latest == self._update_version
         self._update_version, self._update_page_url = latest, url
-        self._update_btn.setText(f"↑  Update to {latest}")
-        self._update_btn.show()
-        if self._tray is not None:
+        self._update_card.set_state("available", latest)
+        if self._tray is not None and not announced:
             self._tray.showMessage(
                 APP_BRAND,
-                f"Version {latest} is available. Click \"Update\" at the top of the window.",
+                f"Version {latest} is available. Click \"Update\" at the bottom of the sidebar.",
                 QSystemTrayIcon.MessageIcon.Information,
                 8000,
-            )
-        else:
-            QMessageBox.information(
-                self, "Update Available", f"Version {latest} is available:\n{url}"
             )
 
     def _start_update(self) -> None:

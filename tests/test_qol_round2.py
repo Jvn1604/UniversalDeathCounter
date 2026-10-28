@@ -270,3 +270,82 @@ def test_update_button_and_portable_copies_open_the_release_page(window, monkeyp
     monkeypatch.setattr(mw, "is_installed_copy", lambda: False)
     window._start_update()
     assert opened == ["https://github.com/x/releases/tag/v99.0.0"]
+
+
+# ---------------------------------------------------------------- update card + fallback
+class _Redirected(_FakeResponse):
+    """A response whose final URL (after redirects) and headers can be set."""
+
+    def __init__(self, url: str, headers: dict | None = None) -> None:
+        super().__init__(b"")
+        self._url = url
+        self.headers = headers or {}
+
+    def geturl(self) -> str:
+        return self._url
+
+
+def test_update_check_falls_back_to_the_release_page(monkeypatch) -> None:
+    from src.utils import update_checker
+
+    page = "https://github.com/Jvn1604/UniversalDeathCounter/releases/tag/v99.0.0"
+
+    def fake_urlopen(request, timeout):
+        url = request.full_url
+        if url.startswith("https://api.github.com/"):
+            raise update_checker.urllib.error.HTTPError(url, 403, "rate limit exceeded", {}, None)
+        if url.endswith("/releases/latest"):
+            return _Redirected(page)
+        return _Redirected(url, {"Content-Length": "4242"})  # the installer's HEAD
+
+    monkeypatch.setattr(update_checker.urllib.request, "urlopen", fake_urlopen)
+    checker = update_checker.UpdateChecker()
+    found: list[tuple[str, str]] = []
+    checker.update_available.connect(lambda v, u: found.append((v, u)))
+    checker._check()
+    assert found == [("v99.0.0", page)]
+    assert checker.installer_url == GOOD_URL.replace("v9.9.9", "v99.0.0")
+    assert checker.installer_size == 4242
+
+
+def test_update_check_reports_current_and_failure(monkeypatch) -> None:
+    from src.utils import update_checker
+    from src.utils.constants import APP_VERSION
+
+    checker = update_checker.UpdateChecker()
+    current: list[str] = []
+    failed: list[bool] = []
+    checker.up_to_date.connect(current.append)
+    checker.check_failed.connect(lambda: failed.append(True))
+    monkeypatch.setattr(
+        update_checker.urllib.request,
+        "urlopen",
+        lambda *a, **k: _FakeResponse(json.dumps({"tag_name": f"v{APP_VERSION}"}).encode()),
+    )
+    checker._check()
+    assert current == [f"v{APP_VERSION}"]
+
+    def offline(*_a, **_k):
+        raise OSError("offline")
+
+    monkeypatch.setattr(update_checker.urllib.request, "urlopen", offline)
+    checker._check()
+    assert failed == [True]
+
+
+def test_sidebar_update_card_states(window, monkeypatch) -> None:
+    card = window._update_card
+    checks: list[bool] = []
+    monkeypatch.setattr(window._update_checker, "check_async", lambda: checks.append(True))
+    card.set_state("current")
+    card.check_requested.emit()  # the refresh button
+    assert checks == [True] and card.state() == "checking"
+    card.check_requested.emit()  # already checking: not twice
+    assert checks == [True]
+    window._update_checker.check_failed.emit()
+    assert card.state() == "failed"
+    assert not window._update_btn.isVisibleTo(window)
+    window._on_update_available("v99.0.0", "https://example.invalid")
+    assert card.state() == "available" and window._update_btn.isVisibleTo(window)
+    card.check_requested.emit()  # a found update stays put
+    assert checks == [True]
