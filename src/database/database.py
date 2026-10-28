@@ -43,6 +43,11 @@ EVENT_DEATH: str = "death"
 EVENT_TOTAL_ADJUST: str = "total_adjust"
 
 
+# death_templates.kind
+SCREEN_DEATH: str = "death"
+SCREEN_PAUSE: str = "pause"
+
+
 def _utc_now_iso() -> str:
     """Return the current UTC time as an ISO-8601 string."""
     return datetime.now(UTC).isoformat(timespec="seconds")
@@ -163,6 +168,7 @@ class Database:
                 deaths INTEGER NOT NULL DEFAULT 0,
                 split_names TEXT NOT NULL,
                 split_times TEXT NOT NULL,
+                game_times TEXT NOT NULL DEFAULT '[]',
                 FOREIGN KEY (game_id) REFERENCES games (id) ON DELETE CASCADE
             )
             """,
@@ -175,6 +181,7 @@ class Database:
                 region TEXT NOT NULL,
                 template BLOB NOT NULL,
                 created_at TEXT NOT NULL,
+                kind TEXT NOT NULL DEFAULT 'death',
                 FOREIGN KEY (game_id) REFERENCES games (id) ON DELETE CASCADE
             )
             """,
@@ -220,6 +227,20 @@ class Database:
                     "ALTER TABLE game_detection ADD COLUMN options TEXT NOT NULL DEFAULT '{}'"
                 )
                 logger.info("Migrated schema: added options column to game_detection")
+
+            cursor.execute("PRAGMA table_info(death_templates)")
+            if "kind" not in {row["name"] for row in cursor.fetchall()}:
+                cursor.execute(
+                    "ALTER TABLE death_templates ADD COLUMN kind TEXT NOT NULL DEFAULT 'death'"
+                )
+                logger.info("Migrated schema: added kind column to death_templates")
+
+            cursor.execute("PRAGMA table_info(speedrun_runs)")
+            if "game_times" not in {row["name"] for row in cursor.fetchall()}:
+                cursor.execute(
+                    "ALTER TABLE speedrun_runs ADD COLUMN game_times TEXT NOT NULL DEFAULT '[]'"
+                )
+                logger.info("Migrated schema: added game_times column to speedrun_runs")
 
     def _seed_default_settings(self) -> None:
         """Insert default settings for any keys not already present."""
@@ -376,33 +397,43 @@ class Database:
             )
             return cursor.fetchall()
 
-    def add_death_template(self, game_id: int, region: str, template: bytes) -> int:
-        """Store one more calibrated death screen for a game; returns its id."""
+    def add_death_template(
+        self, game_id: int, region: str, template: bytes, kind: str = SCREEN_DEATH
+    ) -> int:
+        """
+        Store one more calibrated screen for a game; returns its id.
+
+        ``kind`` is ``SCREEN_DEATH`` (counts a death) or ``SCREEN_PAUSE`` (a
+        pause, loading or cutscene screen that stops the timer's game time).
+        """
         with self._cursor() as cursor:
             cursor.execute(
                 """
-                INSERT INTO death_templates (game_id, region, template, created_at)
-                VALUES (?, ?, ?, ?)
+                INSERT INTO death_templates (game_id, region, template, created_at, kind)
+                VALUES (?, ?, ?, ?, ?)
                 """,
-                (game_id, region, sqlite3.Binary(template), _utc_now_iso()),
+                (game_id, region, sqlite3.Binary(template), _utc_now_iso(), kind),
             )
             template_id = cursor.lastrowid
         logger.info("Stored death-screen template id=%s for game_id=%s", template_id, game_id)
         return int(template_id)
 
-    def get_death_templates(self, game_id: int) -> list[sqlite3.Row]:
-        """Return a game's calibrated death screens, oldest first."""
+    def get_death_templates(self, game_id: int, kind: str = SCREEN_DEATH) -> list[sqlite3.Row]:
+        """Return a game's calibrated screens of one kind, oldest first."""
         with self._cursor() as cursor:
             cursor.execute(
-                "SELECT * FROM death_templates WHERE game_id = ? ORDER BY id", (game_id,)
+                "SELECT * FROM death_templates WHERE game_id = ? AND kind = ? ORDER BY id",
+                (game_id, kind),
             )
             return cursor.fetchall()
 
-    def clear_death_templates(self, game_id: int) -> None:
-        """Delete all of a game's calibrated death screens."""
+    def clear_death_templates(self, game_id: int, kind: str = SCREEN_DEATH) -> None:
+        """Delete all of a game's calibrated screens of one kind."""
         with self._cursor() as cursor:
-            cursor.execute("DELETE FROM death_templates WHERE game_id = ?", (game_id,))
-        logger.info("Cleared death-screen templates for game_id=%s", game_id)
+            cursor.execute(
+                "DELETE FROM death_templates WHERE game_id = ? AND kind = ?", (game_id, kind)
+            )
+        logger.info("Cleared %s-screen templates for game_id=%s", kind, game_id)
 
     # ----------------------------------------------------------------
     # Speedrun splits and attempts
@@ -432,8 +463,8 @@ class Database:
             cursor.execute(
                 """
                 INSERT INTO speedrun_runs (game_id, started_at, ended_at, finished, deaths,
-                                           split_names, split_times)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                                           split_names, split_times, game_times)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     game_id,
@@ -443,8 +474,10 @@ class Database:
                     run.deaths,
                     json.dumps(run.split_names),
                     json.dumps(run.split_times),
+                    json.dumps(run.game_times),
                 ),
             )
+            run.run_id = cursor.lastrowid
 
     def get_speedrun_runs(self, game_id: int, split_names: list[str]) -> list[RunRecord]:
         """A game's attempts made with exactly these splits, oldest first."""
@@ -462,9 +495,17 @@ class Database:
                 deaths=row["deaths"],
                 started_at=row["started_at"],
                 ended_at=row["ended_at"],
+                game_times=json.loads(row["game_times"] or "[]"),
+                run_id=row["id"],
             )
             for row in rows
         ]
+
+    def delete_speedrun_run(self, run_id: int) -> None:
+        """Delete one attempt (e.g. a mistaken run in Run History)."""
+        with self._cursor() as cursor:
+            cursor.execute("DELETE FROM speedrun_runs WHERE id = ?", (run_id,))
+        logger.info("Deleted speedrun attempt id=%s", run_id)
 
     def count_speedrun_attempts(self, game_id: int) -> int:
         """Every attempt for a game, whatever its splits."""

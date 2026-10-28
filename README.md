@@ -61,7 +61,12 @@ No Python or anything else needed. Windows 10 or 11.
 
 ### ⏱ Speedrun timer
 - **Splits per game.** Set them up in **Manage → Speedrun Splits…**, or fill them from your boss list in one click.
-- **Compares against your PB:** a delta for every split, **gold** for best-ever segments, plus your PB, sum of best and attempt count.
+- **Compares against your PB, your previous run, or your best segments:** a delta for every split (like `-12.42` or `+5.31`), the previous segment, **gold** for best-ever segments, plus your PB, sum of best and attempt count. A new PB is detected and announced automatically.
+- **Real time and game time.** Game time leaves out loads and pauses. Choose which one the timer shows; the other appears underneath.
+- **Pauses itself:** the whole timer pauses if the game closes or crashes. Game time also stops while the game is frozen, on black loading screens, and on pause, loading or cutscene screens you mark.
+- **Never lose a run:** the run in progress is auto-saved every 10 seconds. After a crash, the next start offers to resume it or save it as an attempt.
+- **Run history and personal records** (**View → Run History & Records…**): every attempt with its real time, game time and deaths; your PB, fewest-death run and best segments; and death records such as the fewest deaths to beat a boss.
+- **Precision from seconds to milliseconds** (Settings → Speedrun).
 - **Counts deaths per run**, including auto-detected ones, so you also see how many deaths your PB run had.
 - **LiveSplit-style controls:** start/split, pause, undo, skip and reset, from hotkeys, a controller combo, or a right-click on the timer.
 - **Its own OBS-ready window** (**View → Speedrun Timer**), styled like the overlay. It only redraws while a run is going.

@@ -355,6 +355,40 @@ class HealthBarMatcher:
         return matched, fill
 
 
+# ----------------------------------------------------------------
+# Loading screens — for the speedrun timer's game time
+# ----------------------------------------------------------------
+_LOADING_MAX_MEAN: float = 12.0
+_LOADING_MAX_BRIGHT: float = 50.0  # 98th-percentile brightness
+
+
+def is_loading_frame(frame: np.ndarray) -> bool:
+    """
+    A black or near-black screen, perhaps with a small logo or spinner.
+
+    That's what most loading screens and fade-to-black transitions look
+    like. Checked on a 1-in-8 sample of pixels, so it costs next to nothing.
+    """
+    gray = to_gray(frame[::8, ::8])
+    if gray.size == 0:
+        return False
+    return (
+        float(gray.mean()) < _LOADING_MAX_MEAN
+        and float(np.percentile(gray, 98)) < _LOADING_MAX_BRIGHT
+    )
+
+
+def build_screen_matcher(templates: Iterable[tuple[str, bytes]]) -> Matcher | None:
+    """Any of several saved screens (e.g. pause / loading screens), or None."""
+    matchers: list[Matcher] = [
+        TemplateMatcher(DeathTemplate.from_storage(region, bytes(patch)))
+        for region, patch in templates
+    ]
+    if not matchers:
+        return None
+    return matchers[0] if len(matchers) == 1 else AnyMatcher(matchers)
+
+
 class AnyMatcher:
     """Matches when any of several matchers does (e.g. multiple death screens)."""
 
