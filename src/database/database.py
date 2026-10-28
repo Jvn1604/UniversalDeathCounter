@@ -22,10 +22,11 @@ aggregating this event log. This gives us:
 from __future__ import annotations
 
 import sqlite3
+from collections.abc import Iterator
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any
 
 from src.utils.constants import DATABASE_PATH, DEFAULT_SETTINGS
 from src.utils.logger import get_logger
@@ -35,7 +36,7 @@ logger = get_logger(__name__)
 
 def _utc_now_iso() -> str:
     """Return the current UTC time as an ISO-8601 string."""
-    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+    return datetime.now(UTC).isoformat(timespec="seconds")
 
 
 class Database:

@@ -24,12 +24,14 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QKeySequenceEdit,
     QLineEdit,
+    QMessageBox,
     QPushButton,
     QSpinBox,
     QVBoxLayout,
 )
 
 from src.database.database import Database
+from src.utils import startup
 from src.utils.constants import (
     AVAILABLE_THEMES,
     SETTING_CHECK_UPDATES,
@@ -94,6 +96,13 @@ class SettingsWindow(QDialog):
         general_form.addRow("Theme", self._theme_combo)
         self._minimize_tray_check = QCheckBox("Minimize to system tray on close")
         general_form.addRow(self._minimize_tray_check)
+        self._start_with_windows_check = QCheckBox("Start with Windows")
+        if not startup.startup_supported():
+            self._start_with_windows_check.setEnabled(False)
+            self._start_with_windows_check.setToolTip(
+                "Available in the installed app (not when running from source)."
+            )
+        general_form.addRow(self._start_with_windows_check)
         self._check_updates_check = QCheckBox("Check for updates on startup")
         general_form.addRow(self._check_updates_check)
         layout.addWidget(general_group)
@@ -209,6 +218,7 @@ class SettingsWindow(QDialog):
         self._minimize_tray_check.setChecked(
             settings.get(SETTING_MINIMIZE_TO_TRAY, "false") == "true"
         )
+        self._start_with_windows_check.setChecked(startup.is_enabled())
         self._check_updates_check.setChecked(
             settings.get(SETTING_CHECK_UPDATES, "true") == "true"
         )
@@ -242,7 +252,7 @@ class SettingsWindow(QDialog):
         self._hotkey_decrement.setKeySequence(settings.get(SETTING_HOTKEY_DECREMENT, "F10"))
         self._hotkey_undo.setKeySequence(settings.get(SETTING_HOTKEY_UNDO, "F11"))
         self._hotkey_toggle_overlay.setKeySequence(
-            settings.get(SETTING_HOTKEY_TOGGLE_OVERLAY, "F12")
+            settings.get(SETTING_HOTKEY_TOGGLE_OVERLAY, "Ctrl+F12")
         )
 
     def _save(self) -> None:
@@ -252,6 +262,11 @@ class SettingsWindow(QDialog):
             SETTING_MINIMIZE_TO_TRAY,
             "true" if self._minimize_tray_check.isChecked() else "false",
         )
+        if startup.startup_supported():
+            try:
+                startup.set_enabled(self._start_with_windows_check.isChecked())
+            except OSError as exc:
+                QMessageBox.warning(self, "Start with Windows", f"Could not update: {exc}")
         db.set_setting(
             SETTING_CHECK_UPDATES,
             "true" if self._check_updates_check.isChecked() else "false",

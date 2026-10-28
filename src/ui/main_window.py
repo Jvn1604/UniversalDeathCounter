@@ -45,6 +45,7 @@ from src.ui.settings_window import SettingsWindow
 from src.ui.statistics_window import StatisticsWindow
 from src.utils.constants import (
     APP_NAME,
+    DEFAULT_HOTKEY_TOGGLE_OVERLAY,
     ICONS_DIR,
     SAVES_DIR,
     SETTING_CHECK_UPDATES,
@@ -297,14 +298,38 @@ class MainWindow(QMainWindow):
             increment_key=settings.get(SETTING_HOTKEY_INCREMENT, "f9"),
             decrement_key=settings.get(SETTING_HOTKEY_DECREMENT, "f10"),
             undo_key=settings.get(SETTING_HOTKEY_UNDO, "f11"),
-            toggle_overlay_key=settings.get(SETTING_HOTKEY_TOGGLE_OVERLAY, "f12"),
+            toggle_overlay_key=settings.get(
+                SETTING_HOTKEY_TOGGLE_OVERLAY, DEFAULT_HOTKEY_TOGGLE_OVERLAY
+            ),
             parent=self,
         )
         self._hotkey_manager.increment_triggered.connect(self._on_increment)
         self._hotkey_manager.decrement_triggered.connect(self._on_decrement)
         self._hotkey_manager.undo_triggered.connect(self._on_undo)
         self._hotkey_manager.toggle_overlay_triggered.connect(self._toggle_overlay)
+        self._hotkey_manager.registration_failed.connect(self._on_hotkeys_failed)
         self._hotkey_manager.start()
+
+    def _on_hotkeys_failed(self, failures: list) -> None:
+        labels = {
+            "increment": "+1 Death",
+            "decrement": "-1 Death",
+            "undo": "Undo",
+            "toggle_overlay": "Toggle Overlay",
+        }
+        keys = ", ".join(
+            f"{key.upper()} ({labels.get(action, action)})" for action, key in failures
+        )
+        message = (
+            f"Hotkey unavailable: {keys}. Another program is already using it, or the key "
+            "isn't supported. Pick a different key in Settings → Preferences."
+        )
+        if self._tray is not None:
+            self._tray.showMessage(
+                APP_NAME, message, QSystemTrayIcon.MessageIcon.Warning, 10000
+            )
+        else:
+            QMessageBox.warning(self, "Hotkey Unavailable", message)
 
     def _apply_saved_settings(self) -> None:
         settings = self._database.get_all_settings()
@@ -542,7 +567,7 @@ class MainWindow(QMainWindow):
         if not path:
             return
         try:
-            with open(path, "r", encoding="utf-8") as file:
+            with open(path, encoding="utf-8") as file:
                 data = json.load(file)
             self._database.import_data(data, mode="merge")
         except (OSError, ValueError, json.JSONDecodeError) as exc:
@@ -618,7 +643,9 @@ class MainWindow(QMainWindow):
             increment_key=settings.get(SETTING_HOTKEY_INCREMENT, "f9"),
             decrement_key=settings.get(SETTING_HOTKEY_DECREMENT, "f10"),
             undo_key=settings.get(SETTING_HOTKEY_UNDO, "f11"),
-            toggle_overlay_key=settings.get(SETTING_HOTKEY_TOGGLE_OVERLAY, "f12"),
+            toggle_overlay_key=settings.get(
+                SETTING_HOTKEY_TOGGLE_OVERLAY, DEFAULT_HOTKEY_TOGGLE_OVERLAY
+            ),
         )
 
     def _toggle_overlay(self) -> None:

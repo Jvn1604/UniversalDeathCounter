@@ -13,7 +13,12 @@
 ; This is also run automatically by .github/workflows/build-windows.yml.
 
 #define AppName "Universal Death Counter"
-#define AppVersion "1.5.0"
+; The version's single source of truth is APP_VERSION in
+; src/utils/constants.py. CI passes it in with /DAppVersion=...; this
+; fallback is only for quick local builds.
+#ifndef AppVersion
+  #define AppVersion "0.0.0-dev"
+#endif
 #define AppPublisher "Jeeventhiran Sivanantham"
 #define AppExeName "UniversalDeathCounter.exe"
 
@@ -41,7 +46,8 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 Name: "desktopicon"; Description: "Create a &desktop shortcut"; GroupDescription: "Additional shortcuts:"
 
 [Files]
-Source: "..\dist\{#AppExeName}"; DestDir: "{app}"; Flags: ignoreversion
+; PyInstaller folder build: the .exe plus its _internal\ libraries.
+Source: "..\dist\UniversalDeathCounter\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
 Name: "{group}\{#AppName}"; Filename: "{app}\{#AppExeName}"

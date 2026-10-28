@@ -15,7 +15,7 @@ through :meth:`apply_display_settings`.
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, QPoint
+from PySide6.QtCore import QPoint, Qt
 from PySide6.QtGui import QMouseEvent
 from PySide6.QtWidgets import QLabel, QSizeGrip, QVBoxLayout, QWidget
 

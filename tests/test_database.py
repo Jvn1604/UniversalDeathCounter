@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sqlite3
 import sys
 from pathlib import Path
 
@@ -30,7 +31,7 @@ def test_create_and_get_game(db: Database) -> None:
 
 def test_duplicate_game_name_raises(db: Database) -> None:
     db.create_game("Sekiro")
-    with pytest.raises(Exception):
+    with pytest.raises(sqlite3.IntegrityError):
         db.create_game("Sekiro")
 
 

@@ -12,8 +12,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from src.database.database import Database
 from src.core.session_manager import SessionManager
+from src.database.database import Database
 from src.utils.logger import get_logger
 
 logger = get_logger(__name__)

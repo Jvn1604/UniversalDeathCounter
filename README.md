@@ -20,7 +20,7 @@ A free, open-source death counter for Soulslike games, challenge runs, speedruns
 - **Session history** — review every past run per game, with per-session death counts and one-click delete
 - **Backup & restore** — export all your data to a single JSON file and import it back (or onto another PC) anytime
 - **Clear all data** — full reset in one confirmed action, with settings preserved
-- **Global hotkeys** — `F9` (+1), `F10` (-1), `F11` (Undo), `F12` (Toggle Overlay) work even while your game is focused
+- **Global hotkeys** — `F9` (+1), `F10` (-1), `F11` (Undo), `Ctrl+F12` (Toggle Overlay) work even while your game is focused. They use Windows' own hotkey API (no keyboard hook), so they only ever see their own key combos
 - **OBS-ready overlay** — transparent, frameless, resizable, movable window for Window Capture — **plus a chroma-key green mode** for color-key filters
 - **Overlay customization** — pick the counter color, font size, which number the big counter shows (session / boss / total), and toggle each line (game, boss, stats) on or off
 - **deaths.txt for OBS Text Sources** — writes a fully customizable template like `{game} - {boss}: {deaths}` to a text file on every change, so streamers can skip window capture entirely
@@ -67,7 +67,7 @@ pip install -r requirements.txt
 
 # Build the standalone .exe
 pyinstaller packaging\UniversalDeathCounter.spec
-# -> dist\UniversalDeathCounter.exe
+# -> dist\UniversalDeathCounter\UniversalDeathCounter.exe (folder build)
 
 # Optional: build the full installer too (requires Inno Setup 6: https://jrsoftware.org/isinfo.php)
 iscc packaging\installer.iss
@@ -79,7 +79,7 @@ iscc packaging\installer.iss
 #### Requirements
 
 - Python 3.12+
-- Windows, macOS, or Linux (global hotkeys require elevated/root permissions on Linux — see [Known Limitations](#known-limitations))
+- Windows, macOS, or Linux (global hotkeys and auto-detection are Windows-only; see [Known Limitations](#known-limitations))
 
 ```bash
 git clone https://github.com/<your-username>/UniversalDeathCounter.git
@@ -98,7 +98,7 @@ python -m src.app
 4. Hit **+1 Death** (or `F9`) every time you die. `F10` decrements, `F11` undoes the last action, and **Set Exact Count…** lets you jump straight to a specific number.
 5. Beat a boss? Select it in **Manage → Games & Bosses…** and hit **Toggle Defeated ✓** — your "deaths until victory" number is captured permanently.
 6. Open **Manage → Games & Bosses… → Session History** to review or delete individual past runs for a game.
-7. Open **View → Toggle Overlay** (or `F12`) and add it as a **Window Capture** source in OBS — or switch the overlay to **chroma** mode in Settings and use a Color Key filter. Prefer text? Enable **deaths.txt** in Settings and point an OBS **Text Source** at the file, with your own `{game} - {boss}: {deaths}` template.
+7. Open **View → Toggle Overlay** (or `Ctrl+F12`) and add it as a **Window Capture** source in OBS — or switch the overlay to **chroma** mode in Settings and use a Color Key filter. Prefer text? Enable **deaths.txt** in Settings and point an OBS **Text Source** at the file, with your own `{game} - {boss}: {deaths}` template.
 8. Check **View → Statistics & Graphs…** for your per-boss breakdown, victories, and three charts (deaths per boss, deaths over time, per-session trend). **View → Death Log…** lets you attach a note to any individual death.
 9. Use the **Profile** menu to create fully separate databases (e.g. a co-op profile) and switch between them instantly.
 10. Use **File → Export Backup (JSON)** to save all your data, **File → Import Backup (JSON)** to restore it, and **File → Export CSV Summary…** for a spreadsheet-friendly report. **File → Clear All Data** wipes the current profile if you want a fresh start.
@@ -180,15 +180,16 @@ Contributions are very welcome!
 
 1. Fork the repo and create a feature branch (`git checkout -b feature/my-feature`)
 2. Keep changes modular — one concern per module, matching the existing structure
-3. Add or update tests in `tests/` for any logic changes (`pytest tests/`)
-4. Follow PEP 8, use type hints and docstrings (see existing modules for the expected style)
-5. Open a pull request describing your change and why it's useful
+3. Run `pre-commit install` once so every commit is checked for leftover merge-conflict markers and lint errors (CI runs the same checks)
+4. Add or update tests in `tests/` for any logic changes (`pytest`)
+5. Follow PEP 8, use type hints and docstrings (see existing modules for the expected style)
+6. Open a pull request describing your change and why it's useful
 
 Bug reports and feature requests are just as valuable as code — please open an issue.
 
 ## Known Limitations
 
-- Global hotkeys (via the `keyboard` library) require **administrator/root privileges on Linux** to read raw input devices. On Windows they work for the current user out of the box. If hotkeys silently fail to register, the in-app buttons remain fully functional.
+- Global hotkeys are **Windows-only**. A registered hotkey is consumed, so the game doesn't also receive that key. If another program has already registered a combo (plain `F12` is often taken), the app shows a notice and you can pick a different key in **Settings → Preferences**. The in-app buttons always work.
 - v1.0 is manual-only by design; see the Roadmap for planned automatic detection.
 
 ## License
