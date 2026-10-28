@@ -12,8 +12,8 @@ import json
 from datetime import datetime
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QTimer
-from PySide6.QtGui import QIcon, QKeySequence
+from PySide6.QtCore import QByteArray, Qt, QTimer
+from PySide6.QtGui import QGuiApplication, QIcon, QKeySequence, QScreen
 from PySide6.QtWidgets import (
     QComboBox,
     QFileDialog,
@@ -46,7 +46,7 @@ from src.detection.game_window import (
 from src.detection.matchers import SOULS_PRESET_EXES, DeathTemplate, build_matcher
 from src.hotkeys.gamepad import GamepadManager, combo_label
 from src.hotkeys.hotkey_manager import HotkeyManager
-from src.overlay.overlay_window import OverlayWindow
+from src.overlay.overlay_window import OverlayWindow, available_screen_rects
 from src.themes.theme_manager import apply_theme
 from src.ui.about_window import AboutWindow
 from src.ui.auto_detect_window import (
@@ -76,6 +76,7 @@ from src.utils.constants import (
     SETTING_HOTKEY_UNDO,
     SETTING_LAST_BOSS_ID,
     SETTING_LAST_GAME_ID,
+    SETTING_MAIN_WINDOW_GEOMETRY,
     SETTING_MINIMIZE_TO_TRAY,
     SETTING_OVERLAY_ALWAYS_ON_TOP,
     SETTING_OVERLAY_COUNTER_SOURCE,
@@ -86,6 +87,7 @@ from src.utils.constants import (
 from src.utils.exporters import write_csv_summary
 from src.utils.logger import get_logger
 from src.utils.profiles import DEFAULT_PROFILE_NAME, ProfileManager
+from src.utils.screens import display_name, fit_to_screens, screen_index_at
 from src.utils.stream_writer import render_template, write_deaths_file
 from src.utils.update_checker import UpdateChecker
 
@@ -126,6 +128,8 @@ class MainWindow(QMainWindow):
         self._setup_hotkeys()
         self._setup_death_watcher()
         self._apply_saved_settings()
+        self._restore_main_geometry()
+        QGuiApplication.instance().screenRemoved.connect(self._on_screen_removed)
         self._reload_games()
         self._maybe_check_updates()
 
@@ -167,6 +171,7 @@ class MainWindow(QMainWindow):
         view_menu = menu_bar.addMenu("&View")
         overlay_action = view_menu.addAction("Toggle Overlay")
         overlay_action.triggered.connect(self._toggle_overlay)
+        self._add_display_menu(view_menu)
         stats_action = view_menu.addAction("Statistics && Graphs…")
         stats_action.triggered.connect(self._show_statistics)
         log_action = view_menu.addAction("Death Log…")
@@ -327,6 +332,7 @@ class MainWindow(QMainWindow):
         undo_action.triggered.connect(self._on_undo)
         overlay_action = menu.addAction("Toggle Overlay")
         overlay_action.triggered.connect(self._toggle_overlay)
+        self._add_display_menu(menu)
         menu.addSeparator()
         quit_action = menu.addAction("Quit")
         quit_action.triggered.connect(self._quit_app)
@@ -967,7 +973,12 @@ class MainWindow(QMainWindow):
         dialog.exec()
 
     def _open_settings_window(self) -> None:
-        dialog = SettingsWindow(self._database, gamepad=self._gamepad_manager, parent=self)
+        dialog = SettingsWindow(
+            self._database,
+            gamepad=self._gamepad_manager,
+            hotkeys=self._hotkey_manager,
+            parent=self,
+        )
         dialog.settings_changed.connect(self._on_settings_changed)
         dialog.exec()
 
@@ -1006,6 +1017,50 @@ class MainWindow(QMainWindow):
         self._quitting = True
         self.close()
 
+    # ----------------------------------------------------------------
+    # Multiple displays
+    # ----------------------------------------------------------------
+    def _add_display_menu(self, parent_menu: QMenu) -> None:
+        """'Move Overlay to Display ▸' submenu, rebuilt each time it opens."""
+        menu = parent_menu.addMenu("Move Overlay to Display")
+        menu.aboutToShow.connect(lambda m=menu: self._fill_display_menu(m))
+
+    def _fill_display_menu(self, menu: QMenu) -> None:
+        menu.clear()
+        primary = QGuiApplication.primaryScreen()
+        rects = [s.availableGeometry() for s in QGuiApplication.screens()]
+        current = screen_index_at(self._overlay.geometry(), rects)
+        for index, screen in enumerate(QGuiApplication.screens()):
+            size = screen.geometry().size()
+            action = menu.addAction(
+                display_name(index, (size.width(), size.height()), screen is primary)
+            )
+            action.setCheckable(True)
+            action.setChecked(index == current and self._overlay.isVisible())
+            action.triggered.connect(lambda _=False, s=screen: self._move_overlay_to(s))
+
+    def _move_overlay_to(self, screen: QScreen) -> None:
+        self._overlay.move_to_screen(screen)
+        self._database.set_setting(SETTING_OVERLAY_GEOMETRY, self._overlay.geometry_string())
+
+    def _restore_main_geometry(self) -> None:
+        saved = self._database.get_setting(SETTING_MAIN_WINDOW_GEOMETRY, "")
+        if saved:
+            self.restoreGeometry(QByteArray.fromBase64(saved.encode("ascii")))
+        self._keep_windows_on_screen()
+
+    def _keep_windows_on_screen(self) -> None:
+        """After a display is unplugged, pull our windows back onto one that exists."""
+        rects = available_screen_rects()
+        fitted = fit_to_screens(self.frameGeometry(), rects)
+        if fitted.topLeft() != self.frameGeometry().topLeft():
+            self.move(fitted.topLeft())
+        self._overlay.keep_on_screen()
+
+    def _on_screen_removed(self, _screen: QScreen) -> None:
+        # Let Qt finish re-laying out the remaining displays first.
+        QTimer.singleShot(500, self._keep_windows_on_screen)
+
     def closeEvent(self, event) -> None:  # noqa: N802
         """Minimize to tray if configured; otherwise clean up and exit."""
         minimize = (
@@ -1024,6 +1079,9 @@ class MainWindow(QMainWindow):
             return
 
         self._database.set_setting(SETTING_OVERLAY_GEOMETRY, self._overlay.geometry_string())
+        self._database.set_setting(
+            SETTING_MAIN_WINDOW_GEOMETRY, bytes(self.saveGeometry().toBase64()).decode("ascii")
+        )
         self._session_manager.end_current_session()
         self._hotkey_manager.stop()
         self._gamepad_manager.stop()

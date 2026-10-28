@@ -99,6 +99,7 @@ SETTING_HOTKEY_TOGGLE_OVERLAY: str = "hotkey_toggle_overlay"
 SETTING_LAST_GAME_ID: str = "last_game_id"
 SETTING_LAST_BOSS_ID: str = "last_boss_id"
 SETTING_OVERLAY_GEOMETRY: str = "overlay_geometry"
+SETTING_MAIN_WINDOW_GEOMETRY: str = "main_window_geometry"  # Qt saveGeometry, base64
 
 # --- v1.5 overlay & streaming ---
 SETTING_OVERLAY_BG_MODE: str = "overlay_bg_mode"  # "dark" | "chroma"

@@ -22,7 +22,17 @@ A free, open-source death counter for Soulslike games, challenge runs, speedruns
 - **Backup & restore** — export all your data to a single JSON file and import it back (or onto another PC) anytime
 - **Clear all data** — full reset in one confirmed action, with settings preserved
 - **Global hotkeys** — `F9` (+1), `F10` (-1), `F11` (Undo), `Ctrl+F12` (Toggle Overlay), `F8` (Calibrate death screen), `Ctrl+F8` (Pause/resume auto-detect) work even while your game is focused, and the buttons always show your current bindings.
-- **Controller bindings (Xbox, PlayStation, and most other gamepads)** — bind any action to a button combo such as View/Share + D-pad Up under **Settings → Controls**: click **Record**, press the combo, done. One binding works on both Xbox and PlayStation pads. No extra drivers or libraries, since it uses Windows' built-in XInput and game-controller APIs They use Windows' own hotkey API (no keyboard hook), so they only ever see their own key combos
+- **Controller bindings (Xbox, PlayStation, and most other gamepads)** — bind any action to a button combo such as View/Share + D-pad Up under **Settings → Controls**: click **Record**, press the combo, done. One binding works on both Xbox and PlayStation pads. No extra drivers or libraries, since it uses Windows' built-in XInput and game-controller APIs
+- **Keybind editor with live conflict detection** — problems are highlighted while you edit:
+  - duplicate keys or combos
+  - plain letter keys that would stop you typing them anywhere
+  - keys another program has already taken
+  - controller combos that overlap
+- **Multi-monitor aware**:
+  - **View → Move Overlay to Display ▸** puts the overlay on any screen (handy for a stream monitor).
+  - The overlay and main window come back on-screen if a monitor is unplugged.
+  - The main window reopens where you left it.
+  - Detection captures games on any display. They use Windows' own hotkey API (no keyboard hook), so they only ever see their own key combos
 - **OBS-ready overlay** — transparent, frameless, resizable, movable window for Window Capture — **plus a chroma-key green mode** for color-key filters
 - **Overlay customization** — pick the counter color, font size, which number the big counter shows (session / boss / total), and toggle each line (game, boss, stats) on or off
 - **deaths.txt for OBS Text Sources** — writes a fully customizable template like `{game} - {boss}: {deaths}` to a text file on every change, so streamers can skip window capture entirely
