@@ -11,6 +11,7 @@ import faulthandler
 import sys
 from types import TracebackType
 
+from PySide6.QtCore import QTimer
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication, QMessageBox
 
@@ -83,6 +84,7 @@ def main() -> int:
 
     refresh_registration()
     window.show()
+    QTimer.singleShot(400, window.maybe_show_welcome)  # first run: the guide
     return app.exec()
 
 

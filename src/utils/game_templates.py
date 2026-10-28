@@ -14,6 +14,10 @@ new entry to :data:`GAME_TEMPLATES`.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from src.database.database import Database
 
 
 @dataclass(slots=True, frozen=True)
@@ -116,6 +120,25 @@ GAME_TEMPLATES: tuple[GameTemplate, ...] = (
 def get_template_names() -> list[str]:
     """Return the display names of all available templates."""
     return [template.name for template in GAME_TEMPLATES]
+
+
+def add_template_bosses(database: Database, template: GameTemplate) -> tuple[int, int]:
+    """
+    Create the template's game (or reuse one with that name) and its bosses.
+
+    Bosses already in the game are skipped. Returns ``(game id, bosses added)``.
+    """
+    existing = {game["name"]: game["id"] for game in database.get_games()}
+    game_id = existing.get(template.name)
+    if game_id is None:
+        game_id = database.create_game(template.name)
+    have = {boss["name"] for boss in database.get_bosses(game_id)}
+    added = 0
+    for boss_name in template.bosses:  # in story order, which next-boss relies on
+        if boss_name not in have:
+            database.create_boss(game_id, boss_name)
+            added += 1
+    return game_id, added
 
 
 def get_template(name: str) -> GameTemplate | None:

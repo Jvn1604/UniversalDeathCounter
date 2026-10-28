@@ -89,6 +89,14 @@ No Python or anything else needed. Windows 10 or 11.
 - **Multiple profiles** (switch from the box at the top), JSON backup and restore, and CSV export.
 - **Make the main window yours** in **Settings → Appearance**: any installed font, text and death-number colors, and a background image with adjustable dimming. Click **Apply** to preview without closing Settings.
 
+### ✨ Comfort
+- **Welcome guide** on first launch: add your game (from its .exe or a built-in boss list), learn the keys, set up OBS. Reopen it from Help.
+- **Mini mode:** a tiny always-on-top window with the count, +1 and Undo, for one-monitor setups. Sidebar, View menu or tray.
+- **Right-click the Game or Boss box** to rename it or mark the boss defeated, without opening Games & Bosses.
+- **Tray menu** has +1, Undo, Boss Defeated, pause detection, start/split the timer, the timer window and mini mode.
+- **One-click updates:** when a new version is out, click **Update** at the top; the installed app downloads it, updates itself and reopens. (Portable copies open the download page.)
+- Deleting a game tells you exactly what goes with it (deaths, bosses, sessions, runs).
+
 ### 🪶 Lightweight
 - The whole app is ~100 MB installed and adds **no** background services.
 - Detection checks the game window 5 times a second and stops when the game isn't running.
@@ -123,7 +131,7 @@ You can always count by hand too: **+1 Death** (`F9`), **-1** (`F10`), **Undo** 
 | Timer: pause / reset | `Num 5` / `Num 3` | not set |
 | Timer: undo / skip split | `Num 8` / `Num 2` | not set |
 
-The timer keys use the number pad, as in LiveSplit, so **Num Lock must be on**. No number pad? Rebind them.
+The timer keys use the number pad, as in LiveSplit, so **Num Lock must be on**. No number pad? Rebind them. Only Start / Split is held all the time; pause, reset, undo and skip are claimed only while a run is going, so the number pad keeps working in other apps the rest of the time.
 
 To change any of them, go to **Settings → Preferences… → Controls**:
 - **Keyboard:** click a field and press a key.
