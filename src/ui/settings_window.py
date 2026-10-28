@@ -68,6 +68,14 @@ from src.utils.constants import (
     SETTING_OVERLAY_TEXT_COLOR,
     SETTING_OVERLAY_TEXT_OUTLINE,
     SETTING_THEME,
+    SETTING_TIMER_COMPARISON,
+    SETTING_TIMER_DIGITS,
+    SETTING_TIMER_METHOD,
+    SETTING_TIMER_PAUSE_BACKGROUND,
+    SETTING_TIMER_PAUSE_LOADING,
+    SETTING_TIMER_PAUSE_NOT_RESPONDING,
+    SETTING_TIMER_PAUSE_ON_CLOSE,
+    SETTING_TIMER_PAUSE_SCREENS,
     SETTING_UI_BG_DIM,
     SETTING_UI_BG_IMAGE,
     SETTING_UI_COUNTER_COLOR,
@@ -149,6 +157,35 @@ def _select_data(combo: QComboBox, value: str) -> None:
     combo.setCurrentIndex(max(combo.findData(value), 0))
 
 
+_TIMER_COMPARISONS: tuple[tuple[str, str], ...] = (
+    ("pb", "Personal Best"),
+    ("previous", "Previous Run"),
+    ("best", "Best Segments (sum of best)"),
+)
+_TIMER_PRECISIONS: tuple[tuple[int, str], ...] = (
+    (0, "Seconds (1:23)"),
+    (1, "Tenths (1:23.4)"),
+    (2, "Hundredths (1:23.45)"),
+    (3, "Milliseconds (1:23.456)"),
+)
+_TIMER_PAUSE_OPTIONS: tuple[tuple[str, str], ...] = (
+    (SETTING_TIMER_PAUSE_ON_CLOSE, "Pause the timer if the game closes or crashes"),
+    (
+        SETTING_TIMER_PAUSE_NOT_RESPONDING,
+        "Stop game time while the game is frozen (Not Responding)",
+    ),
+    (SETTING_TIMER_PAUSE_LOADING, "Stop game time on black loading screens"),
+    (
+        SETTING_TIMER_PAUSE_SCREENS,
+        "Stop game time on pause, loading and cutscene screens you've marked",
+    ),
+    (
+        SETTING_TIMER_PAUSE_BACKGROUND,
+        "Stop game time while the game is minimized or in the background",
+    ),
+)
+
+
 class _ImageChoice(QWidget):
     """Shows the chosen background image's name, with Choose… and Remove."""
 
@@ -228,6 +265,7 @@ class SettingsWindow(QDialog):
         layout = QVBoxLayout(general_page)
         tabs.addTab(general_page, "General")
         tabs.addTab(self._build_appearance_page(), "Appearance")
+        tabs.addTab(self._build_speedrun_page(), "Speedrun")
         tabs.addTab(self._build_controls_page(), "Controls")
 
         # --- General ---
@@ -374,6 +412,46 @@ class SettingsWindow(QDialog):
         scroll.setFrameShape(QScrollArea.Shape.NoFrame)
         scroll.setWidget(page)
         return scroll
+
+    def _build_speedrun_page(self) -> QWidget:
+        """Speedrun timer: timing method, comparison, precision and auto-pause."""
+        page = QWidget()
+        layout = QVBoxLayout(page)
+
+        timer_group = QGroupBox("Timer")
+        timer_form = QFormLayout(timer_group)
+        self._timer_method_combo = QComboBox()
+        self._timer_method_combo.addItem("Real Time", userData="real")
+        self._timer_method_combo.addItem("Game Time (without loads and pauses)", userData="game")
+        timer_form.addRow("Timing method", self._timer_method_combo)
+        self._timer_comparison_combo = QComboBox()
+        for value, label in _TIMER_COMPARISONS:
+            self._timer_comparison_combo.addItem(label, userData=value)
+        timer_form.addRow("Compare against", self._timer_comparison_combo)
+        self._timer_digits_combo = QComboBox()
+        for digits, label in _TIMER_PRECISIONS:
+            self._timer_digits_combo.addItem(label, userData=str(digits))
+        timer_form.addRow("Precision", self._timer_digits_combo)
+        layout.addWidget(timer_group)
+
+        pause_group = QGroupBox("Automatic pausing")
+        pause_layout = QVBoxLayout(pause_group)
+        self._timer_pause_checks: dict[str, QCheckBox] = {}
+        for key, label in _TIMER_PAUSE_OPTIONS:
+            check = QCheckBox(label)
+            pause_layout.addWidget(check)
+            self._timer_pause_checks[key] = check
+        note = QLabel(
+            "Only the first one stops the whole timer. The others stop game time only; "
+            "real time keeps running, as speedrun rules expect. Mark pause, loading and "
+            "cutscene screens in Manage → Auto Death Detection. Needs the game's .exe set."
+        )
+        note.setWordWrap(True)
+        note.setStyleSheet("color: #999999; font-size: 11px;")
+        pause_layout.addWidget(note)
+        layout.addWidget(pause_group)
+        layout.addStretch()
+        return page
 
     def _build_controls_page(self) -> QWidget:
         """Keyboard + controller binding per action, with record/clear buttons."""
@@ -619,6 +697,15 @@ class SettingsWindow(QDialog):
             settings.get(SETTING_DEATHS_TXT_TEMPLATE, "{game} - {boss}: {deaths}")
         )
 
+        _select_data(self._timer_method_combo, settings.get(SETTING_TIMER_METHOD, "real"))
+        _select_data(
+            self._timer_comparison_combo, settings.get(SETTING_TIMER_COMPARISON, "pb")
+        )
+        _select_data(self._timer_digits_combo, settings.get(SETTING_TIMER_DIGITS, "2"))
+        for key, check in self._timer_pause_checks.items():
+            default = "false" if key == SETTING_TIMER_PAUSE_BACKGROUND else "true"
+            check.setChecked(settings.get(key, default) == "true")
+
         for action, _label, setting_key, default in CONTROL_ACTIONS:
             self._key_edits[action].setKeySequence(
                 QKeySequence(settings.get(setting_key, default))
@@ -695,6 +782,12 @@ class SettingsWindow(QDialog):
         db.set_setting(SETTING_DEATHS_TXT_PATH, self._deaths_txt_path.text().strip())
         template = self._deaths_txt_template.text().strip() or "{game} - {boss}: {deaths}"
         db.set_setting(SETTING_DEATHS_TXT_TEMPLATE, template)
+
+        db.set_setting(SETTING_TIMER_METHOD, self._timer_method_combo.currentData())
+        db.set_setting(SETTING_TIMER_COMPARISON, self._timer_comparison_combo.currentData())
+        db.set_setting(SETTING_TIMER_DIGITS, self._timer_digits_combo.currentData())
+        for key, check in self._timer_pause_checks.items():
+            db.set_setting(key, "true" if check.isChecked() else "false")
 
         # An empty field means "unbound" for keyboard and controller alike.
         for action, _label, setting_key, _default in CONTROL_ACTIONS:

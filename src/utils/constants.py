@@ -20,7 +20,7 @@ APP_BRAND: str = "DePhantom"  # big header text; APP_SUBTITLE goes underneath
 APP_SUBTITLE: str = "Universal Death Counter (DUDC)"
 # APP_ORG (below), the exe name and the data folder intentionally keep the
 # old internal name, so existing installs upgrade in place and keep data.
-APP_VERSION: str = "2.4.0"
+APP_VERSION: str = "2.5.0"
 APP_ORG: str = "UniversalDeathCounter"
 
 # GitHub repository ("owner/repo") used by the update checker. Edit this
@@ -157,6 +157,19 @@ SETTING_HOTKEY_TIMER_UNDO: str = "hotkey_timer_undo"
 SETTING_HOTKEY_TIMER_SKIP: str = "hotkey_timer_skip"
 SETTING_TIMER_GEOMETRY: str = "timer_geometry"
 SETTING_TIMER_VISIBLE: str = "timer_visible"
+SETTING_TIMER_METHOD: str = "timer_method"  # "real" | "game"
+SETTING_TIMER_COMPARISON: str = "timer_comparison"  # "pb" | "previous" | "best"
+SETTING_TIMER_DIGITS: str = "timer_digits"  # decimals: 0-3 (3 = milliseconds)
+# Auto-pause: the game closing/crashing pauses the whole timer; the rest
+# only stop game time (real time keeps running, as in LiveSplit).
+SETTING_TIMER_PAUSE_ON_CLOSE: str = "timer_pause_on_close"
+SETTING_TIMER_PAUSE_NOT_RESPONDING: str = "timer_pause_not_responding"
+SETTING_TIMER_PAUSE_LOADING: str = "timer_pause_loading"
+SETTING_TIMER_PAUSE_SCREENS: str = "timer_pause_screens"
+SETTING_TIMER_PAUSE_BACKGROUND: str = "timer_pause_background"
+# JSON snapshot of the run in progress, rewritten every few seconds; left
+# behind only if the app didn't close normally (crash recovery).
+SETTING_TIMER_AUTOSAVE: str = "timer_autosave"
 
 
 # Every bindable action: (action name, label, keyboard setting, default key).
@@ -235,6 +248,14 @@ DEFAULT_SETTINGS: dict[str, str] = {
     SETTING_HOTKEY_CALIBRATE: DEFAULT_HOTKEY_CALIBRATE,
     SETTING_HOTKEY_PAUSE_DETECTION: DEFAULT_HOTKEY_PAUSE_DETECTION,
     SETTING_DETECTION_COOLDOWN: "8",
+    SETTING_TIMER_METHOD: "real",
+    SETTING_TIMER_COMPARISON: "pb",
+    SETTING_TIMER_DIGITS: "2",
+    SETTING_TIMER_PAUSE_ON_CLOSE: "true",
+    SETTING_TIMER_PAUSE_NOT_RESPONDING: "true",
+    SETTING_TIMER_PAUSE_LOADING: "true",
+    SETTING_TIMER_PAUSE_SCREENS: "true",
+    SETTING_TIMER_PAUSE_BACKGROUND: "false",
 }
 
 # --------------------------------------------------------------------------
