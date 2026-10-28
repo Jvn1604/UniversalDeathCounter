@@ -228,16 +228,44 @@ def monitor_at(monitors: list[dict], x: int, y: int) -> dict:
     return monitors[0]
 
 
-def grab_rect(sct: mss.base.MSSBase, rect: Rect) -> np.ndarray:
-    """Capture a screen rectangle as an ``(H, W, 3)`` RGB uint8 array."""
+def desktop_clip(sct: mss.base.MSSBase, rect: Rect) -> Rect:
+    """``rect`` cut to the parts that are on some display."""
     desktop = sct.monitors[0]  # bounding box of every display
     clipped = clip_to_desktop(
         rect, (desktop["left"], desktop["top"], desktop["width"], desktop["height"])
     )
-    left, top, width, height = clipped or rect
+    return clipped or rect
+
+
+def grab_rect(sct: mss.base.MSSBase, rect: Rect) -> np.ndarray:
+    """
+    Capture a screen rectangle as an ``(H, W, 3)`` RGB uint8 array.
+
+    The result is a view on the captured BGRA pixels, not a copy: turning a
+    whole 1440p frame into a packed RGB array takes ~14 ms, while matchers
+    only read small crops of it. Use ``np.ascontiguousarray`` to keep a frame.
+    """
+    left, top, width, height = desktop_clip(sct, rect)
     shot = sct.grab({"left": left, "top": top, "width": width, "height": height})
-    bgra = np.asarray(shot)
-    return np.ascontiguousarray(bgra[..., 2::-1])
+    return np.asarray(shot)[..., 2::-1]
+
+
+def grab_into(
+    sct: mss.base.MSSBase,
+    origin: tuple[int, int],
+    box: tuple[int, int, int, int],
+    canvas: np.ndarray,
+) -> None:
+    """
+    Capture only ``box`` (``left, top, right, bottom`` in frame pixels) of a
+    frame whose top-left is at screen point ``origin``, into the same spot
+    of ``canvas``. Much cheaper than a full capture when matchers only read
+    a small part of the screen.
+    """
+    left, top, right, bottom = box
+    area = {"left": origin[0] + left, "top": origin[1] + top}
+    shot = sct.grab({**area, "width": right - left, "height": bottom - top})
+    canvas[top:bottom, left:right] = np.asarray(shot)[..., 2::-1]
 
 
 def capture_game_frame(exe_path: str | None) -> np.ndarray | None:
@@ -253,10 +281,10 @@ def capture_game_frame(exe_path: str | None) -> np.ndarray | None:
             hwnd = find_main_window(find_process_ids(exe_path))
             rect = window_client_rect(hwnd) if hwnd is not None else None
             if rect is not None:
-                return grab_rect(sct, rect)
+                return np.ascontiguousarray(grab_rect(sct, rect))
         cursor = wintypes.POINT()
         _user32.GetCursorPos(ctypes.byref(cursor))
         monitor = monitor_at(sct.monitors[1:], cursor.x, cursor.y)
-        return grab_rect(
-            sct, (monitor["left"], monitor["top"], monitor["width"], monitor["height"])
+        return np.ascontiguousarray(
+            grab_rect(sct, (monitor["left"], monitor["top"], monitor["width"], monitor["height"]))
         )

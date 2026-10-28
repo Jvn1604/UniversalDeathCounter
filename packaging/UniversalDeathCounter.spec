@@ -90,7 +90,7 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=[],
+    excludes=["yaml"],  # a dev tool's (pre-commit) dependency, never imported
     win_no_prefer_redirects=False,
     win_private_assemblies=False,
     cipher=block_cipher,
@@ -118,6 +118,22 @@ _UNUSED_QT = (
     "PySide6/plugins/tls/",
     "PySide6/plugins/platforminputcontexts/",
     "PySide6/plugins/iconengines/",
+    # Platform and touch plugins: Windows only needs qwindows.
+    "PySide6/plugins/platforms/qdirect2d",
+    "PySide6/plugins/platforms/qminimal",
+    "PySide6/plugins/platforms/qoffscreen",
+    "PySide6/plugins/generic/",
+    # Image formats nobody picks as a background (SVG would need Qt6Svg anyway).
+    "PySide6/plugins/imageformats/qtiff",
+    "PySide6/plugins/imageformats/qicns",
+    "PySide6/plugins/imageformats/qpdf",
+    "PySide6/plugins/imageformats/qsvg",
+    "PySide6/plugins/imageformats/qtga",
+    "PySide6/plugins/imageformats/qwbmp",
+    # A second OpenSSL that only Qt's (excluded) networking would load;
+    # Python's own ssl uses libssl-3.dll / libcrypto-3.dll.
+    "libssl-3-x64.dll",
+    "libcrypto-3-x64.dll",
 )
 
 

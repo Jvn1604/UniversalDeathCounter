@@ -21,16 +21,24 @@ import numpy as np
 from PySide6.QtCore import QObject, Signal
 
 from src.detection.game_window import (
+    desktop_clip,
     detection_available,
     find_main_window,
     find_process_ids,
+    grab_into,
     grab_rect,
     is_foreground,
     is_not_responding,
     open_screen_capture,
     window_client_rect,
 )
-from src.detection.matchers import DeathDebouncer, Matcher, is_loading_frame
+from src.detection.matchers import (
+    DeathDebouncer,
+    Matcher,
+    Region,
+    is_loading_frame,
+    pixel_boxes,
+)
 from src.utils.logger import get_logger
 
 try:
@@ -45,7 +53,10 @@ _WINDOW_LOOKUP_INTERVAL: float = 3.0
 _IDLE_POLL_SECONDS: float = 1.0
 _PROCESS_POLL_SECONDS: float = 2.0
 # ~5 s of solid black frames triggers the "use borderless" hint.
-_BLACK_FRAME_LIMIT: int = int(FRAMES_PER_SECOND * 5)
+_BLACK_SECONDS: float = 5.0
+# Between full captures only the parts the matchers read are captured; a
+# full frame still comes this often (recent frames, the black-capture hint).
+_FULL_FRAME_INTERVAL: float = 1.0
 
 
 # What the game is doing, reported for the speedrun timer's auto-pause.
@@ -60,7 +71,7 @@ ACTIVITY_CLOSED = "closed"  # was running, process gone (quit or crash)
 _LOADING_FRAMES: int = 3
 _PAUSE_SCREEN_FRAMES: int = 2
 # Solid black for longer than this is a capture problem, not a load.
-_MAX_BLACK_LOADING_FRAMES: int = int(FRAMES_PER_SECOND * 30)
+_MAX_BLACK_LOADING_SECONDS: float = 30.0
 
 
 # Recent frames kept for "missed a death?" captures: one per second, at most
@@ -68,6 +79,16 @@ _MAX_BLACK_LOADING_FRAMES: int = int(FRAMES_PER_SECOND * 30)
 RECENT_FRAME_COUNT: int = 8
 _RECENT_FRAME_INTERVAL: float = 1.0
 _RECENT_FRAME_MAX_WIDTH: int = 1280
+
+
+def needed_regions(config: WatchConfig) -> list[Region] | None:
+    """What the matchers read, or None when every frame must be captured whole."""
+    if config.watch_activity:
+        return None  # loading screens are judged on the whole frame
+    matchers = [m for m in (config.matcher, config.victory_matcher) if m is not None]
+    if not matchers:
+        return None
+    return [region for matcher in matchers for region in matcher.regions()]
 
 
 @dataclass(slots=True, frozen=True)
@@ -189,10 +210,13 @@ class DeathWatcher(QObject):
         victory_debouncer = DeathDebouncer(required_frames=3, cooldown_seconds=20.0)
         hwnd: int | None = None
         next_lookup = 0.0
-        black_frames = 0
-        next_recent = 0.0
+        black_since: float | None = None
+        next_recent = next_full = 0.0
         ever_seen = False
         loading_frames = pause_frames = 0
+        regions: list[Region] | None = None
+        canvas: np.ndarray | None = None  # full-size frame that region captures fill in
+        boxes: list[tuple[int, int, int, int]] = []
 
         while not self._stop_event.is_set():
             with self._lock:
@@ -206,7 +230,9 @@ class DeathWatcher(QObject):
                 victory_debouncer.reset()
                 if config is not None:
                     debouncer.required_frames = config.required_frames
-                hwnd, next_lookup, black_frames, next_recent = None, 0.0, 0, 0.0
+                regions = needed_regions(config) if config is not None else None
+                canvas = None
+                hwnd, next_lookup, black_since, next_recent, next_full = None, 0.0, None, 0.0, 0.0
                 ever_seen, loading_frames, pause_frames = False, 0, 0
                 self._last_activity = ""
 
@@ -245,16 +271,31 @@ class DeathWatcher(QObject):
                 self._stop_event.wait(_IDLE_POLL_SECONDS)
                 continue
 
-            frame = grab_rect(sct, rect)
             now = time.monotonic()
-            if now >= next_recent:
-                next_recent = now + _RECENT_FRAME_INTERVAL
-                step = max(1, math.ceil(frame.shape[1] / _RECENT_FRAME_MAX_WIDTH))
-                with self._lock:
-                    self._recent_frames.append((now, frame[::step, ::step].copy()))
+            on_screen = desktop_clip(sct, rect) == rect
+            if regions is None or not on_screen or now >= next_full:
+                frame = grab_rect(sct, rect)
+                next_full = now + _FULL_FRAME_INTERVAL
+                if now >= next_recent:
+                    next_recent = now + _RECENT_FRAME_INTERVAL
+                    step = max(1, math.ceil(frame.shape[1] / _RECENT_FRAME_MAX_WIDTH))
+                    with self._lock:
+                        self._recent_frames.append((now, frame[::step, ::step].copy()))
+                if int(frame[::4, ::4].max()) < 8:
+                    black_since = now if black_since is None else black_since
+                else:
+                    black_since = None
+            else:
+                height, width = rect[3], rect[2]
+                if canvas is None or canvas.shape[:2] != (height, width):
+                    canvas = np.zeros((height, width, 3), dtype=np.uint8)
+                    boxes = pixel_boxes(regions, width, height)
+                for box in boxes:
+                    grab_into(sct, (rect[0], rect[1]), box, canvas)
+                frame = canvas
+            black_for = now - black_since if black_since is not None else 0.0
 
-            black_frames = black_frames + 1 if int(frame.max()) < 8 else 0
-            if black_frames >= _BLACK_FRAME_LIMIT:
+            if black_for >= _BLACK_SECONDS:
                 self._set_status(
                     f"Capture of {exe_name} is black. Switch the game to borderless/windowed."
                 )
@@ -264,7 +305,7 @@ class DeathWatcher(QObject):
                 self._set_status(f"Watching {exe_name} for deaths")
 
             if config.watch_activity:
-                loading = is_loading_frame(frame) and black_frames < _MAX_BLACK_LOADING_FRAMES
+                loading = is_loading_frame(frame) and black_for < _MAX_BLACK_LOADING_SECONDS
                 loading_frames = loading_frames + 1 if loading else 0
                 paused = config.pause_matcher is not None and config.pause_matcher.match(
                     frame

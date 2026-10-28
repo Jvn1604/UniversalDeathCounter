@@ -70,6 +70,53 @@ class Matcher(Protocol):
         """Return ``(is_death_screen, score)`` for an RGB frame."""
         ...
 
+    def regions(self) -> list[Region]:
+        """The parts of the frame :meth:`match` reads (the watcher captures only these)."""
+        ...
+
+
+def pixel_box(regions: Iterable[Region], width: int, height: int) -> tuple[int, int, int, int]:
+    """
+    ``(left, top, right, bottom)`` pixels covering every region of a
+    ``width`` x ``height`` frame, exactly as :func:`crop_region` cuts them.
+    """
+    boxes = []
+    for x, y, w, h in regions:
+        left = min(max(int(round(x * width)), 0), width - 1)
+        top = min(max(int(round(y * height)), 0), height - 1)
+        right = min(max(int(round((x + w) * width)), left + 1), width)
+        bottom = min(max(int(round((y + h) * height)), top + 1), height)
+        boxes.append((left, top, right, bottom))
+    if not boxes:
+        return 0, 0, width, height
+    return _union(boxes)
+
+
+def _union(boxes: list[tuple[int, int, int, int]]) -> tuple[int, int, int, int]:
+    return (
+        min(b[0] for b in boxes),
+        min(b[1] for b in boxes),
+        max(b[2] for b in boxes),
+        max(b[3] for b in boxes),
+    )
+
+
+def _area(box: tuple[int, int, int, int]) -> int:
+    return (box[2] - box[0]) * (box[3] - box[1])
+
+
+def pixel_boxes(regions: list[Region], width: int, height: int) -> list[tuple[int, int, int, int]]:
+    """
+    Boxes to capture so every region is covered: one box around all of them,
+    or one per region when that's clearly less screen (regions far apart,
+    like the Souls preset's middle band and top/bottom edges).
+    """
+    separate = [pixel_box([region], width, height) for region in regions]
+    union = pixel_box(regions, width, height)
+    if len(separate) > 1 and sum(_area(b) for b in separate) < 0.8 * _area(union):
+        return separate
+    return [union]
+
 
 # ----------------------------------------------------------------
 # Image helpers
@@ -202,6 +249,9 @@ class TemplateMatcher:
         score = normalized_correlation(patch, self._template.patch)
         return score >= self._threshold, score
 
+    def regions(self) -> list[Region]:
+        return [self._template.region]
+
 
 # ----------------------------------------------------------------
 # Souls preset — red death text in the middle of the screen
@@ -240,6 +290,9 @@ class SoulsPresetMatcher:
             and band >= edge * self._BAND_TO_EDGE_RATIO
         )
         return matched, band
+
+    def regions(self) -> list[Region]:
+        return [self._BAND, *self._EDGES]
 
 
 # ----------------------------------------------------------------
@@ -354,6 +407,9 @@ class HealthBarMatcher:
         )
         return matched, fill
 
+    def regions(self) -> list[Region]:
+        return [self._bar.region]
+
 
 # ----------------------------------------------------------------
 # Loading screens — for the speedrun timer's game time
@@ -403,6 +459,9 @@ class AnyMatcher:
                 return True, score
             best = max(best, score)
         return False, best
+
+    def regions(self) -> list[Region]:
+        return [region for matcher in self._matchers for region in matcher.regions()]
 
 
 def build_matcher(
