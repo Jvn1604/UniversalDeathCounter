@@ -55,3 +55,27 @@ def test_window_uses_new_branding(window) -> None:
     assert APP_NAME == "DePhantom Universal Death Counter"
     assert window.windowTitle() == APP_NAME
     assert window._overlay.windowTitle() == "DUDC Overlay"
+
+
+class _StrictTray:
+    """Stands in for QSystemTrayIcon with showMessage's real 4-argument signature."""
+
+    def __init__(self) -> None:
+        self.messages: list[str] = []
+
+    def showMessage(self, title, message, icon, msecs) -> None:  # noqa: N802
+        assert isinstance(title, str) and isinstance(message, str)
+        assert isinstance(msecs, int)
+        self.messages.append(message)
+
+
+def test_tray_notifications_use_valid_arguments(window) -> None:
+    """Regression: stray extra arguments made every tray notification raise TypeError."""
+    tray = _StrictTray()
+    real_tray, window._tray = window._tray, tray
+    window._toggle_detection_pause()
+    window._toggle_detection_pause()
+    window._on_update_available("9.9.9", "https://example.invalid")
+    assert tray.messages[:2] == ["Auto-detect paused", "Auto-detect resumed"]
+    window._tray = real_tray
+    assert "9.9.9" in tray.messages[2]
