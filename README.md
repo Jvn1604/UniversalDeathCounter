@@ -21,7 +21,7 @@ A free, open-source death counter for Soulslike games, challenge runs, speedruns
 - **Session history** — review every past run per game, with per-session death counts and one-click delete
 - **Backup & restore** — export all your data to a single JSON file and import it back (or onto another PC) anytime
 - **Clear all data** — full reset in one confirmed action, with settings preserved
-- **Global hotkeys** — `F9` (+1), `F10` (-1), `F11` (Undo), `Ctrl+F12` (Toggle Overlay), `F8` (Calibrate death screen) work even while your game is focused. They use Windows' own hotkey API (no keyboard hook), so they only ever see their own key combos
+- **Global hotkeys** — `F9` (+1), `F10` (-1), `F11` (Undo), `Ctrl+F12` (Toggle Overlay), `F8` (Calibrate death screen), `Ctrl+F8` (Pause/resume auto-detect) work even while your game is focused, and the buttons always show your current bindings. They use Windows' own hotkey API (no keyboard hook), so they only ever see their own key combos
 - **OBS-ready overlay** — transparent, frameless, resizable, movable window for Window Capture — **plus a chroma-key green mode** for color-key filters
 - **Overlay customization** — pick the counter color, font size, which number the big counter shows (session / boss / total), and toggle each line (game, boss, stats) on or off
 - **deaths.txt for OBS Text Sources** — writes a fully customizable template like `{game} - {boss}: {deaths}` to a text file on every change, so streamers can skip window capture entirely
@@ -101,7 +101,9 @@ python -m src.app
      - Press `F8` while the death screen is showing.
      - Afterwards, click **📷 Death Screen…**, pick the frame from the last few seconds, and drag a box around the death text. You can also load a screenshot file or paste one, e.g. from Win+Shift+S.
    - If a death is ever missed, use **📷 Death Screen…** again. It saves another death screen (any saved one counts) and can add the missed +1.
-   - When you launch a configured game, the app switches to it automatically.
+   - When you launch a configured game, the app switches to it automatically and starts a fresh session; closing the game ends that session. So **Session** always means "this play session".
+   - Cutscenes, co-op, or watching someone else play? **⏸ Pause** (or `Ctrl+F8`) stops auto-detection until you resume.
+   - The app reopens on the game and boss you used last.
    - Run games in **borderless or windowed** mode, since exclusive fullscreen can capture as black. **Auto-Detect…** (also under **Manage → Auto Death Detection…**) changes the exe, the method, the saved death screens, and the cooldown.
 5. Beat a boss? Select it in **Manage → Games & Bosses…** and hit **Toggle Defeated ✓** — your "deaths until victory" number is captured permanently.
 6. Open **Manage → Games & Bosses… → Session History** to review or delete individual past runs for a game.

@@ -46,8 +46,14 @@ def test_hotkey_message_reaches_signal_and_unregisters() -> None:
 
     app = QCoreApplication.instance() or QCoreApplication([])
     # Obscure combos so the test never clashes with real hotkeys.
-    manager = HotkeyManager("ctrl+alt+shift+f20", "ctrl+alt+shift+f21",
-                            "ctrl+alt+shift+f22", "ctrl+alt+shift+f23", "ctrl+alt+shift+f24")
+    manager = HotkeyManager(
+        increment_key="ctrl+alt+shift+f20",
+        decrement_key="ctrl+alt+shift+f21",
+        undo_key="ctrl+alt+shift+f22",
+        toggle_overlay_key="ctrl+alt+shift+f23",
+        calibrate_key="ctrl+alt+shift+f24",
+        pause_detection_key="ctrl+alt+shift+f19",
+    )
     fired: list[str] = []
     failed: list = []
     manager.increment_triggered.connect(lambda: fired.append("increment"))

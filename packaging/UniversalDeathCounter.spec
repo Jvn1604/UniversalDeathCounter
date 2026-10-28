@@ -97,6 +97,38 @@ a = Analysis(
     noarchive=False,
 )
 
+# Keep the install lightweight: drop Qt parts the app never loads. At runtime
+# the app needs only Qt Core/Gui/Widgets plus Charts (which itself loads
+# Qt6OpenGL + Qt6OpenGLWidgets). PyInstaller's PySide6 hooks still bundle
+# QML/Quick, PDF, Network, the virtual keyboard, the ~20 MB software OpenGL
+# renderer (opengl32sw.dll), and translations, so filter them out here.
+_UNUSED_QT = (
+    "opengl32sw.dll",
+    "Qt6Quick",
+    "Qt6Qml",
+    "Qt6Pdf",
+    "Qt6Network",
+    "Qt6VirtualKeyboard",
+    "Qt6Svg",
+    "PySide6/QtOpenGL.pyd",
+    "PySide6/QtOpenGLWidgets.pyd",
+    "PySide6/QtNetwork.pyd",
+    "PySide6/translations/",
+    "PySide6/plugins/networkinformation/",
+    "PySide6/plugins/tls/",
+    "PySide6/plugins/platforminputcontexts/",
+    "PySide6/plugins/iconengines/",
+)
+
+
+def _is_unused_qt(dest_path):
+    path = dest_path.replace("\\", "/")
+    return any(part in path for part in _UNUSED_QT)
+
+
+a.binaries = [entry for entry in a.binaries if not _is_unused_qt(entry[0])]
+a.datas = [entry for entry in a.datas if not _is_unused_qt(entry[0])]
+
 pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 
 exe = EXE(

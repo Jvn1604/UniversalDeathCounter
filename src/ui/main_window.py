@@ -13,7 +13,7 @@ from datetime import datetime
 from pathlib import Path
 
 from PySide6.QtCore import Qt, QTimer
-from PySide6.QtGui import QIcon
+from PySide6.QtGui import QIcon, QKeySequence
 from PySide6.QtWidgets import (
     QComboBox,
     QFileDialog,
@@ -60,6 +60,7 @@ from src.ui.settings_window import SettingsWindow
 from src.ui.statistics_window import StatisticsWindow
 from src.utils.constants import (
     APP_NAME,
+    DEFAULT_HOTKEY_PAUSE_DETECTION,
     DEFAULT_HOTKEY_TOGGLE_OVERLAY,
     DETECTION_MODE_OFF,
     DETECTION_MODE_SOULS,
@@ -74,8 +75,11 @@ from src.utils.constants import (
     SETTING_HOTKEY_CALIBRATE,
     SETTING_HOTKEY_DECREMENT,
     SETTING_HOTKEY_INCREMENT,
+    SETTING_HOTKEY_PAUSE_DETECTION,
     SETTING_HOTKEY_TOGGLE_OVERLAY,
     SETTING_HOTKEY_UNDO,
+    SETTING_LAST_BOSS_ID,
+    SETTING_LAST_GAME_ID,
     SETTING_MINIMIZE_TO_TRAY,
     SETTING_OVERLAY_ALWAYS_ON_TOP,
     SETTING_OVERLAY_COUNTER_SOURCE,
@@ -115,6 +119,7 @@ class MainWindow(QMainWindow):
         self._statistics_service = StatisticsService(self._database)
         self._overlay = OverlayWindow()
         self._death_watcher = DeathWatcher(parent=self)
+        self._detection_paused = False  # not persisted: every launch starts active
         self._quitting = False
 
         self._update_window_title()
@@ -231,7 +236,10 @@ class MainWindow(QMainWindow):
         death_screen_button.clicked.connect(self._open_death_screen_dialog)
         detect_button = QPushButton("Auto-Detect…")
         detect_button.clicked.connect(self._open_auto_detect_window)
+        self._pause_btn = QPushButton("⏸ Pause")
+        self._pause_btn.clicked.connect(self._toggle_detection_pause)
         detect_layout.addLayout(detect_text_layout, 1)
+        detect_layout.addWidget(self._pause_btn)
         detect_layout.addWidget(death_screen_button)
         detect_layout.addWidget(detect_button)
         root_layout.addLayout(detect_layout)
@@ -259,16 +267,17 @@ class MainWindow(QMainWindow):
         root_layout.addWidget(card)
 
         action_layout = QHBoxLayout()
-        plus_btn = QPushButton("+1 Death  (F9)")
-        plus_btn.setObjectName("AccentButton")
-        plus_btn.clicked.connect(self._on_increment)
-        minus_btn = QPushButton("-1 Death  (F10)")
-        minus_btn.clicked.connect(self._on_decrement)
-        undo_btn = QPushButton("Undo  (F11)")
-        undo_btn.clicked.connect(self._on_undo)
-        action_layout.addWidget(plus_btn)
-        action_layout.addWidget(minus_btn)
-        action_layout.addWidget(undo_btn)
+        # Labels get the current hotkeys from _update_hotkey_labels().
+        self._plus_btn = QPushButton()
+        self._plus_btn.setObjectName("AccentButton")
+        self._plus_btn.clicked.connect(self._on_increment)
+        self._minus_btn = QPushButton()
+        self._minus_btn.clicked.connect(self._on_decrement)
+        self._undo_btn = QPushButton()
+        self._undo_btn.clicked.connect(self._on_undo)
+        action_layout.addWidget(self._plus_btn)
+        action_layout.addWidget(self._minus_btn)
+        action_layout.addWidget(self._undo_btn)
         root_layout.addLayout(action_layout)
 
         reset_layout = QGridLayout()
@@ -344,25 +353,46 @@ class MainWindow(QMainWindow):
     # ----------------------------------------------------------------
     # Hotkeys / settings
     # ----------------------------------------------------------------
-    def _setup_hotkeys(self) -> None:
+    def _hotkey_bindings(self) -> dict[str, str]:
+        """Current hotkey combos from settings, as HotkeyManager keyword args."""
         settings = self._database.get_all_settings()
-        self._hotkey_manager = HotkeyManager(
-            increment_key=settings.get(SETTING_HOTKEY_INCREMENT, "f9"),
-            decrement_key=settings.get(SETTING_HOTKEY_DECREMENT, "f10"),
-            undo_key=settings.get(SETTING_HOTKEY_UNDO, "f11"),
-            toggle_overlay_key=settings.get(
+        return {
+            "increment_key": settings.get(SETTING_HOTKEY_INCREMENT, "f9"),
+            "decrement_key": settings.get(SETTING_HOTKEY_DECREMENT, "f10"),
+            "undo_key": settings.get(SETTING_HOTKEY_UNDO, "f11"),
+            "toggle_overlay_key": settings.get(
                 SETTING_HOTKEY_TOGGLE_OVERLAY, DEFAULT_HOTKEY_TOGGLE_OVERLAY
             ),
-            calibrate_key=settings.get(SETTING_HOTKEY_CALIBRATE, "f8"),
-            parent=self,
+            "calibrate_key": settings.get(SETTING_HOTKEY_CALIBRATE, "f8"),
+            "pause_detection_key": settings.get(
+                SETTING_HOTKEY_PAUSE_DETECTION, DEFAULT_HOTKEY_PAUSE_DETECTION
+            ),
+        }
+
+    def _update_hotkey_labels(self, bindings: dict[str, str]) -> None:
+        def shown(key: str) -> str:
+            return QKeySequence(key).toString(QKeySequence.SequenceFormat.NativeText) or key
+
+        self._plus_btn.setText(f"+1 Death  ({shown(bindings['increment_key'])})")
+        self._minus_btn.setText(f"-1 Death  ({shown(bindings['decrement_key'])})")
+        self._undo_btn.setText(f"Undo  ({shown(bindings['undo_key'])})")
+        self._pause_btn.setToolTip(
+            f"Pause/resume auto-detection ({shown(bindings['pause_detection_key'])}), "
+            "e.g. during cutscenes or co-op."
         )
+
+    def _setup_hotkeys(self) -> None:
+        bindings = self._hotkey_bindings()
+        self._hotkey_manager = HotkeyManager(**bindings, parent=self)
         self._hotkey_manager.increment_triggered.connect(self._on_increment)
         self._hotkey_manager.decrement_triggered.connect(self._on_decrement)
         self._hotkey_manager.undo_triggered.connect(self._on_undo)
         self._hotkey_manager.toggle_overlay_triggered.connect(self._toggle_overlay)
         self._hotkey_manager.calibrate_triggered.connect(self._on_calibrate_hotkey)
+        self._hotkey_manager.pause_detection_triggered.connect(self._toggle_detection_pause)
         self._hotkey_manager.registration_failed.connect(self._on_hotkeys_failed)
         self._hotkey_manager.start()
+        self._update_hotkey_labels(bindings)
 
     def _on_hotkeys_failed(self, failures: list) -> None:
         labels = {
@@ -371,6 +401,7 @@ class MainWindow(QMainWindow):
             "undo": "Undo",
             "toggle_overlay": "Toggle Overlay",
             "calibrate": "Calibrate Death Screen",
+            "pause_detection": "Pause Auto-Detect",
         }
         keys = ", ".join(
             f"{key.upper()} ({labels.get(action, action)})" for action, key in failures
@@ -417,6 +448,10 @@ class MainWindow(QMainWindow):
                 "Auto-detect needs Windows" if not detection_available() else "Auto-detect off"
             )
             return
+        if self._detection_paused:
+            self._death_watcher.configure(None)
+            self._detect_status_label.setText("Auto-detect paused")
+            return
         templates = [
             (t["region"], t["template"]) for t in self._database.get_death_templates(game_id)
         ]
@@ -429,29 +464,62 @@ class MainWindow(QMainWindow):
             cooldown_seconds=cooldown,
         )
 
+    def _toggle_detection_pause(self) -> None:
+        self._detection_paused = not self._detection_paused
+        self._pause_btn.setText("▶ Resume" if self._detection_paused else "⏸ Pause")
+        self._configure_detection()
+        if self._tray is not None:  # the hotkey is usually pressed in-game
+            self._tray.showMessage(
+                APP_NAME,
+                "Auto-detect paused" if self._detection_paused else "Auto-detect resumed",
+                QSystemTrayIcon.MessageIcon.Information,
+                2000,
+            )
+
     def _check_game_launches(self) -> None:
-        """Select a configured game when its exe starts (not while the current one runs)."""
+        """
+        Follow configured games starting and stopping (polled every few seconds).
+
+        A game launching gets selected (unless the current game is running)
+        and starts a fresh session; the current game exiting ends its session,
+        so "Session" deaths always mean this play session.
+        """
         configs = {
             row["exe_path"]: row["game_id"] for row in self._database.get_all_game_detections()
         }
         running = {configs[path] for path in running_exe_paths(list(configs))}
         newly_started = running - self._running_game_ids
+        stopped = self._running_game_ids - running
         self._running_game_ids = running
         current = self._counter_manager.current_game_id
-        if not newly_started or current in running:
+
+        if current in stopped:
+            self._session_manager.end_current_session()
+            self._refresh_counters()
+        if not newly_started:
             return
-        game_id = min(newly_started)
-        index = self._game_combo.findData(game_id)
-        if index < 0:
-            return
-        self._game_combo.setCurrentIndex(index)
-        if self._tray is not None:
-            self._tray.showMessage(
-                APP_NAME,
-                f"{self._game_combo.itemText(index)} started: now counting its deaths.",
-                QSystemTrayIcon.MessageIcon.Information,
-                4000,
-            )
+        if current not in running:
+            index = self._game_combo.findData(min(newly_started))
+            if index >= 0:
+                self._game_combo.setCurrentIndex(index)
+                if self._tray is not None:
+                    self._tray.showMessage(
+                        APP_NAME,
+                        f"{self._game_combo.itemText(index)} started: now counting its deaths.",
+                        QSystemTrayIcon.MessageIcon.Information,
+                        4000,
+                    )
+            current = self._counter_manager.current_game_id
+        if current in newly_started:
+            self._start_play_session(current)
+
+    def _start_play_session(self, game_id: int) -> None:
+        """Begin a new session for a game launch, reusing a still-empty one."""
+        sessions = self._session_manager
+        if sessions.current_game_id == game_id and sessions.get_session_deaths() == 0:
+            return  # e.g. the app was just opened on this game: no empty duplicate
+        sessions.start_new_session(game_id)
+        self._refresh_counters()
 
     def _save_death_template(self, game_id: int, template: DeathTemplate) -> None:
         """Store a new death screen and turn detection on for the game if needed."""
@@ -647,6 +715,8 @@ class MainWindow(QMainWindow):
         self._game_combo.addItem(_ADD_GAME_LABEL, userData=_ADD_GAME_SENTINEL)
         self._game_combo.blockSignals(False)
         if games:
+            if select_game_id is None:  # reopen on the game used last time
+                select_game_id = self._saved_id(SETTING_LAST_GAME_ID)
             index = max(self._game_combo.findData(select_game_id), 0)
             self._game_combo.blockSignals(True)
             self._game_combo.setCurrentIndex(index)
@@ -661,6 +731,11 @@ class MainWindow(QMainWindow):
             self._refresh_counters()
             self._configure_detection()
 
+    def _saved_id(self, setting_key: str) -> int | None:
+        """Read an id stored in the settings table (empty/invalid -> None)."""
+        value = self._database.get_setting(setting_key, "")
+        return int(value) if value.isdigit() else None
+
     def _reload_bosses(self, game_id: int | None) -> None:
         self._boss_combo.blockSignals(True)
         self._boss_combo.clear()
@@ -669,8 +744,11 @@ class MainWindow(QMainWindow):
             for boss in self._database.get_bosses(game_id):
                 prefix = "✓ " if boss["defeated"] else ""
                 self._boss_combo.addItem(f"{prefix}{boss['name']}", userData=boss["id"])
+        # Re-select the last boss if it belongs to this game.
+        index = max(self._boss_combo.findData(self._saved_id(SETTING_LAST_BOSS_ID)), 0)
+        self._boss_combo.setCurrentIndex(index)
         self._boss_combo.blockSignals(False)
-        self._on_boss_changed(0)
+        self._on_boss_changed(index)
 
     # ----------------------------------------------------------------
     # Selector event handlers
@@ -699,7 +777,8 @@ class MainWindow(QMainWindow):
             boss = self._database.get_boss(boss_id)
             boss_name = boss["name"] if boss is not None else None
         else:
-            boss_name = None
+            boss_id, boss_name = None, None
+            self._database.set_setting(SETTING_LAST_BOSS_ID, "")  # "(No Boss)" is a choice too
         self._counter_manager.set_current_boss(boss_id, boss_name)
         self._refresh_counters()
 
@@ -871,16 +950,9 @@ class MainWindow(QMainWindow):
         self._refresh_counters()
 
     def _on_settings_changed_hotkeys(self) -> None:
-        settings = self._database.get_all_settings()
-        self._hotkey_manager.update_bindings(
-            increment_key=settings.get(SETTING_HOTKEY_INCREMENT, "f9"),
-            decrement_key=settings.get(SETTING_HOTKEY_DECREMENT, "f10"),
-            undo_key=settings.get(SETTING_HOTKEY_UNDO, "f11"),
-            toggle_overlay_key=settings.get(
-                SETTING_HOTKEY_TOGGLE_OVERLAY, DEFAULT_HOTKEY_TOGGLE_OVERLAY
-            ),
-            calibrate_key=settings.get(SETTING_HOTKEY_CALIBRATE, "f8"),
-        )
+        bindings = self._hotkey_bindings()
+        self._hotkey_manager.update_bindings(**bindings)
+        self._update_hotkey_labels(bindings)
 
     def _toggle_overlay(self) -> None:
         self._overlay.toggle_visibility()
