@@ -41,6 +41,7 @@ from src.utils.constants import (
     SETTING_HOTKEY_CALIBRATE,
     SETTING_HOTKEY_DECREMENT,
     SETTING_HOTKEY_INCREMENT,
+    SETTING_HOTKEY_PAUSE_DETECTION,
     SETTING_HOTKEY_TOGGLE_OVERLAY,
     SETTING_HOTKEY_UNDO,
     SETTING_MINIMIZE_TO_TRAY,
@@ -185,6 +186,8 @@ class SettingsWindow(QDialog):
         hotkey_form.addRow("Toggle Overlay", self._hotkey_toggle_overlay)
         self._hotkey_calibrate = QKeySequenceEdit()
         hotkey_form.addRow("Calibrate Death Screen", self._hotkey_calibrate)
+        self._hotkey_pause_detection = QKeySequenceEdit()
+        hotkey_form.addRow("Pause Auto-Detect", self._hotkey_pause_detection)
         layout.addWidget(hotkey_group)
 
         save_button = QPushButton("Save")
@@ -258,6 +261,9 @@ class SettingsWindow(QDialog):
             settings.get(SETTING_HOTKEY_TOGGLE_OVERLAY, "Ctrl+F12")
         )
         self._hotkey_calibrate.setKeySequence(settings.get(SETTING_HOTKEY_CALIBRATE, "F8"))
+        self._hotkey_pause_detection.setKeySequence(
+            settings.get(SETTING_HOTKEY_PAUSE_DETECTION, "Ctrl+F8")
+        )
 
     def _save(self) -> None:
         db = self._database
@@ -312,6 +318,7 @@ class SettingsWindow(QDialog):
             (SETTING_HOTKEY_UNDO, self._hotkey_undo),
             (SETTING_HOTKEY_TOGGLE_OVERLAY, self._hotkey_toggle_overlay),
             (SETTING_HOTKEY_CALIBRATE, self._hotkey_calibrate),
+            (SETTING_HOTKEY_PAUSE_DETECTION, self._hotkey_pause_detection),
         ):
             sequence_text = edit.keySequence().toString().lower()
             if sequence_text:

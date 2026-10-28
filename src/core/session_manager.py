@@ -32,6 +32,11 @@ class SessionManager:
         """The id of the currently active session, if any."""
         return self._current_session_id
 
+    @property
+    def current_game_id(self) -> int | None:
+        """The game the active session belongs to, if any."""
+        return self._current_game_id
+
     def start_new_session(self, game_id: int) -> int:
         """
         End any existing session and start a fresh one for ``game_id``.
