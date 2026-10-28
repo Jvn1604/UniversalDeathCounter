@@ -44,6 +44,12 @@ if DETECTION_SUPPORTED:
 Rect = tuple[int, int, int, int]  # left, top, width, height in screen pixels
 
 
+def open_screen_capture() -> mss.base.MSSBase:
+    """A screen-capture context (``mss.MSS`` in mss 10.2+, ``mss.mss`` before)."""
+    factory = getattr(mss, "MSS", None) or mss.mss
+    return factory()
+
+
 def detection_available() -> bool:
     """True if this platform and environment can run auto-detection."""
     return DETECTION_SUPPORTED and _DEPENDENCIES_AVAILABLE
@@ -229,7 +235,7 @@ def capture_game_frame(exe_path: str | None) -> np.ndarray | None:
     """
     if not detection_available():
         return None
-    with mss.mss() as sct:
+    with open_screen_capture() as sct:
         if exe_path:
             hwnd = find_main_window(find_process_ids(exe_path))
             rect = window_client_rect(hwnd) if hwnd is not None else None

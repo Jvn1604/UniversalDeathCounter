@@ -13,7 +13,7 @@ from datetime import datetime
 from pathlib import Path
 
 from PySide6.QtCore import QByteArray, Qt, QTimer
-from PySide6.QtGui import QGuiApplication, QIcon, QKeySequence, QScreen
+from PySide6.QtGui import QGuiApplication, QIcon, QKeySequence, QPixmap, QScreen
 from PySide6.QtWidgets import (
     QComboBox,
     QFileDialog,
@@ -57,10 +57,13 @@ from src.ui.auto_detect_window import (
 )
 from src.ui.boss_window import BossWindow
 from src.ui.death_log_window import DeathLogWindow
+from src.ui.obs_guide_window import ObsGuideWindow
 from src.ui.settings_window import SettingsWindow
 from src.ui.statistics_window import StatisticsWindow
 from src.utils.constants import (
+    APP_BRAND,
     APP_NAME,
+    APP_SUBTITLE,
     CONTROL_ACTIONS,
     DETECTION_MODE_OFF,
     DETECTION_MODE_SOULS,
@@ -79,6 +82,7 @@ from src.utils.constants import (
     SETTING_MAIN_WINDOW_GEOMETRY,
     SETTING_MINIMIZE_TO_TRAY,
     SETTING_OVERLAY_ALWAYS_ON_TOP,
+    SETTING_OVERLAY_BG_MODE,
     SETTING_OVERLAY_COUNTER_SOURCE,
     SETTING_OVERLAY_GEOMETRY,
     SETTING_THEME,
@@ -106,7 +110,7 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.setMinimumSize(480, 460)
 
-        icon_path = ICONS_DIR / "app_icon.png"
+        icon_path = ICONS_DIR / "app_icon.ico"  # multi-size: crisp in title bar and tray
         self._app_icon = QIcon(str(icon_path)) if icon_path.exists() else QIcon()
         self.setWindowIcon(self._app_icon)
 
@@ -182,6 +186,9 @@ class MainWindow(QMainWindow):
         settings_action.triggered.connect(self._open_settings_window)
 
         help_menu = menu_bar.addMenu("&Help")
+        obs_action = help_menu.addAction("Set Up OBS Overlay…")
+        obs_action.triggered.connect(self._open_obs_guide)
+        help_menu.addSeparator()
         about_action = help_menu.addAction("About")
         about_action.triggered.connect(self._open_about_window)
 
@@ -207,9 +214,23 @@ class MainWindow(QMainWindow):
         root_layout.setContentsMargins(20, 20, 20, 20)
         root_layout.setSpacing(16)
 
-        title_label = QLabel(APP_NAME)
+        header = QHBoxLayout()
+        header.setSpacing(12)
+        logo_label = QLabel()
+        logo = QPixmap(str(ICONS_DIR / "app_icon_48.png"))
+        if not logo.isNull():
+            logo_label.setPixmap(logo)
+        title_layout = QVBoxLayout()
+        title_layout.setSpacing(0)
+        title_label = QLabel(APP_BRAND)
         title_label.setObjectName("TitleLabel")
-        root_layout.addWidget(title_label)
+        subtitle_label = QLabel(APP_SUBTITLE)
+        subtitle_label.setStyleSheet("color: #b56cff; font-size: 12px; font-weight: 600;")
+        title_layout.addWidget(title_label)
+        title_layout.addWidget(subtitle_label)
+        header.addWidget(logo_label)
+        header.addLayout(title_layout, 1)
+        root_layout.addLayout(header)
 
         selector_layout = QHBoxLayout()
         self._game_combo = QComboBox()
@@ -503,7 +524,9 @@ class MainWindow(QMainWindow):
         self._configure_detection()
         if self._tray is not None:  # the hotkey is usually pressed in-game
             self._tray.showMessage(
-                APP_NAME,
+                APP_BRAND,
+    APP_NAME,
+    APP_SUBTITLE,
     CONTROL_ACTIONS,
                 "Auto-detect paused" if self._detection_paused else "Auto-detect resumed",
                 QSystemTrayIcon.MessageIcon.Information,
@@ -538,7 +561,9 @@ class MainWindow(QMainWindow):
                 self._game_combo.setCurrentIndex(index)
                 if self._tray is not None:
                     self._tray.showMessage(
-                        APP_NAME,
+                        APP_BRAND,
+    APP_NAME,
+    APP_SUBTITLE,
     CONTROL_ACTIONS,
                         f"{self._game_combo.itemText(index)} started: now counting its deaths.",
                         QSystemTrayIcon.MessageIcon.Information,
@@ -654,7 +679,9 @@ class MainWindow(QMainWindow):
     def _on_update_available(self, latest: str, url: str) -> None:
         if self._tray is not None:
             self._tray.showMessage(
-                APP_NAME,
+                APP_BRAND,
+    APP_NAME,
+    APP_SUBTITLE,
     CONTROL_ACTIONS,
                 f"Version {latest} is available! Get it at:\n{url}",
                 QSystemTrayIcon.MessageIcon.Information,
@@ -753,7 +780,9 @@ class MainWindow(QMainWindow):
         if games:
             if select_game_id is None:  # reopen on the game used last time
                 select_game_id = self._saved_id(SETTING_LAST_GAME_ID)
-            index = max(self._game_combo.findData(select_game_id), 0)
+            # findData(None) would match the separator, so only look up real ids.
+            index = self._game_combo.findData(select_game_id) if select_game_id else -1
+            index = max(index, 0)
             self._game_combo.blockSignals(True)
             self._game_combo.setCurrentIndex(index)
             self._game_combo.blockSignals(False)
@@ -781,7 +810,8 @@ class MainWindow(QMainWindow):
                 prefix = "✓ " if boss["defeated"] else ""
                 self._boss_combo.addItem(f"{prefix}{boss['name']}", userData=boss["id"])
         # Re-select the last boss if it belongs to this game.
-        index = max(self._boss_combo.findData(self._saved_id(SETTING_LAST_BOSS_ID)), 0)
+        last_boss = self._saved_id(SETTING_LAST_BOSS_ID)
+        index = max(self._boss_combo.findData(last_boss), 0) if last_boss else 0
         self._boss_combo.setCurrentIndex(index)
         self._boss_combo.blockSignals(False)
         self._on_boss_changed(index)
@@ -871,11 +901,14 @@ class MainWindow(QMainWindow):
         self._overlay.update_counters(snapshot)
         self._write_deaths_txt(snapshot)
 
+    def _deaths_txt_path(self) -> Path:
+        raw_path = self._database.get_setting(SETTING_DEATHS_TXT_PATH, "").strip()
+        return Path(raw_path) if raw_path else SAVES_DIR / "deaths.txt"
+
     def _write_deaths_txt(self, snapshot: CounterSnapshot) -> None:
         if self._database.get_setting(SETTING_DEATHS_TXT_ENABLED, "false") != "true":
             return
-        raw_path = self._database.get_setting(SETTING_DEATHS_TXT_PATH, "").strip()
-        path = Path(raw_path) if raw_path else SAVES_DIR / "deaths.txt"
+        path = self._deaths_txt_path()
         template = self._database.get_setting(
             SETTING_DEATHS_TXT_TEMPLATE, "{game} - {boss}: {deaths}"
         )
@@ -985,6 +1018,30 @@ class MainWindow(QMainWindow):
     def _open_about_window(self) -> None:
         AboutWindow(parent=self).exec()
 
+    def _open_obs_guide(self) -> None:
+        key = self._hotkey_bindings()["toggle_overlay_key"]
+        shown = QKeySequence(key).toString(QKeySequence.SequenceFormat.NativeText)
+        ObsGuideWindow(
+            overlay_hotkey=shown,
+            deaths_txt_path=self._deaths_txt_path(),
+            show_overlay_green=self._show_overlay_for_obs,
+            enable_deaths_txt=self._enable_deaths_txt,
+            parent=self,
+        ).exec()
+
+    def _show_overlay_for_obs(self) -> None:
+        """Green-screen background (for OBS's Chroma Key) and make the overlay visible."""
+        self._database.set_setting(SETTING_OVERLAY_BG_MODE, "chroma")
+        self._apply_saved_settings()
+        self._overlay.keep_on_screen()
+        self._overlay.show()
+        self._overlay.raise_()
+
+    def _enable_deaths_txt(self) -> None:
+        """Turn on deaths.txt output and write it immediately so OBS can find it."""
+        self._database.set_setting(SETTING_DEATHS_TXT_ENABLED, "true")
+        self._refresh_counters()
+
     def _on_settings_changed(self) -> None:
         self._apply_saved_settings()
         self._on_settings_changed_hotkeys()
@@ -1070,7 +1127,9 @@ class MainWindow(QMainWindow):
             event.ignore()
             self.hide()
             self._tray.showMessage(
-                APP_NAME,
+                APP_BRAND,
+    APP_NAME,
+    APP_SUBTITLE,
     CONTROL_ACTIONS,
                 "Still running in the tray — hotkeys stay active. Right-click to quit.",
                 QSystemTrayIcon.MessageIcon.Information,

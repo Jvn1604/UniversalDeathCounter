@@ -1,6 +1,6 @@
 # -*- mode: python ; coding: utf-8 -*-
 """
-PyInstaller spec for Universal Death Counter.
+PyInstaller spec for DePhantom Universal Death Counter (DUDC).
 
 Build locally (Windows, from the project root):
     pyinstaller packaging/UniversalDeathCounter.spec
@@ -52,12 +52,12 @@ VERSION_INFO = VSVersionInfo(
                     "040904B0",
                     [
                         StringStruct("CompanyName", "Jeeventhiran Sivanantham"),
-                        StringStruct("FileDescription", "Universal Death Counter"),
+                        StringStruct("FileDescription", "DePhantom Universal Death Counter (DUDC)"),
                         StringStruct("FileVersion", APP_VERSION),
                         StringStruct("InternalName", "UniversalDeathCounter"),
                         StringStruct("LegalCopyright", "MIT License"),
                         StringStruct("OriginalFilename", "UniversalDeathCounter.exe"),
-                        StringStruct("ProductName", "Universal Death Counter"),
+                        StringStruct("ProductName", "DePhantom Universal Death Counter"),
                         StringStruct("ProductVersion", APP_VERSION),
                     ],
                 )

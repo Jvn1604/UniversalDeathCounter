@@ -37,6 +37,7 @@ from src.utils.screens import fit_to_screens, place_in_corner
 logger = get_logger(__name__)
 
 CHROMA_GREEN = "#00ff00"
+OVERLAY_WINDOW_TITLE = "DUDC Overlay"
 
 
 class OverlayWindow(QWidget):
@@ -45,6 +46,9 @@ class OverlayWindow(QWidget):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._drag_offset: QPoint | None = None
+        # Frameless, so never shown on screen, but it's how the overlay is
+        # listed in OBS's Window Capture picker.
+        self.setWindowTitle(OVERLAY_WINDOW_TITLE)
 
         # Display configuration (updated via apply_display_settings)
         self._font_size = 24

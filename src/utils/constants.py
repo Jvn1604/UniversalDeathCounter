@@ -14,7 +14,12 @@ from pathlib import Path
 # --------------------------------------------------------------------------
 # Application metadata
 # --------------------------------------------------------------------------
-APP_NAME: str = "Universal Death Counter"
+APP_NAME: str = "DePhantom Universal Death Counter"
+APP_SHORT_NAME: str = "DUDC"
+APP_BRAND: str = "DePhantom"  # big header text; APP_SUBTITLE goes underneath
+APP_SUBTITLE: str = "Universal Death Counter (DUDC)"
+# APP_ORG (below), the exe name and the data folder intentionally keep the
+# old internal name, so existing installs upgrade in place and keep data.
 APP_VERSION: str = "1.5.0"
 APP_ORG: str = "UniversalDeathCounter"
 
