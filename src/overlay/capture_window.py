@@ -12,10 +12,11 @@ It owns everything the two share:
 
 from __future__ import annotations
 
-from PySide6.QtCore import QPoint, QRect, QRectF, QSize, Qt
+from PySide6.QtCore import QPoint, QRect, QRectF, QSize, Qt, Signal
 from PySide6.QtGui import (
     QColor,
     QGuiApplication,
+    QHideEvent,
     QMouseEvent,
     QPainter,
     QPainterPath,
@@ -23,6 +24,7 @@ from PySide6.QtGui import (
     QPen,
     QPixmap,
     QScreen,
+    QShowEvent,
 )
 from PySide6.QtWidgets import QGraphicsDropShadowEffect, QLabel, QWidget
 
@@ -49,7 +51,14 @@ DEFAULT_CARD_COLOR = "#141416"
 
 
 class CaptureWindow(QWidget):
-    """A movable, resizable, OBS-capturable window with the overlay's styling."""
+    """
+    A movable, resizable, OBS-capturable window with the overlay's styling.
+
+    Signals:
+        visibility_changed: True when shown, False when hidden (for ON/OFF tags).
+    """
+
+    visibility_changed = Signal(bool)
 
     def __init__(self, title: str, parent: QWidget | None = None) -> None:
         # OBS's Window Capture list leaves out tool windows, so this is a
@@ -59,6 +68,7 @@ class CaptureWindow(QWidget):
         super().__init__(parent or owner)
         self._owner = owner
         self._drag_offset: QPoint | None = None
+        self._locked = False  # "Lock position": no dragging
         # Frameless, so never shown on screen, but it's how the window is
         # listed in OBS's Window Capture picker.
         self.setWindowTitle(title)
@@ -161,6 +171,8 @@ class CaptureWindow(QWidget):
     def set_always_on_top(self, enabled: bool) -> None:
         """Toggle the always-on-top window flag and re-show the widget."""
         flags = self.windowFlags()
+        if bool(flags & Qt.WindowType.WindowStaysOnTopHint) == enabled:
+            return  # changing flags re-creates the window: it would flicker
         if enabled:
             flags |= Qt.WindowType.WindowStaysOnTopHint
         else:
@@ -168,6 +180,21 @@ class CaptureWindow(QWidget):
         self.setWindowFlags(flags)
         if self.isVisible():
             self.show()
+
+    def set_locked(self, locked: bool) -> None:
+        """Lock the window in place (a stray click can't drag it)."""
+        self._locked = locked
+
+    def is_locked(self) -> bool:
+        return self._locked
+
+    def showEvent(self, event: QShowEvent) -> None:  # noqa: N802
+        super().showEvent(event)
+        self.visibility_changed.emit(True)
+
+    def hideEvent(self, event: QHideEvent) -> None:  # noqa: N802
+        super().hideEvent(event)
+        self.visibility_changed.emit(False)
 
     def toggle_visibility(self) -> None:
         """Show the window if hidden, hide it if shown."""
@@ -178,7 +205,7 @@ class CaptureWindow(QWidget):
     # Drag-to-move support (frameless windows have no title bar)
     # ----------------------------------------------------------------
     def mousePressEvent(self, event: QMouseEvent) -> None:  # noqa: N802
-        if event.button() == Qt.MouseButton.LeftButton:
+        if event.button() == Qt.MouseButton.LeftButton and not self._locked:
             self._drag_offset = event.globalPosition().toPoint() - self.frameGeometry().topLeft()
         super().mousePressEvent(event)
 

@@ -1,4 +1,4 @@
-"""About dialog showing the logo, app metadata, version, and license info."""
+"""About dialog: logo, version, licence, and who made it."""
 
 from __future__ import annotations
 
@@ -6,12 +6,15 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import QDialog, QLabel, QPushButton, QVBoxLayout
 
+from src.ui.widgets import CreditCard
 from src.utils.constants import (
     ACCENT_COLOR,
     APP_BRAND,
     APP_NAME,
     APP_SUBTITLE,
     APP_VERSION,
+    CREATOR_CHANNEL_URL,
+    CREATOR_NAME,
     GITHUB_REPO,
     ICONS_DIR,
 )
@@ -23,7 +26,7 @@ class AboutWindow(QDialog):
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
         self.setWindowTitle(f"About {APP_NAME}")
-        self.setFixedSize(400, 470)
+        self.setFixedSize(400, 520)
         self._build_ui()
 
     def _build_ui(self) -> None:
@@ -42,7 +45,7 @@ class AboutWindow(QDialog):
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         subtitle = QLabel(APP_SUBTITLE)
         subtitle.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        subtitle.setStyleSheet("color: #b56cff; font-weight: 600;")
+        subtitle.setStyleSheet("color: #a855f7; font-weight: 700;")
 
         version = QLabel(f"Version {APP_VERSION}")
         version.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -55,6 +58,7 @@ class AboutWindow(QDialog):
         )
         description.setAlignment(Qt.AlignmentFlag.AlignCenter)
         description.setWordWrap(True)
+        description.setObjectName("Muted")
 
         license_label = QLabel("Licensed under the MIT License")
         license_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -68,6 +72,10 @@ class AboutWindow(QDialog):
         github_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         github_label.setStyleSheet("font-size: 11px;")
 
+        credit = CreditCard(
+            QPixmap(str(ICONS_DIR / "channel_logo.png")), CREATOR_NAME, CREATOR_CHANNEL_URL
+        )
+
         close_button = QPushButton("Close")
         close_button.setObjectName("AccentButton")
         close_button.clicked.connect(self.accept)
@@ -78,6 +86,8 @@ class AboutWindow(QDialog):
         layout.addWidget(version)
         layout.addWidget(description)
         layout.addStretch()
+        layout.addWidget(credit)
+        layout.addSpacing(6)
         layout.addWidget(license_label)
         layout.addWidget(github_label)
         layout.addWidget(close_button)

@@ -151,8 +151,8 @@ def main() -> int:
     settings = SettingsWindow(db, gamepad=None, hotkeys=None, parent=window)
     apply_theme(settings, "dark")
     settings.show()
-    settings.resize(620, 720)
-    settings.findChild(QTabWidget).setCurrentIndex(3)  # Controls
+    settings.resize(720, 720)
+    settings.findChild(QTabWidget).setCurrentIndex(SettingsWindow.TAB_CONTROLS)
     _save(settings, "controls.png")
     settings.close()
 

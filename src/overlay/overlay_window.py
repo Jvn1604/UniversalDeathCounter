@@ -18,7 +18,8 @@ window behavior and background are shared with the speedrun timer through
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QPoint, Qt, Signal
+from PySide6.QtGui import QContextMenuEvent, QMouseEvent
 from PySide6.QtWidgets import QLabel, QSizeGrip, QVBoxLayout, QWidget
 
 from src.core.counter_manager import CounterSnapshot
@@ -47,7 +48,18 @@ OVERLAY_WINDOW_TITLE = "DUDC Overlay"
 
 
 class OverlayWindow(CaptureWindow):
-    """A movable, resizable, OBS-friendly death counter overlay."""
+    """
+    A movable, resizable, OBS-friendly death counter overlay.
+
+    Signals:
+        menu_requested: Right-click at this screen position; the main window
+            shows the overlay's menu (counting, look, position, settings).
+            The menu is its own window, so OBS never captures it.
+        settings_requested: Double-click: open the overlay's settings.
+    """
+
+    menu_requested = Signal(QPoint)
+    settings_requested = Signal()
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(OVERLAY_WINDOW_TITLE, parent)
@@ -121,6 +133,14 @@ class OverlayWindow(CaptureWindow):
         self._game_label.setVisible(self._show_game)
         self._boss_label.setVisible(self._show_boss)
         self._stats_label.setVisible(self._show_stats)
+
+    def contextMenuEvent(self, event: QContextMenuEvent) -> None:  # noqa: N802
+        self.menu_requested.emit(event.globalPos())
+
+    def mouseDoubleClickEvent(self, event: QMouseEvent) -> None:  # noqa: N802
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.settings_requested.emit()
+        super().mouseDoubleClickEvent(event)
 
     # ----------------------------------------------------------------
     # Public API

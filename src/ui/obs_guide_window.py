@@ -1,5 +1,5 @@
 """
-Help → "Set Up OBS Overlay": step-by-step guide for showing the death
+OBS Setup (sidebar): step-by-step guide for showing the death
 counter on stream, filled in with the player's own details (overlay
 hotkey, the window name OBS lists, the deaths.txt path), plus buttons that
 do the app-side half of each method.
@@ -62,7 +62,7 @@ class ObsGuideWindow(QDialog):
         layout.addWidget(tabs)
 
         window_name = f"[{_process_name()}]: {OVERLAY_WINDOW_TITLE}"
-        hotkey = escape(overlay_hotkey or "View → Toggle Overlay")
+        hotkey = escape(overlay_hotkey or "Overlay in the sidebar")
         overlay_tab = QWidget()
         overlay_layout = QVBoxLayout(overlay_tab)
         overlay_layout.addWidget(_page(f"""
@@ -91,8 +91,8 @@ class ObsGuideWindow(QDialog):
             <ul class="tip">
               <li>Keep the overlay open (it can sit behind your game). Minimizing or
                   closing it blanks the capture.</li>
-              <li>With two monitors, use <b>View → Move Overlay to Display</b> to keep
-                  it off your game screen.</li>
+              <li>With two monitors, right-click the overlay → <b>Move Overlay to Display</b>
+                  to keep it off your game screen.</li>
               <li>Green fringe around the text? Raise <b>Similarity</b> in the Chroma
                   Key filter a little.</li>
               <li>Prefer a dark card instead? Set <b>Settings → Overlay → Background</b>
