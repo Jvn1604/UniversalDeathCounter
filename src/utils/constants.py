@@ -20,7 +20,7 @@ APP_BRAND: str = "DePhantom"  # big header text; APP_SUBTITLE goes underneath
 APP_SUBTITLE: str = "Universal Death Counter (DUDC)"
 # APP_ORG (below), the exe name and the data folder intentionally keep the
 # old internal name, so existing installs upgrade in place and keep data.
-APP_VERSION: str = "2.2.0"
+APP_VERSION: str = "2.3.0"
 APP_ORG: str = "UniversalDeathCounter"
 
 # GitHub repository ("owner/repo") used by the update checker. Edit this
@@ -72,6 +72,8 @@ PROJECT_ROOT: Path = Path(__file__).resolve().parents[2]
 SAVES_DIR: Path = _resolve_persistent_data_dir()
 DATABASE_PATH: Path = SAVES_DIR / "death_counter.db"
 LOG_DIR: Path = SAVES_DIR / "logs"
+# Copies of the images picked as backgrounds, so moving the original is harmless.
+BACKGROUNDS_DIR: Path = SAVES_DIR / "backgrounds"
 LOG_FILE: Path = LOG_DIR / "app.log"
 
 # Bundled read-only resources: safe to resolve relative to PROJECT_ROOT even
@@ -114,6 +116,17 @@ SETTING_OVERLAY_TEXT_COLOR: str = "overlay_text_color"
 # Main-window colors; "" means the theme's own color.
 SETTING_UI_TEXT_COLOR: str = "ui_text_color"
 SETTING_UI_COUNTER_COLOR: str = "ui_counter_color"
+SETTING_UI_FONT: str = "ui_font"  # font family; "" = the theme's
+SETTING_UI_BG_IMAGE: str = "ui_background_image"  # path in BACKGROUNDS_DIR; "" = none
+SETTING_UI_BG_DIM: str = "ui_background_dim"  # 0-90: % of theme color laid over the image
+
+# --- overlay appearance ---
+SETTING_OVERLAY_FONT: str = "overlay_font"  # "" = the app's default font
+SETTING_OVERLAY_CARD_COLOR: str = "overlay_card_color"  # "" = near-black
+SETTING_OVERLAY_SECONDARY_COLOR: str = "overlay_secondary_color"  # "" = automatic
+SETTING_OVERLAY_BG_IMAGE: str = "overlay_background_image"  # used by the "image" background
+SETTING_OVERLAY_CORNER_RADIUS: str = "overlay_corner_radius"
+SETTING_OVERLAY_TEXT_OUTLINE: str = "overlay_text_outline"  # "true" = shadow behind text
 SETTING_OVERLAY_COUNTER_SOURCE: str = "overlay_counter_source"  # session|boss|total
 SETTING_OVERLAY_SHOW_GAME: str = "overlay_show_game"
 SETTING_OVERLAY_SHOW_BOSS: str = "overlay_show_boss"

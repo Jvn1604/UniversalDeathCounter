@@ -13,7 +13,16 @@ from datetime import datetime
 from pathlib import Path
 
 from PySide6.QtCore import QByteArray, Qt, QTimer
-from PySide6.QtGui import QGuiApplication, QIcon, QKeySequence, QPixmap, QScreen
+from PySide6.QtGui import (
+    QColor,
+    QGuiApplication,
+    QIcon,
+    QKeySequence,
+    QPainter,
+    QPaintEvent,
+    QPixmap,
+    QScreen,
+)
 from PySide6.QtWidgets import (
     QComboBox,
     QFileDialog,
@@ -53,7 +62,7 @@ from src.detection.matchers import (
 from src.hotkeys.gamepad import GamepadManager, combo_label
 from src.hotkeys.hotkey_manager import HotkeyManager
 from src.overlay.overlay_window import OverlayWindow, available_screen_rects
-from src.themes.theme_manager import apply_theme
+from src.themes.theme_manager import THEME_BASE_COLORS, apply_theme
 from src.ui.about_window import AboutWindow
 from src.ui.auto_detect_window import (
     AutoDetectWindow,
@@ -67,6 +76,7 @@ from src.ui.death_log_window import DeathLogWindow
 from src.ui.obs_guide_window import ObsGuideWindow
 from src.ui.settings_window import SettingsWindow
 from src.ui.statistics_window import StatisticsWindow
+from src.utils.backgrounds import cover, load_background
 from src.utils.constants import (
     APP_BRAND,
     APP_NAME,
@@ -95,7 +105,10 @@ from src.utils.constants import (
     SETTING_OVERLAY_COUNTER_SOURCE,
     SETTING_OVERLAY_GEOMETRY,
     SETTING_THEME,
+    SETTING_UI_BG_DIM,
+    SETTING_UI_BG_IMAGE,
     SETTING_UI_COUNTER_COLOR,
+    SETTING_UI_FONT,
     SETTING_UI_TEXT_COLOR,
     pad_setting,
 )
@@ -118,6 +131,34 @@ _COUNTER_CAPTIONS = {
     "boss": "DEATHS ON THIS BOSS",
     "total": "ALL-TIME DEATHS",
 }
+
+
+class _BackgroundHost(QWidget):
+    """Central widget that paints an optional background image under everything."""
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._image: QPixmap | None = None
+        self._scaled: QPixmap | None = None  # cache: rescaled only on resize
+        self._dim = QColor(0, 0, 0, 0)
+
+    def set_background(self, image: QPixmap | None, dim_color: QColor) -> None:
+        """Show ``image`` (None for none) under a ``dim_color`` layer that keeps text readable."""
+        self._image, self._scaled, self._dim = image, None, dim_color
+        self.update()
+
+    def has_image(self) -> bool:
+        return self._image is not None
+
+    def paintEvent(self, event: QPaintEvent) -> None:  # noqa: N802
+        if self._image is not None:
+            if self._scaled is None or self._scaled.size() != self.size():
+                self._scaled = cover(self._image, self.size())
+            painter = QPainter(self)
+            painter.drawPixmap(0, 0, self._scaled)
+            painter.fillRect(self.rect(), self._dim)
+            painter.end()
+        super().paintEvent(event)
 
 
 class MainWindow(QMainWindow):
@@ -234,7 +275,7 @@ class MainWindow(QMainWindow):
     # Central UI
     # ----------------------------------------------------------------
     def _build_ui(self) -> None:
-        central = QWidget()
+        central = self._background = _BackgroundHost()
         self.setCentralWidget(central)
         root_layout = QVBoxLayout(central)
         root_layout.setContentsMargins(20, 20, 20, 20)
@@ -744,11 +785,21 @@ class MainWindow(QMainWindow):
 
     def _apply_saved_settings(self) -> None:
         settings = self._database.get_all_settings()
+        theme = settings.get(SETTING_THEME, "dark")
+        image = load_background(settings.get(SETTING_UI_BG_IMAGE, ""))
+        dim = QColor(THEME_BASE_COLORS.get(theme, "#1e1f22"))
+        try:
+            dim.setAlphaF(min(max(int(settings.get(SETTING_UI_BG_DIM, "60")), 0), 90) / 100)
+        except ValueError:
+            dim.setAlphaF(0.6)
+        self._background.set_background(image, dim)
         apply_theme(
             self,
-            settings.get(SETTING_THEME, "dark"),
+            theme,
             text_color=settings.get(SETTING_UI_TEXT_COLOR, ""),
             counter_color=settings.get(SETTING_UI_COUNTER_COLOR, ""),
+            font_family=settings.get(SETTING_UI_FONT, ""),
+            see_through=image is not None,
         )
         self._overlay.apply_display_settings(settings)
         self._overlay.set_always_on_top(
