@@ -182,9 +182,9 @@ def test_settings_preview_live_and_cancel_restores(window) -> None:
     dialog.close()
 
 
-def test_font_list_shows_each_font_in_itself() -> None:
+def test_font_list_draws_fonts_without_giving_every_item_a_font() -> None:
     from PySide6.QtCore import Qt
-    from PySide6.QtWidgets import QApplication
+    from PySide6.QtWidgets import QApplication, QStyleOptionViewItem
 
     from src.ui.settings_window import _font_combo
 
@@ -192,8 +192,14 @@ def test_font_list_shows_each_font_in_itself() -> None:
     combo = _font_combo("Default")
     if combo.count() == 1:
         pytest.skip("no fonts on this platform")
-    fonts = [combo.itemData(i, Qt.ItemDataRole.FontRole) for i in range(1, combo.count())]
-    assert any(font is not None for font in fonts)
+    # Per-item fonts made every restyle load all fonts (seconds of "Not Responding").
+    assert all(
+        combo.itemData(i, Qt.ItemDataRole.FontRole) is None for i in range(combo.count())
+    )
+    option = QStyleOptionViewItem()
+    index = combo.model().index(1, 0)
+    combo.itemDelegate().initStyleOption(option, index)
+    assert option.font.family() == combo.itemData(1)
 
 
 # ---------------------------------------------------------------- guide + icons
