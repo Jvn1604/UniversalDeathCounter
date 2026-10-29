@@ -147,6 +147,11 @@ SETTING_PHONE_REMOTE: str = "phone_remote_enabled"  # "true" = serve the phone p
 SETTING_PHONE_REMOTE_KEY: str = "phone_remote_key"  # secret part of the phone link
 # Detection option: watch the window of the game's .exe whose title contains this.
 OPTION_WINDOW_TITLE: str = "window_title"
+# Detection option: read this OBS source (a capture card) instead of a window.
+OPTION_OBS_SOURCE: str = "obs_source"
+SETTING_OBS_HOST: str = "obs_host"
+SETTING_OBS_PORT: str = "obs_port"
+SETTING_OBS_PASSWORD: str = "obs_password"  # OBS's WebSocket password (local only)
 SETTING_DEATHS_TXT_ENABLED: str = "deaths_txt_enabled"
 SETTING_DEATHS_TXT_PATH: str = "deaths_txt_path"
 SETTING_DEATHS_TXT_TEMPLATE: str = "deaths_txt_template"
