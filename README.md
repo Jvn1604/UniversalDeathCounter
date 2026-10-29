@@ -90,6 +90,12 @@ No Python or anything else needed. Windows 10 or 11.
 - **Multiple profiles** (switch from the box at the top), JSON backup and restore, and CSV export.
 - **Make the main window yours** in **Settings → Appearance**: any installed font (each shown in its own style), text and death-number colors, and a background image with adjustable dimming. **Changes preview live** as you edit, on the main window and the overlay; Cancel puts everything back.
 
+### 🎮 PlayStation & Xbox
+The **Console** page (sidebar) makes DUDC work when the game runs on a console:
+- **Phone remote:** switch it on and open the link on your phone (same Wi-Fi). Big **+1**, Undo, boss and timer buttons, the live count, and no app to install. Only links with the secret key work, and **New Link** cuts off old ones. Windows may ask to allow network access the first time: allow private networks.
+- **Auto-detect from a window:** pick the window the game shows in on this PC: **PS Remote Play**, the **Xbox app**, your capture card's app (e.g. Elgato 4K Capture Utility), or an **OBS Windowed Projector** of your capture card source. Death screens, the Souls preset, health bars, boss kills and timer auto-pause then read that window. Keep it visible: a minimized or covered window can't be read.
+- **Read the capture card from OBS (best with a capture card):** in OBS turn on *Tools → WebSocket Server Settings → Enable WebSocket server*, then on the Console page enter the port and password (*Show Connect Info*), click **Connect** and pick your capture card source. DUDC asks OBS for a still of that source 5 times a second: nothing has to stay visible, and OBS keeps the card. Needs OBS 28 or newer (the WebSocket server is built in). No extra software is installed.
+
 ### 🎨 Themes
 - **Phantom Dark** and **Daylight** are built in.
 - **Glass** (frosted panels over a violet glow) and **Clay** (soft, puffy pastel buttons) are **downloaded only when you pick them** in Settings → Appearance (about 16 KB each, from this repository) and can be **uninstalled** again, so the install stays small.

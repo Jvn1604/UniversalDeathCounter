@@ -197,14 +197,20 @@ def test_timeline_has_a_point_per_change(window) -> None:
 
 
 def test_sidebar_switches_pages(window) -> None:
-    from src.ui.main_window import _PAGE_DETECTION, _PAGE_HOME, _PAGE_STATS, _PAGE_TIMER
+    from src.ui.main_window import (
+        _PAGE_CONSOLE,
+        _PAGE_DETECTION,
+        _PAGE_HOME,
+        _PAGE_STATS,
+        _PAGE_TIMER,
+    )
 
     assert window._pages.currentIndex() == _PAGE_HOME
-    for index in (_PAGE_TIMER, _PAGE_STATS, _PAGE_DETECTION, _PAGE_HOME):
+    for index in (_PAGE_TIMER, _PAGE_STATS, _PAGE_DETECTION, _PAGE_CONSOLE, _PAGE_HOME):
         window._nav_buttons[index].click()
         assert window._pages.currentIndex() == index
         assert window._nav_buttons[index].isChecked()
-    assert window._pages.count() == 4
+    assert window._pages.count() == 5
 
 
 def test_stats_page_shows_this_games_numbers(window) -> None:

@@ -88,7 +88,7 @@ def test_matchers_report_what_they_read() -> None:
 @pytest.fixture()
 def fake_game(monkeypatch):
     monkeypatch.setattr(dw, "find_process_ids", lambda exe: [1])
-    monkeypatch.setattr(dw, "find_main_window", lambda pids: 42)
+    monkeypatch.setattr(dw, "find_main_window", lambda pids, title="": 42)
     monkeypatch.setattr(dw, "window_client_rect", lambda hwnd: WINDOW)
     monkeypatch.setattr(dw, "is_not_responding", lambda hwnd: False)
     monkeypatch.setattr(dw, "is_foreground", lambda hwnd: True)

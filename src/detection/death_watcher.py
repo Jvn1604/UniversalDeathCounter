@@ -39,6 +39,7 @@ from src.detection.matchers import (
     is_loading_frame,
     pixel_boxes,
 )
+from src.detection.obs_client import ObsClient, ObsError
 from src.utils.logger import get_logger
 
 try:
@@ -114,6 +115,15 @@ class WatchConfig:
     victory_matcher: Matcher | None = None
     required_frames: int = 3
     setup_hint: str = "after you die, click Capture Screen (Detection page) to teach it"
+    # Console players: watch the window of ``exe_path`` whose title contains
+    # this (PS Remote Play, a capture card viewer, an OBS projector).
+    window_title: str = ""
+    # Console players with a capture card: read this OBS source instead of
+    # a window (exe_path is then unused).
+    obs_source: str = ""
+    obs_host: str = ""
+    obs_port: int = 0
+    obs_password: str = ""
 
 
 class DeathWatcher(QObject):
@@ -145,6 +155,7 @@ class DeathWatcher(QObject):
         self._last_status = ""
         self._last_activity = ""
         self._recent_frames: deque[tuple[float, np.ndarray]] = deque(maxlen=RECENT_FRAME_COUNT)
+        self._obs: ObsClient | None = None  # worker thread only
 
     def recent_frames(self) -> list[tuple[float, np.ndarray]]:
         """``(time.monotonic() timestamp, RGB frame)`` pairs, oldest first."""
@@ -202,6 +213,19 @@ class DeathWatcher(QObject):
         except Exception:  # noqa: BLE001 - detection must never crash the app
             logger.exception("Death watcher stopped unexpectedly")
             self._set_status("Auto-detect stopped (error, see log)")
+        finally:
+            if self._obs is not None:
+                self._obs.close()
+
+    def _obs_frame(self, config: WatchConfig) -> np.ndarray | None:
+        """The OBS source's picture, or None (with the reason as the status)."""
+        if self._obs is None:
+            self._obs = ObsClient(config.obs_host, config.obs_port, config.obs_password)
+        try:
+            return self._obs.screenshot(config.obs_source)
+        except ObsError as exc:
+            self._set_status(str(exc))
+            return None
 
     def _watch_loop(self, sct: mss.base.MSSBase) -> None:
         seen_version = -1
@@ -231,6 +255,9 @@ class DeathWatcher(QObject):
                 if config is not None:
                     debouncer.required_frames = config.required_frames
                 regions = needed_regions(config) if config is not None else None
+                if self._obs is not None:  # settings may have changed: reconnect when needed
+                    self._obs.close()
+                    self._obs = None
                 canvas = None
                 hwnd, next_lookup, black_since, next_recent, next_full = None, 0.0, None, 0.0, 0.0
                 ever_seen, loading_frames, pause_frames = False, 0, 0
@@ -240,42 +267,16 @@ class DeathWatcher(QObject):
                 self._stop_event.wait(_IDLE_POLL_SECONDS)
                 continue
 
-            exe_name = Path(config.exe_path).name
+            exe_name = (
+                config.obs_source or config.window_title or Path(config.exe_path).name
+            )
             now = time.monotonic()
-            if hwnd is None or now >= next_lookup:
-                hwnd = find_main_window(find_process_ids(config.exe_path))
-                next_lookup = now + _WINDOW_LOOKUP_INTERVAL
-            if hwnd is None:
-                if not ever_seen:
-                    self._report(config, ACTIVITY_WAITING)
-                elif find_process_ids(config.exe_path):
-                    self._report(config, ACTIVITY_LOADING)  # alive, window not up
-                else:
-                    self._report(config, ACTIVITY_CLOSED)  # quit or crashed
-                self._set_status(f"Waiting for {exe_name} to start…")
-                self._stop_event.wait(_PROCESS_POLL_SECONDS)
-                continue
-            ever_seen = True
-
-            if is_not_responding(hwnd):
-                self._report(config, ACTIVITY_NOT_RESPONDING)
-                self._set_status(f"{exe_name} is not responding")
-                self._stop_event.wait(_IDLE_POLL_SECONDS)
-                continue
-
-            rect = window_client_rect(hwnd)
-            if rect is None:
-                self._report(config, ACTIVITY_BACKGROUND)
+            if config.obs_source:
+                frame = self._obs_frame(config)
+                if frame is None:
+                    self._stop_event.wait(_PROCESS_POLL_SECONDS)
+                    continue
                 hwnd = None
-                self._set_status(f"{exe_name} is minimized")
-                self._stop_event.wait(_IDLE_POLL_SECONDS)
-                continue
-
-            now = time.monotonic()
-            on_screen = desktop_clip(sct, rect) == rect
-            if regions is None or not on_screen or now >= next_full:
-                frame = grab_rect(sct, rect)
-                next_full = now + _FULL_FRAME_INTERVAL
                 if now >= next_recent:
                     next_recent = now + _RECENT_FRAME_INTERVAL
                     step = max(1, math.ceil(frame.shape[1] / _RECENT_FRAME_MAX_WIDTH))
@@ -286,16 +287,64 @@ class DeathWatcher(QObject):
                 else:
                     black_since = None
             else:
-                height, width = rect[3], rect[2]
-                if canvas is None or canvas.shape[:2] != (height, width):
-                    canvas = np.zeros((height, width, 3), dtype=np.uint8)
-                    boxes = pixel_boxes(regions, width, height)
-                for box in boxes:
-                    grab_into(sct, (rect[0], rect[1]), box, canvas)
-                frame = canvas
+                if hwnd is None or now >= next_lookup:
+                    hwnd = find_main_window(find_process_ids(config.exe_path), config.window_title)
+                    next_lookup = now + _WINDOW_LOOKUP_INTERVAL
+                if hwnd is None:
+                    if not ever_seen:
+                        self._report(config, ACTIVITY_WAITING)
+                    elif find_process_ids(config.exe_path):
+                        self._report(config, ACTIVITY_LOADING)  # alive, window not up
+                    else:
+                        self._report(config, ACTIVITY_CLOSED)  # quit or crashed
+                    self._set_status(f"Waiting for {exe_name} to start…")
+                    self._stop_event.wait(_PROCESS_POLL_SECONDS)
+                    continue
+                ever_seen = True
+
+                if is_not_responding(hwnd):
+                    self._report(config, ACTIVITY_NOT_RESPONDING)
+                    self._set_status(f"{exe_name} is not responding")
+                    self._stop_event.wait(_IDLE_POLL_SECONDS)
+                    continue
+
+                rect = window_client_rect(hwnd)
+                if rect is None:
+                    self._report(config, ACTIVITY_BACKGROUND)
+                    hwnd = None
+                    self._set_status(f"{exe_name} is minimized")
+                    self._stop_event.wait(_IDLE_POLL_SECONDS)
+                    continue
+
+                now = time.monotonic()
+                on_screen = desktop_clip(sct, rect) == rect
+                if regions is None or not on_screen or now >= next_full:
+                    frame = grab_rect(sct, rect)
+                    next_full = now + _FULL_FRAME_INTERVAL
+                    if now >= next_recent:
+                        next_recent = now + _RECENT_FRAME_INTERVAL
+                        step = max(1, math.ceil(frame.shape[1] / _RECENT_FRAME_MAX_WIDTH))
+                        with self._lock:
+                            self._recent_frames.append((now, frame[::step, ::step].copy()))
+                    if int(frame[::4, ::4].max()) < 8:
+                        black_since = now if black_since is None else black_since
+                    else:
+                        black_since = None
+                else:
+                    height, width = rect[3], rect[2]
+                    if canvas is None or canvas.shape[:2] != (height, width):
+                        canvas = np.zeros((height, width, 3), dtype=np.uint8)
+                        boxes = pixel_boxes(regions, width, height)
+                    for box in boxes:
+                        grab_into(sct, (rect[0], rect[1]), box, canvas)
+                    frame = canvas
             black_for = now - black_since if black_since is not None else 0.0
 
-            if black_for >= _BLACK_SECONDS:
+            if black_for >= _BLACK_SECONDS and config.obs_source:
+                self._set_status(
+                    f"{exe_name} is black in OBS: is the console on and the card showing it?"
+                )
+            elif black_for >= _BLACK_SECONDS:
                 self._set_status(
                     f"Capture of {exe_name} is black. Switch the game to borderless/windowed."
                 )
@@ -315,7 +364,7 @@ class DeathWatcher(QObject):
                     self._report(config, ACTIVITY_PAUSE_SCREEN)
                 elif loading_frames >= _LOADING_FRAMES:
                     self._report(config, ACTIVITY_LOADING)
-                elif not is_foreground(hwnd):
+                elif hwnd is not None and not is_foreground(hwnd):
                     self._report(config, ACTIVITY_BACKGROUND)
                 elif not loading and not paused:
                     self._report(config, ACTIVITY_PLAYING)

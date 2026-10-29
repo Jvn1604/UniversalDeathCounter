@@ -16,6 +16,7 @@ import threading
 import time
 from collections.abc import Callable
 from datetime import datetime
+from html import escape
 from pathlib import Path
 
 from PySide6.QtCore import QByteArray, QObject, QPoint, Qt, QTimer, QUrl, Signal
@@ -41,6 +42,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QInputDialog,
     QLabel,
+    QLineEdit,
     QListWidget,
     QMainWindow,
     QMenu,
@@ -48,6 +50,7 @@ from PySide6.QtWidgets import (
     QProgressDialog,
     QPushButton,
     QScrollArea,
+    QSpinBox,
     QStackedWidget,
     QSystemTrayIcon,
     QVBoxLayout,
@@ -82,6 +85,7 @@ from src.detection.game_window import (
     capture_game_frame,
     detection_available,
     exe_display_name,
+    list_windows,
     running_exe_paths,
 )
 from src.detection.log_watcher import LogWatchConfig, LogWatcher, compile_death_pattern
@@ -92,6 +96,9 @@ from src.detection.matchers import (
     build_matcher,
     build_screen_matcher,
 )
+from src.detection.obs_client import DEFAULT_HOST as OBS_DEFAULT_HOST
+from src.detection.obs_client import DEFAULT_PORT as OBS_DEFAULT_PORT
+from src.detection.obs_client import ObsClient, ObsError
 from src.hotkeys.gamepad import GamepadManager, combo_label
 from src.hotkeys.hotkey_manager import HotkeyManager
 from src.overlay.overlay_window import OverlayWindow, available_screen_rects
@@ -146,6 +153,8 @@ from src.utils.constants import (
     DETECTION_MODE_SOULS,
     DETECTION_MODE_TEMPLATE,
     ICONS_DIR,
+    OPTION_OBS_SOURCE,
+    OPTION_WINDOW_TITLE,
     SAVES_DIR,
     SETTING_BOSS_AUTO_ADVANCE,
     SETTING_BOSS_AUTO_SPLIT,
@@ -162,6 +171,9 @@ from src.utils.constants import (
     SETTING_MAIN_WINDOW_GEOMETRY,
     SETTING_MINI_GEOMETRY,
     SETTING_MINIMIZE_TO_TRAY,
+    SETTING_OBS_HOST,
+    SETTING_OBS_PASSWORD,
+    SETTING_OBS_PORT,
     SETTING_OVERLAY_ALWAYS_ON_TOP,
     SETTING_OVERLAY_BG_IMAGE,
     SETTING_OVERLAY_BG_MODE,
@@ -169,6 +181,8 @@ from src.utils.constants import (
     SETTING_OVERLAY_FONT_SIZE,
     SETTING_OVERLAY_GEOMETRY,
     SETTING_OVERLAY_LOCKED,
+    SETTING_PHONE_REMOTE,
+    SETTING_PHONE_REMOTE_KEY,
     SETTING_THEME,
     SETTING_TIMER_AUTOSAVE,
     SETTING_TIMER_COMPARISON,
@@ -192,6 +206,8 @@ from src.utils.constants import (
 from src.utils.exporters import write_csv_summary
 from src.utils.game_templates import add_template_bosses, get_template
 from src.utils.logger import get_logger
+from src.utils.phone_remote import ACTIONS as PHONE_ACTIONS
+from src.utils.phone_remote import PhoneRemote, new_key
 from src.utils.profiles import DEFAULT_PROFILE_NAME, ProfileManager
 from src.utils.screens import display_name, fit_to_screens, screen_index_at
 from src.utils.stream_writer import render_template, write_deaths_file
@@ -260,12 +276,13 @@ class _UpdateDownload(QObject):
 
 
 # Sidebar pages, in stack order: (name, icon).
-_PAGE_HOME, _PAGE_TIMER, _PAGE_STATS, _PAGE_DETECTION = range(4)
+_PAGE_HOME, _PAGE_TIMER, _PAGE_STATS, _PAGE_DETECTION, _PAGE_CONSOLE = range(5)
 _PAGES = (
     ("Home", "house"),
     ("Timer", "timer"),
     ("Stats", "chart-column"),
     ("Detection", "scan-eye"),
+    ("Console", "gamepad-2"),
 )
 _TIMER_STATUS_COLORS = {AHEAD: "#3ad07a", BEHIND: "#ff5c5c", GOLD: "#ffd24a"}
 _MODE_NAMES = {
@@ -333,6 +350,9 @@ class MainWindow(QMainWindow):
         self._overlay.menu_requested.connect(self._overlay_context_menu)
         self._overlay.settings_requested.connect(self._open_overlay_settings)
         self._mini = MiniWindow()
+        self._phone_remote = PhoneRemote(self)
+        self._phone_remote.action_requested.connect(self._on_phone_action)
+        self._phone_remote.phone_seen.connect(self._on_phone_seen)
         self._mini.action_requested.connect(self._on_mini_action)
         self._timer_window = TimerWindow()
         self._timer_window.action_requested.connect(self._on_timer_window_action)
@@ -373,6 +393,8 @@ class MainWindow(QMainWindow):
         self._recovery_timer.timeout.connect(self._offer_run_recovery)
         self._recovery_timer.start(0)
         self._maybe_check_updates()
+        if self._database.get_setting(SETTING_PHONE_REMOTE, "false") == "true":
+            self._set_phone_remote(True)
 
     def _update_window_title(self) -> None:
         profile = self._profile_manager.active_profile
@@ -455,6 +477,7 @@ class MainWindow(QMainWindow):
             self._build_timer_page,
             self._build_stats_page,
             self._build_detection_page,
+            self._build_console_page,
         ):
             page = builder()
             scroll = QScrollArea()
@@ -919,6 +942,343 @@ class MainWindow(QMainWindow):
         layout.addStretch()
         return page
 
+    # Console ----------------------------------------------------------
+    def _build_console_page(self) -> QWidget:
+        page, layout = self._page_layout()
+        layout.addWidget(
+            page_header(
+                "Console",
+                "Playing on PlayStation or Xbox? Count from your phone, and let auto-detect "
+                "watch your capture card or Remote Play on this PC.",
+            )
+        )
+
+        phone, phone_layout = card(margins=18)
+        phone_top = QHBoxLayout()
+        phone_top.addWidget(section_title("1 · Phone remote"))
+        phone_top.addStretch()
+        self._phone_toggle = NavToggle("Phone Remote", "smartphone", object_name="")
+        self._phone_toggle.setMinimumWidth(190)
+        self._phone_toggle.setToolTip("Turn the phone page on or off")
+        self._phone_toggle.clicked.connect(
+            lambda: self._set_phone_remote(not self._phone_remote.running)
+        )
+        phone_top.addWidget(self._phone_toggle)
+        phone_layout.addLayout(phone_top)
+        phone_intro = QLabel(
+            "Your controller talks to the console, so the PC's hotkeys can't hear it. "
+            "Switch this on and open the link on your phone (same Wi-Fi): big +1, Undo, "
+            "boss and timer buttons, no app to install."
+        )
+        phone_intro.setObjectName("Muted")
+        phone_intro.setWordWrap(True)
+        phone_layout.addWidget(phone_intro)
+        self._phone_link = QLabel()
+        self._phone_link.setObjectName("PhoneLink")
+        self._phone_link.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self._phone_link.setWordWrap(True)
+        copy_link = QPushButton(" Copy Link")
+        icons.set_icon(copy_link, "copy", size=16)
+        copy_link.clicked.connect(
+            lambda: QGuiApplication.clipboard().setText(self._phone_remote.url())
+        )
+        new_link = QPushButton(" New Link")
+        new_link.setObjectName("GhostButton")
+        new_link.setToolTip("Make a new link: phones with the old one stop working")
+        icons.set_icon(new_link, "refresh-cw", size=16)
+        new_link.clicked.connect(self._new_phone_link)
+        self._phone_link_box = QWidget()
+        self._phone_link_box.setObjectName("PhoneLinkBox")
+        self._phone_link_box.setStyleSheet("QWidget#PhoneLinkBox { background: transparent; }")
+        link_layout = QVBoxLayout(self._phone_link_box)
+        link_layout.setContentsMargins(0, 4, 0, 0)
+        link_layout.setSpacing(8)
+        link_layout.addWidget(self._phone_link)
+        link_buttons = QHBoxLayout()
+        link_buttons.addWidget(copy_link)
+        link_buttons.addWidget(new_link)
+        link_buttons.addStretch()
+        link_layout.addLayout(link_buttons)
+        self._phone_status = QLabel()
+        self._phone_status.setObjectName("Muted")
+        self._phone_status.setWordWrap(True)
+        link_layout.addWidget(self._phone_status)
+        phone_layout.addWidget(self._phone_link_box)
+        layout.addWidget(phone)
+
+        capture, capture_layout = card(margins=18)
+        capture_layout.addWidget(section_title("2 · Auto-detect from a window"))
+        capture_intro = QLabel(
+            "Show the game on this PC, then pick its window below: <b>PS Remote Play</b>, "
+            "the <b>Xbox app</b>, your capture card's app (e.g. Elgato 4K Capture Utility), "
+            "or in <b>OBS</b>: right-click the capture card source → Windowed Projector. "
+            "Deaths, boss kills and timer pauses are then read from that window."
+        )
+        capture_intro.setObjectName("Muted")
+        capture_intro.setWordWrap(True)
+        capture_intro.setTextFormat(Qt.TextFormat.RichText)
+        capture_layout.addWidget(capture_intro)
+        self._console_source = QLabel()
+        self._console_source.setWordWrap(True)
+        self._console_source.setTextFormat(Qt.TextFormat.RichText)
+        capture_layout.addWidget(self._console_source)
+        self._window_combo = QComboBox()
+        self._window_combo.setSizeAdjustPolicy(
+            QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon
+        )
+        self._window_combo.setMinimumContentsLength(20)
+        refresh_windows = QPushButton()
+        refresh_windows.setObjectName("IconButton")
+        refresh_windows.setToolTip("Look for windows again")
+        icons.set_icon(refresh_windows, "refresh-cw", size=16)
+        refresh_windows.clicked.connect(self._refresh_console_page)
+        capture_layout.addLayout(row(self._window_combo, refresh_windows, stretch=(1, 0)))
+        use_window = QPushButton(" Use This Window")
+        use_window.setObjectName("AccentButton")
+        icons.set_icon(use_window, "monitor-play", icons.ACCENT, size=16)
+        use_window.clicked.connect(self._use_console_window)
+        self._stop_window_btn = QPushButton(" Stop Using It")
+        self._stop_window_btn.setObjectName("GhostButton")
+        icons.set_icon(self._stop_window_btn, "x", size=16)
+        self._stop_window_btn.clicked.connect(self._stop_console_window)
+        setup = QPushButton(" Set Up Detection")
+        icons.set_icon(setup, "wand-sparkles", size=16)
+        setup.clicked.connect(self._open_auto_detect_window)
+        capture_layout.addLayout(row(use_window, setup, self._stop_window_btn))
+        keep_visible = QLabel(
+            "Keep that window open and visible (another screen is ideal): detection reads "
+            "what's on screen, so a minimized or covered window can't be read."
+        )
+        keep_visible.setObjectName("Muted")
+        keep_visible.setWordWrap(True)
+        capture_layout.addWidget(keep_visible)
+        layout.addWidget(capture)
+
+        obs, obs_layout = card(margins=18)
+        obs_layout.addWidget(section_title("3 · Or read the capture card from OBS"))
+        obs_intro = QLabel(
+            "Best with a capture card: nothing to keep visible, and OBS keeps the card. "
+            "In OBS: <b>Tools → WebSocket Server Settings</b> → tick <b>Enable WebSocket "
+            "server</b>, then <b>Show Connect Info</b> for the port and password."
+        )
+        obs_intro.setObjectName("Muted")
+        obs_intro.setWordWrap(True)
+        obs_intro.setTextFormat(Qt.TextFormat.RichText)
+        obs_layout.addWidget(obs_intro)
+        host, port, password = self._obs_settings()
+        self._obs_host = QLineEdit(host)
+        self._obs_port = QSpinBox()
+        self._obs_port.setRange(1, 65535)
+        self._obs_port.setValue(port)
+        self._obs_password = QLineEdit(password)
+        self._obs_password.setEchoMode(QLineEdit.EchoMode.Password)
+        self._obs_password.setPlaceholderText("Leave empty if OBS has no password")
+        connect_obs = QPushButton(" Connect")
+        icons.set_icon(connect_obs, "radio", size=16)
+        connect_obs.clicked.connect(self._connect_obs)
+        obs_layout.addLayout(
+            row(
+                field("Address", self._obs_host),
+                field("Port", self._obs_port),
+                field("Password", self._obs_password),
+                stretch=(2, 1, 3),
+            )
+        )
+        self._obs_status = AutoHideLabel()
+        self._obs_status.setObjectName("Muted")
+        self._obs_status.hide()
+        self._obs_status.setWordWrap(True)
+        self._obs_source_combo = QComboBox()
+        self._obs_source_combo.setSizeAdjustPolicy(
+            QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon
+        )
+        self._obs_source_combo.setMinimumContentsLength(16)
+        self._obs_source_combo.setPlaceholderText("Connect to list OBS's sources")
+        use_source = QPushButton(" Use This Source")
+        use_source.setObjectName("AccentButton")
+        icons.set_icon(use_source, "monitor-play", icons.ACCENT, size=16)
+        use_source.clicked.connect(self._use_obs_source)
+        obs_layout.addLayout(row(connect_obs, self._obs_source_combo, use_source,
+                                 stretch=(0, 1, 0)))
+        obs_layout.addWidget(self._obs_status)
+        layout.addWidget(obs)
+        layout.addStretch()
+        self._set_phone_ui()
+        return page
+
+    def _refresh_console_page(self) -> None:
+        """List the windows that could be watched, and what the game uses now."""
+        windows = list_windows()
+        current = self._window_combo.currentData()
+        self._window_combo.clear()
+        for window in windows:
+            self._window_combo.addItem(window.label, userData=(window.exe_path, window.title))
+        if not windows:
+            self._window_combo.addItem("No windows found: start Remote Play or your capture app")
+        index = self._window_combo.findData(current) if current else -1
+        self._window_combo.setCurrentIndex(max(index, 0))
+
+        game_id = self._counter_manager.current_game_id
+        title = self._capture_window_title(game_id) if game_id is not None else ""
+        source = self._obs_source(game_id) if game_id is not None else ""
+        row_ = self._database.get_game_detection(game_id) if game_id is not None else None
+        if game_id is None:
+            text = "Select or add your game on the Home page first."
+        elif source:
+            text = (
+                f"<b>{escape(self._game_combo.currentText())}</b> reads "
+                f"<b>{escape(source)}</b> from OBS."
+            )
+        elif title and row_ is not None and row_["exe_path"]:
+            text = (
+                f"<b>{escape(self._game_combo.currentText())}</b> is watching "
+                f"<b>{escape(title)}</b> ({escape(Path(row_['exe_path']).name)})."
+            )
+        else:
+            text = (
+                f"<b>{escape(self._game_combo.currentText())}</b>: no window picked yet."
+            )
+        self._console_source.setText(text)
+        self._stop_window_btn.setVisible(bool(title or source))
+
+    def _use_console_window(self) -> None:
+        game_id = self._counter_manager.current_game_id
+        choice = self._window_combo.currentData()
+        if game_id is None:
+            QMessageBox.information(self, "Select a Game", "Select or add your game first.")
+            return
+        if not choice:
+            return
+        exe_path, title = choice
+        row_ = self._database.get_game_detection(game_id)
+        mode = row_["mode"] if row_ is not None else DETECTION_MODE_OFF
+        if mode in (DETECTION_MODE_OFF, DETECTION_MODE_LOG):
+            mode = DETECTION_MODE_TEMPLATE  # a console game's screen, not a log file
+        self._database.set_game_detection(game_id, exe_path, mode)
+        self._database.update_detection_options(
+            game_id, **{OPTION_WINDOW_TITLE: title, OPTION_OBS_SOURCE: None}
+        )
+        self._configure_detection()
+        self._refresh_console_page()
+        self._explain_next_step(f"Auto-detect now watches \"{title}\".")
+
+    def _explain_next_step(self, done: str) -> None:
+        hotkey = self._database.get_setting(SETTING_HOTKEY_CALIBRATE, "f8").upper()
+        QMessageBox.information(
+            self,
+            "Ready",
+            f"{done}\n\nNext, teach it the death screen: when you die, click Capture Screen "
+            f"on the Detection page and pick it (or press {hotkey} on the PC). Souls games "
+            "can use the Souls preset in Set Up Detection.",
+        )
+
+    def _save_obs_settings(self) -> None:
+        self._database.set_setting(SETTING_OBS_HOST, self._obs_host.text().strip())
+        self._database.set_setting(SETTING_OBS_PORT, self._obs_port.value())
+        self._database.set_setting(SETTING_OBS_PASSWORD, self._obs_password.text())
+
+    def _connect_obs(self) -> None:
+        """Log in to OBS and list its sources (capture devices first)."""
+        self._save_obs_settings()
+        self._obs_status.setText("Connecting…")
+        QGuiApplication.processEvents()
+        client = ObsClient(*self._obs_settings(), timeout=2.0)
+        try:
+            sources = client.video_sources()
+        except ObsError as exc:
+            self._obs_status.setText(f"⚠ {exc}")
+            return
+        finally:
+            client.close()
+        current = self._obs_source(self._counter_manager.current_game_id or -1)
+        self._obs_source_combo.clear()
+        self._obs_source_combo.addItems(sources)
+        # A combo with placeholder text stays unselected unless told otherwise.
+        self._obs_source_combo.setCurrentIndex(sources.index(current) if current in sources else 0)
+        self._obs_status.setText(
+            f"Connected to OBS ✓  Pick the source that shows your console "
+            f"({len(sources)} found)." if sources else "Connected, but OBS has no sources yet."
+        )
+        self._configure_detection()  # a game already using OBS picks up new settings
+
+    def _use_obs_source(self) -> None:
+        game_id = self._counter_manager.current_game_id
+        source = self._obs_source_combo.currentText()
+        if game_id is None:
+            QMessageBox.information(self, "Select a Game", "Select or add your game first.")
+            return
+        if not source:
+            QMessageBox.information(self, "Connect First", "Connect to OBS, then pick a source.")
+            return
+        self._save_obs_settings()
+        row_ = self._database.get_game_detection(game_id)
+        mode = row_["mode"] if row_ is not None else DETECTION_MODE_OFF
+        if mode in (DETECTION_MODE_OFF, DETECTION_MODE_LOG):
+            mode = DETECTION_MODE_TEMPLATE
+        self._database.set_game_detection(game_id, None, mode)
+        self._database.update_detection_options(
+            game_id, **{OPTION_OBS_SOURCE: source, OPTION_WINDOW_TITLE: None}
+        )
+        self._configure_detection()
+        self._refresh_console_page()
+        self._explain_next_step(f"Auto-detect now reads \"{source}\" from OBS.")
+
+    def _stop_console_window(self) -> None:
+        game_id = self._counter_manager.current_game_id
+        if game_id is None:
+            return
+        row_ = self._database.get_game_detection(game_id)
+        mode = row_["mode"] if row_ is not None else DETECTION_MODE_OFF
+        self._database.set_game_detection(game_id, None, mode)
+        self._database.update_detection_options(
+            game_id, **{OPTION_WINDOW_TITLE: None, OPTION_OBS_SOURCE: None}
+        )
+        self._configure_detection()
+        self._refresh_console_page()
+
+    # Phone remote ------------------------------------------------------
+    def _set_phone_remote(self, on: bool) -> None:
+        if on:
+            key = self._database.get_setting(SETTING_PHONE_REMOTE_KEY, "")
+            if not key:
+                key = new_key()
+                self._database.set_setting(SETTING_PHONE_REMOTE_KEY, key)
+            try:
+                self._phone_remote.start(key)
+            except OSError as exc:
+                QMessageBox.warning(
+                    self, "Phone Remote", f"Couldn't start the phone page: {exc}"
+                )
+                on = False
+            self._refresh_counters()  # the page shows the current count right away
+        else:
+            self._phone_remote.stop()
+        self._database.set_setting(SETTING_PHONE_REMOTE, "true" if on else "false")
+        self._set_phone_ui()
+
+    def _new_phone_link(self) -> None:
+        self._database.set_setting(SETTING_PHONE_REMOTE_KEY, new_key())
+        if self._phone_remote.running:
+            self._set_phone_remote(True)
+
+    def _set_phone_ui(self) -> None:
+        on = self._phone_remote.running
+        self._phone_toggle.set_on(on)
+        self._phone_link_box.setVisible(on)
+        if on:
+            self._phone_link.setText(self._phone_remote.url())
+            self._phone_status.setText(
+                "Open it in your phone's browser and add it to the home screen. "
+                "If Windows asks whether this app may use the network, allow private networks."
+            )
+
+    def _on_phone_seen(self) -> None:
+        self._phone_status.setText(f"Phone connected ✓  (last seen {datetime.now():%H:%M})")
+
+    def _on_phone_action(self, action: str) -> None:
+        if action in PHONE_ACTIONS:  # the server already refuses anything else
+            self._action_handlers[action]()
+
     # Page switching and refresh --------------------------------------
     def _show_page(self, index: int) -> None:
         self._pages.setCurrentIndex(index)
@@ -934,6 +1294,8 @@ class MainWindow(QMainWindow):
             self._refresh_stats_page()
         elif index == _PAGE_DETECTION:
             self._refresh_detection_page()
+        elif index == _PAGE_CONSOLE:
+            self._refresh_console_page()
 
     def _refresh_timer_page(self) -> None:
         """Mirror the timer onto its page (ticks only while the page shows a running run)."""
@@ -1248,7 +1610,7 @@ class MainWindow(QMainWindow):
             log_config, status = self._log_watch_config(game_id)
         elif not detection_available():
             status = "Auto-detect needs Windows"
-        elif not row["exe_path"]:
+        elif not row["exe_path"] and not self._obs_source(game_id):
             status = "Auto-detect off"
         else:
             screen_config = self._screen_watch_config(game_id, mode, row["exe_path"])
@@ -1281,6 +1643,16 @@ class MainWindow(QMainWindow):
                     setup_hint="watching for the boss victory screen",
                 )
             screen_config = dataclasses.replace(screen_config, victory_matcher=victory)
+        if screen_config is not None and game_id is not None:
+            host, port, password = self._obs_settings()
+            screen_config = dataclasses.replace(
+                screen_config,
+                window_title=self._capture_window_title(game_id),
+                obs_source=self._obs_source(game_id),
+                obs_host=host,
+                obs_port=port,
+                obs_password=password,
+            )
         cooldown = float(self._database.get_setting(SETTING_DETECTION_COOLDOWN, "8") or 8)
         self._death_watcher.configure(screen_config, cooldown_seconds=cooldown)
         self._log_watcher.configure(log_config)
@@ -1288,6 +1660,25 @@ class MainWindow(QMainWindow):
             self._detect_status_label.setText(status)
         if self._pages.currentIndex() == _PAGE_DETECTION:
             self._refresh_detection_page()
+
+    def _capture_window_title(self, game_id: int) -> str:
+        """Console games: the title of the window to watch ("" = the game's own window)."""
+        title = self._database.get_detection_options(game_id).get(OPTION_WINDOW_TITLE, "")
+        return title if isinstance(title, str) else ""
+
+    def _obs_source(self, game_id: int) -> str:
+        """Console games with a capture card: the OBS source to read ("" = none)."""
+        source = self._database.get_detection_options(game_id).get(OPTION_OBS_SOURCE, "")
+        return source if isinstance(source, str) else ""
+
+    def _obs_settings(self) -> tuple[str, int, str]:
+        settings = self._database.get_all_settings()
+        try:
+            port = int(settings.get(SETTING_OBS_PORT, "") or OBS_DEFAULT_PORT)
+        except ValueError:
+            port = OBS_DEFAULT_PORT
+        host = settings.get(SETTING_OBS_HOST, "").strip() or OBS_DEFAULT_HOST
+        return host, port, settings.get(SETTING_OBS_PASSWORD, "")
 
     def _victory_matcher(self, game_id: int | None, row):
         """The saved victory screens to watch for, while an undefeated boss is selected."""
@@ -1471,7 +1862,18 @@ class MainWindow(QMainWindow):
             return
         row = self._database.get_game_detection(game_id)
         exe_path = row["exe_path"] if row is not None else None
-        frame = capture_game_frame(exe_path)
+        source = self._obs_source(game_id)
+        if source:
+            client = ObsClient(*self._obs_settings())
+            try:
+                frame = client.screenshot(source)
+            except ObsError as exc:
+                QMessageBox.warning(self, "Couldn't Read OBS", str(exc))
+                return
+            finally:
+                client.close()
+        else:
+            frame = capture_game_frame(exe_path, self._capture_window_title(game_id))
         if frame is None:
             return
         self.show()
@@ -2088,6 +2490,14 @@ class MainWindow(QMainWindow):
             self._refresh_stats_page()
         self._overlay.update_counters(snapshot)
         self._mini.update_counters(snapshot)
+        self._phone_remote.set_state(
+            game=snapshot.game_name or "",
+            boss=snapshot.boss_name or "",
+            count=big_numbers.get(source, snapshot.session_deaths),
+            caption=f"{_COUNTER_CAPTIONS.get(source, '').title()}  ·  "
+            f"all-time {snapshot.total_deaths}",
+            detection=self._detect_status_label.text(),
+        )
         self._write_deaths_txt(snapshot)
 
     def _deaths_txt_path(self) -> Path:
@@ -2430,7 +2840,7 @@ class MainWindow(QMainWindow):
             or not controller.running
             or controller.game_id != game_id
             or row is None
-            or not row["exe_path"]
+            or not (row["exe_path"] or self._obs_source(game_id))
             or not detection_available()
         ):
             return False
@@ -2696,6 +3106,7 @@ class MainWindow(QMainWindow):
         self._session_manager.end_current_session()
         self._hotkey_manager.stop()
         self._gamepad_manager.stop()
+        self._phone_remote.stop()
         self._autosave_timer.stop()
         self._recovery_timer.stop()
         self._game_launch_timer.stop()  # it reads the database being closed
