@@ -48,6 +48,7 @@ from src.utils.constants import (
     DETECTION_MODE_OFF,
     DETECTION_MODE_SOULS,
     DETECTION_MODE_TEMPLATE,
+    OPTION_OBS_SOURCE,
     SETTING_DETECTION_COOLDOWN,
     SETTING_HOTKEY_CALIBRATE,
     SETTING_HOTKEY_INCREMENT,
@@ -823,6 +824,11 @@ class AutoDetectWindow(QDialog):
                 self, "Matches Found", f"{count} matching line(s). The latest:\n\n{last[:300]}"
             )
 
+    def _console_source(self) -> bool:
+        """Console games read OBS (set on the Console page) and need no .exe."""
+        options = self._database.get_detection_options(self._game_id)
+        return bool(options.get(OPTION_OBS_SOURCE))
+
     def _save(self) -> None:
         mode = self._mode_combo.currentData()
         exe_path = self._exe_edit.text().strip() or None
@@ -839,7 +845,7 @@ class AutoDetectWindow(QDialog):
             self._database.update_detection_options(
                 self._game_id, log_path=str(log_path), log_pattern=self._pattern_edit.text()
             )
-        elif mode != DETECTION_MODE_OFF and exe_path is None:
+        elif mode != DETECTION_MODE_OFF and exe_path is None and not self._console_source():
             QMessageBox.warning(self, "Select the Game", "Select the game's .exe first.")
             return
         hotkey = self._database.get_setting(SETTING_HOTKEY_CALIBRATE, "f8").upper()

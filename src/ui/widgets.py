@@ -383,6 +383,9 @@ def page_header(title: str, subtitle: str = "") -> QWidget:
 def field(label_text: str, widget: QWidget) -> QWidget:
     """A small uppercase caption above a control."""
     container = QWidget()
+    container.setObjectName("Field")
+    # Only this wrapper (not the control): it sits on cards as well as pages.
+    container.setStyleSheet("QWidget#Field { background: transparent; }")
     layout = QVBoxLayout(container)
     layout.setContentsMargins(0, 0, 0, 0)
     layout.setSpacing(4)
