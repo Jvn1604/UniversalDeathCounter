@@ -70,6 +70,7 @@ No Python or anything else needed. Windows 10 or 11, macOS 11 or newer, or a 64-
 
 ### 💀 Automatic death detection
 - **Add a game straight from its `.exe`** (or its `.app` on a Mac; Proton and Wine games on Linux work too). The app watches that game's window and counts a death whenever the death screen appears.
+- **No `.exe`? Watch a whole display instead.** If the game's `.exe` isn't found (a launcher, an emulator, cloud gaming), choose **Watch: A whole display** in Set Up Detection, capture your death screen once (F8 on it, or Capture Screen afterwards), and the same screen on that display counts a death.
 - **Works with any game.** Teach it the death screen once, either by pressing `F8` on the death screen or afterwards with **📷 Capture Screen…**, which lets you pick the frame from the last few seconds.
 - **Zero setup for Souls games.** The built-in preset recognizes Elden Ring, Dark Souls I–III and Sekiro.
 - **No death screen? Use the health bar.** Mark your health bar once at full health, and a death counts when it empties.
@@ -108,7 +109,9 @@ Every 10 deaths your skull earns something new: horns, a nose ring, blades, a cr
 - **OBS-ready overlay, styled your way:** a card in any color, your own picture as the background, or green-screen mode for OBS's Chroma Key. Choose the font, number and text colors, size, corner roundness, opacity, a shadow that keeps text readable, and which lines show.
 - **`deaths.txt`** for OBS Text sources, with your own template, e.g. `{game} - {boss}: {deaths}`.
 - **OBS Setup** (sidebar) walks you through both methods, with one-click setup buttons.
-- **Right-click the overlay** to count from it, switch what the big number shows, change the background or number size, lock it in place, keep it on top, or move it to another display. Double-click it for all its settings. The sidebar's **Overlay** entry shows whether it's ON or OFF.
+- **Right-click the overlay** to count from it, switch what the big number shows, change the background or number size, lock it in place, keep it on top, make it click-through, or move it to another display. Double-click it for all its settings. The sidebar's **Overlay** entry shows whether it's ON or OFF.
+- **Backgrounds:** card, green screen (for OBS Chroma Key), **transparent** (just the text floating over your game) or your own image.
+- **Overlay settings** (Settings → Overlay): font, number size and colours, the text before the number ("DEATH", "TRIES", or nothing), left / centre / right alignment, card border and roundness, which lines show (game, boss, skull, what it counts, session and all-time), always on top, lock position, and **click-through** (clicks go to the game; turn it off from the tray menu).
 - **Multi-monitor:** move the overlay to any display. Windows come back on-screen if a monitor is unplugged.
 
 ### 📊 Tracking & stats
@@ -226,7 +229,8 @@ Another program has already registered that key. On many PCs plain `F12` is take
 - **Linux:** a pure Wayland session doesn't allow global keys; see the Mac and Linux notes under Download.
 
 **Deaths aren't detected**
-1. Check the status line under the game selector. It should say *"Watching <game>.exe for deaths"*.
+1. Check the status line on the Death Counter page. It should say *"Watching <game>.exe for deaths"* (or *"Watching Display 1 for deaths"*).
+   If it keeps saying *Waiting for <game>.exe to start* while the game runs, the game runs under another program: choose **Watch: A whole display** in Set Up Detection.
 2. If it says the capture is **black**, switch the game to borderless or windowed mode. On a Mac, allow Screen Recording for the app; on a Wayland desktop, read the game from OBS instead.
 3. If it's watching but misses deaths, use **📷 Capture Screen…** right after a death to add that screen.
 

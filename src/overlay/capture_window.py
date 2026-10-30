@@ -6,7 +6,8 @@ It owns everything the two share:
 
 * being listed in OBS's Window Capture picker while staying off the taskbar
 * drag-to-move, a resize grip, and keeping the window on a connected display
-* the background (``dark`` card, ``chroma`` green, or ``image``) and the text
+* the background (``dark`` card, ``chroma`` green, ``image`` or
+  ``transparent``) and the text
   styling (font, colors, shadow) from the overlay's Appearance settings
 """
 
@@ -33,6 +34,7 @@ from src.utils.constants import (
     ACCENT_COLOR,
     SETTING_OVERLAY_BG_IMAGE,
     SETTING_OVERLAY_BG_MODE,
+    SETTING_OVERLAY_BORDER,
     SETTING_OVERLAY_CARD_COLOR,
     SETTING_OVERLAY_CORNER_RADIUS,
     SETTING_OVERLAY_FONT,
@@ -84,6 +86,7 @@ class CaptureWindow(QWidget):
         self._bg_scaled: QPixmap | None = None  # cache, rescaled only on resize
         self._corner_radius = 12
         self._text_outline = False
+        self._border = True
 
         self.setWindowFlags(
             Qt.WindowType.Window
@@ -118,6 +121,7 @@ class CaptureWindow(QWidget):
             radius = 12
         self._corner_radius = min(max(radius, 0), 60)
         self._text_outline = settings.get(SETTING_OVERLAY_TEXT_OUTLINE, "false") == "true"
+        self._border = settings.get(SETTING_OVERLAY_BORDER, "true") == "true"
         self.update()
 
     def secondary_color(self) -> str:
@@ -148,6 +152,10 @@ class CaptureWindow(QWidget):
         if self._bg_mode == "chroma":
             # Solid keyable green, square corners so OBS's Chroma Key is clean.
             painter.fillRect(self.rect(), QColor(CHROMA_GREEN))
+        elif self._bg_mode == "transparent":
+            # Just the text. Alpha 1 instead of 0: fully clear pixels let
+            # clicks fall through, and the window couldn't be dragged.
+            painter.fillRect(self.rect(), QColor(0, 0, 0, 1))
         elif self._bg_mode == "image" and self._bg_image is not None:
             if self._bg_scaled is None or self._bg_scaled.size() != self.size():
                 self._bg_scaled = cover(self._bg_image, QSize(self.width(), self.height()))
@@ -160,7 +168,10 @@ class CaptureWindow(QWidget):
             color = QColor(self._card_color)
             color.setAlphaF(opacity)
             painter.setBrush(color)
-            painter.setPen(QPen(QColor(255, 77, 77, 120), 1))
+            if self._border:
+                painter.setPen(QPen(QColor(255, 77, 77, 120), 1))
+            else:
+                painter.setPen(Qt.PenStyle.NoPen)
             painter.drawRoundedRect(card_rect, radius, radius)
         painter.end()
         super().paintEvent(event)
@@ -168,18 +179,26 @@ class CaptureWindow(QWidget):
     # ----------------------------------------------------------------
     # Visibility
     # ----------------------------------------------------------------
-    def set_always_on_top(self, enabled: bool) -> None:
-        """Toggle the always-on-top window flag and re-show the widget."""
-        flags = self.windowFlags()
-        if bool(flags & Qt.WindowType.WindowStaysOnTopHint) == enabled:
+    def _set_flag(self, flag: Qt.WindowType, enabled: bool) -> None:
+        """Change one window flag, keeping the window where it was and shown if it was."""
+        if bool(self.windowFlags() & flag) == enabled:
             return  # changing flags re-creates the window: it would flicker
-        if enabled:
-            flags |= Qt.WindowType.WindowStaysOnTopHint
-        else:
-            flags &= ~Qt.WindowType.WindowStaysOnTopHint
-        self.setWindowFlags(flags)
-        if self.isVisible():
+        # setWindowFlags hides the window, so remember first (checking
+        # isVisible() afterwards is what made the overlay vanish).
+        was_visible = self.isVisible()
+        geometry = self.geometry()
+        self.setWindowFlag(flag, enabled)
+        self.setGeometry(geometry)
+        if was_visible:
             self.show()
+
+    def set_always_on_top(self, enabled: bool) -> None:
+        """Toggle the always-on-top window flag; the window stays shown."""
+        self._set_flag(Qt.WindowType.WindowStaysOnTopHint, enabled)
+
+    def set_click_through(self, enabled: bool) -> None:
+        """Clicks pass through to the game underneath (no dragging or menu meanwhile)."""
+        self._set_flag(Qt.WindowType.WindowTransparentForInput, enabled)
 
     def set_locked(self, locked: bool) -> None:
         """Lock the window in place (a stray click can't drag it)."""

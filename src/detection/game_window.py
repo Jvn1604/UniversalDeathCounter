@@ -521,16 +521,43 @@ def grab_into(
     canvas[top:bottom, left:right] = _rgb(shot, right - left, bottom - top)
 
 
-def capture_game_frame(exe_path: str | None, title: str = "") -> np.ndarray | None:
+def display_rect(sct: mss.base.MSSBase, display: int) -> Rect:
+    """Display ``display`` (1 = the first) as a rect; the first one if it's gone."""
+    monitors = sct.monitors
+    monitor = monitors[display] if 0 < display < len(monitors) else monitors[1]
+    return monitor["left"], monitor["top"], monitor["width"], monitor["height"]
+
+
+def list_displays() -> list[tuple[int, str]]:
+    """``(number, label)`` per connected display, e.g. ``(1, "Display 1: 1920×1080 (main)")``."""
+    if not detection_available():
+        return []
+    with open_screen_capture() as sct:
+        return [
+            (
+                index,
+                f"Display {index}: {m['width']}×{m['height']}"
+                + (" (main)" if (m["left"], m["top"]) == (0, 0) else ""),
+            )
+            for index, m in enumerate(sct.monitors[1:], start=1)
+        ]
+
+
+def capture_game_frame(
+    exe_path: str | None, title: str = "", display: int = 0
+) -> np.ndarray | None:
     """
-    One-off capture for calibration: the game's window if it is running,
-    otherwise the display under the mouse cursor (where the player is
-    looking). ``title`` picks one window of the program (console capture).
-    Returns None if capture is unavailable.
+    One-off capture for calibration: ``display`` when the game is watched
+    without its .exe, else the game's window if it is running, otherwise the
+    display under the mouse cursor (where the player is looking). ``title``
+    picks one window of the program (console capture). Returns None if
+    capture is unavailable.
     """
     if not detection_available():
         return None
     with open_screen_capture() as sct:
+        if display:
+            return np.ascontiguousarray(grab_rect(sct, display_rect(sct, display)))
         if exe_path:
             hwnd = find_main_window(find_process_ids(exe_path), title)
             rect = window_client_rect(hwnd) if hwnd is not None else None

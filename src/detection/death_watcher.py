@@ -23,6 +23,7 @@ from PySide6.QtCore import QObject, Signal
 from src.detection.game_window import (
     desktop_clip,
     detection_available,
+    display_rect,
     find_main_window,
     find_process_ids,
     grab_into,
@@ -124,6 +125,9 @@ class WatchConfig:
     obs_host: str = ""
     obs_port: int = 0
     obs_password: str = ""
+    # No .exe (it isn't found, a launcher, an emulator, cloud gaming): watch
+    # this whole display instead of the game's window. 0 = use the window.
+    screen_display: int = 0
 
 
 class DeathWatcher(QObject):
@@ -268,7 +272,10 @@ class DeathWatcher(QObject):
                 continue
 
             exe_name = (
-                config.obs_source or config.window_title or Path(config.exe_path).name
+                config.obs_source
+                or config.window_title
+                or (f"Display {config.screen_display}" if config.screen_display else "")
+                or Path(config.exe_path or "").name
             )
             now = time.monotonic()
             if config.obs_source:
@@ -287,34 +294,42 @@ class DeathWatcher(QObject):
                 else:
                     black_since = None
             else:
-                if hwnd is None or now >= next_lookup:
-                    hwnd = find_main_window(find_process_ids(config.exe_path), config.window_title)
-                    next_lookup = now + _WINDOW_LOOKUP_INTERVAL
-                if hwnd is None:
-                    if not ever_seen:
-                        self._report(config, ACTIVITY_WAITING)
-                    elif find_process_ids(config.exe_path):
-                        self._report(config, ACTIVITY_LOADING)  # alive, window not up
-                    else:
-                        self._report(config, ACTIVITY_CLOSED)  # quit or crashed
-                    self._set_status(f"Waiting for {exe_name} to start…")
-                    self._stop_event.wait(_PROCESS_POLL_SECONDS)
-                    continue
-                ever_seen = True
-
-                if is_not_responding(hwnd):
-                    self._report(config, ACTIVITY_NOT_RESPONDING)
-                    self._set_status(f"{exe_name} is not responding")
-                    self._stop_event.wait(_IDLE_POLL_SECONDS)
-                    continue
-
-                rect = window_client_rect(hwnd)
-                if rect is None:
-                    self._report(config, ACTIVITY_BACKGROUND)
+                if config.screen_display:
+                    # No .exe: watch the whole display; nothing to wait for.
+                    rect = display_rect(sct, config.screen_display)
                     hwnd = None
-                    self._set_status(f"{exe_name} is minimized")
-                    self._stop_event.wait(_IDLE_POLL_SECONDS)
-                    continue
+                    ever_seen = True
+                else:
+                    if hwnd is None or now >= next_lookup:
+                        hwnd = find_main_window(
+                            find_process_ids(config.exe_path), config.window_title
+                        )
+                        next_lookup = now + _WINDOW_LOOKUP_INTERVAL
+                    if hwnd is None:
+                        if not ever_seen:
+                            self._report(config, ACTIVITY_WAITING)
+                        elif find_process_ids(config.exe_path):
+                            self._report(config, ACTIVITY_LOADING)  # alive, window not up
+                        else:
+                            self._report(config, ACTIVITY_CLOSED)  # quit or crashed
+                        self._set_status(f"Waiting for {exe_name} to start…")
+                        self._stop_event.wait(_PROCESS_POLL_SECONDS)
+                        continue
+                    ever_seen = True
+
+                    if is_not_responding(hwnd):
+                        self._report(config, ACTIVITY_NOT_RESPONDING)
+                        self._set_status(f"{exe_name} is not responding")
+                        self._stop_event.wait(_IDLE_POLL_SECONDS)
+                        continue
+
+                    rect = window_client_rect(hwnd)
+                    if rect is None:
+                        self._report(config, ACTIVITY_BACKGROUND)
+                        hwnd = None
+                        self._set_status(f"{exe_name} is minimized")
+                        self._stop_event.wait(_IDLE_POLL_SECONDS)
+                        continue
 
                 now = time.monotonic()
                 on_screen = desktop_clip(sct, rect) == rect

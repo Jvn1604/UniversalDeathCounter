@@ -177,6 +177,7 @@ from src.utils.constants import (
     DETECTION_MODE_TEMPLATE,
     ICONS_DIR,
     OPTION_OBS_SOURCE,
+    OPTION_SCREEN_DISPLAY,
     OPTION_WINDOW_TITLE,
     SAVES_DIR,
     SETTING_BOSS_AUTO_ADVANCE,
@@ -201,6 +202,7 @@ from src.utils.constants import (
     SETTING_OVERLAY_ALWAYS_ON_TOP,
     SETTING_OVERLAY_BG_IMAGE,
     SETTING_OVERLAY_BG_MODE,
+    SETTING_OVERLAY_CLICK_THROUGH,
     SETTING_OVERLAY_COUNTER_SOURCE,
     SETTING_OVERLAY_EVER_SHOWN,
     SETTING_OVERLAY_FONT_SIZE,
@@ -1715,13 +1717,15 @@ class MainWindow(QMainWindow):
         row_ = self._database.get_game_detection(game_id)
         mode = row_["mode"] if row_ is not None else DETECTION_MODE_OFF
         exe = Path(row_["exe_path"]).name if row_ is not None and row_["exe_path"] else "not set"
+        display = self._screen_display(game_id)
+        watched = f"Display {display} (no .exe)" if display else exe
         counts = {
             kind: len(self._database.get_death_templates(game_id, kind))
             for kind in (SCREEN_DEATH, SCREEN_VICTORY, SCREEN_PAUSE)
         }
         self._detect_page_info.setText(
             f"<b>Method:</b> {_MODE_NAMES.get(mode, mode)} &nbsp; · &nbsp; "
-            f"<b>Game:</b> {exe}<br>"
+            f"<b>Watching:</b> {watched}<br>"
             f"<b>Saved screens:</b> {counts[SCREEN_DEATH]} death · "
             f"{counts[SCREEN_VICTORY]} boss victory · {counts[SCREEN_PAUSE]} pause/loading"
         )
@@ -1731,6 +1735,7 @@ class MainWindow(QMainWindow):
     # ----------------------------------------------------------------
     def _build_tray(self) -> None:
         self._tray: QSystemTrayIcon | None = None
+        self._click_through_action: QAction | None = None
         if not QSystemTrayIcon.isSystemTrayAvailable():
             logger.info("System tray unavailable on this platform")
             return
@@ -1765,6 +1770,14 @@ class MainWindow(QMainWindow):
         overlay_action.triggered.connect(lambda _=False: self._toggle_overlay())
         self._overlay.visibility_changed.connect(overlay_action.setChecked)
         self._add_display_menu(menu)
+        # The overlay can't be right-clicked while click-through is on: turn it off here.
+        self._click_through_action = menu.addAction("Overlay Click-Through")
+        self._click_through_action.setCheckable(True)
+        self._click_through_action.triggered.connect(
+            lambda on: self._set_overlay_setting(
+                SETTING_OVERLAY_CLICK_THROUGH, "true" if on else "false"
+            )
+        )
         menu.addSeparator()
         quit_action = menu.addAction("Quit")
         quit_action.triggered.connect(self._quit_app)
@@ -1952,11 +1965,15 @@ class MainWindow(QMainWindow):
             log_config, status = self._log_watch_config(game_id)
         elif not detection_available():
             status = "Auto-detect can't run here"
-        elif not row["exe_path"] and not self._obs_source(game_id):
+        elif (
+            not row["exe_path"]
+            and not self._obs_source(game_id)
+            and not self._screen_display(game_id)
+        ):
             status = "Auto-detect off"
         else:
             screen_config = self._screen_watch_config(game_id, mode, row["exe_path"])
-            if row["exe_path"]:
+            if row["exe_path"] or self._screen_display(game_id):
                 request_capture_permission()  # macOS asks once for Screen Recording
         if self._timer_needs_watching(game_id, row):
             # A run is going: also watch for loads, pauses and crashes, even
@@ -1992,6 +2009,7 @@ class MainWindow(QMainWindow):
             screen_config = dataclasses.replace(
                 screen_config,
                 window_title=self._capture_window_title(game_id),
+                screen_display=self._screen_display(game_id),
                 obs_source=self._obs_source(game_id),
                 obs_host=host,
                 obs_port=port,
@@ -2009,6 +2027,11 @@ class MainWindow(QMainWindow):
         """Console games: the title of the window to watch ("" = the game's own window)."""
         title = self._database.get_detection_options(game_id).get(OPTION_WINDOW_TITLE, "")
         return title if isinstance(title, str) else ""
+
+    def _screen_display(self, game_id: int) -> int:
+        """Games watched without their .exe: the display to watch (0 = the game's window)."""
+        display = self._database.get_detection_options(game_id).get(OPTION_SCREEN_DISPLAY, 0)
+        return display if isinstance(display, int) and display > 0 else 0
 
     def _obs_source(self, game_id: int) -> str:
         """Console games with a capture card: the OBS source to read ("" = none)."""
@@ -2217,7 +2240,9 @@ class MainWindow(QMainWindow):
             finally:
                 client.close()
         else:
-            frame = capture_game_frame(exe_path, self._capture_window_title(game_id))
+            frame = capture_game_frame(
+                exe_path, self._capture_window_title(game_id), self._screen_display(game_id)
+            )
         if frame is None:
             return
         self.show()
@@ -2334,6 +2359,13 @@ class MainWindow(QMainWindow):
             settings.get(SETTING_OVERLAY_ALWAYS_ON_TOP, "true") == "true"
         )
         self._overlay.set_locked(settings.get(SETTING_OVERLAY_LOCKED, "false") == "true")
+        self._overlay.set_click_through(
+            settings.get(SETTING_OVERLAY_CLICK_THROUGH, "false") == "true"
+        )
+        if self._click_through_action is not None:
+            self._click_through_action.setChecked(
+                settings.get(SETTING_OVERLAY_CLICK_THROUGH, "false") == "true"
+            )
 
     def _refresh_theme_icons(self, glow_color: str) -> None:
         icons.refresh_icons(self)
@@ -3422,6 +3454,7 @@ class MainWindow(QMainWindow):
             "Background",
             SETTING_OVERLAY_BG_MODE,
             (("dark", "Card", True), ("chroma", "Green Screen (Chroma Key)", True),
+             ("transparent", "Transparent", True),
              ("image", "Image" if has_image else "Image (choose one in Settings)", has_image)),
             settings.get(SETTING_OVERLAY_BG_MODE, "dark"),
         )
@@ -3442,6 +3475,7 @@ class MainWindow(QMainWindow):
             (SETTING_OVERLAY_SHOW_SKULL, "Skull Badge", "true"),
             (SETTING_OVERLAY_LOCKED, "Lock Position", "false"),
             (SETTING_OVERLAY_ALWAYS_ON_TOP, "Always on Top", "true"),
+            (SETTING_OVERLAY_CLICK_THROUGH, "Click-Through (off again: tray menu)", "false"),
         ):
             action = menu.addAction(label)
             action.setCheckable(True)
@@ -3553,7 +3587,9 @@ class MainWindow(QMainWindow):
             or not controller.running
             or controller.game_id != game_id
             or row is None
-            or not (row["exe_path"] or self._obs_source(game_id))
+            or not (
+                row["exe_path"] or self._obs_source(game_id) or self._screen_display(game_id)
+            )
             or not detection_available()
         ):
             return False

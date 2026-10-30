@@ -39,7 +39,7 @@ from PySide6.QtWidgets import (
 )
 
 from src.database.database import SCREEN_DEATH, SCREEN_PAUSE, SCREEN_VICTORY, Database
-from src.detection.game_window import capture_hint, detection_available
+from src.detection.game_window import capture_hint, detection_available, list_displays
 from src.detection.log_watcher import compile_death_pattern, scan_log
 from src.detection.matchers import SOULS_PRESET_EXES, DeathTemplate, HealthBar, Region
 from src.utils.constants import (
@@ -49,6 +49,7 @@ from src.utils.constants import (
     DETECTION_MODE_SOULS,
     DETECTION_MODE_TEMPLATE,
     OPTION_OBS_SOURCE,
+    OPTION_SCREEN_DISPLAY,
     SETTING_DETECTION_COOLDOWN,
     SETTING_HOTKEY_CALIBRATE,
     SETTING_HOTKEY_INCREMENT,
@@ -448,6 +449,24 @@ class AutoDetectWindow(QDialog):
         layout.addWidget(intro)
 
         form = self._form = QFormLayout()
+        self._source_combo = QComboBox()
+        self._source_combo.addItem("The game's window (pick its .exe)", userData="window")
+        self._source_combo.addItem("A whole display (no .exe needed)", userData="display")
+        self._source_combo.setToolTip(
+            "If the game's .exe isn't found (launchers, emulators, cloud gaming), "
+            "watch the display it's on instead."
+        )
+        self._source_combo.currentIndexChanged.connect(self._update_visible_rows)
+        form.addRow("Watch", self._source_combo)
+        self._display_combo = QComboBox()
+        for number, label in list_displays():
+            self._display_combo.addItem(label, userData=number)
+        form.addRow("Display", self._display_combo)
+        self._display_hint = self._hint(
+            "Keep the game on this display. Then just capture your death screen once "
+            "(F8 on it, or Capture Screen afterwards): the same screen there counts a death."
+        )
+        form.addRow("", self._display_hint)
         self._exe_edit = QLineEdit()
         self._exe_edit.setReadOnly(True)
         self._exe_edit.setPlaceholderText("Select the game's .exe")
@@ -602,11 +621,15 @@ class AutoDetectWindow(QDialog):
             self._log_hint: mode == DETECTION_MODE_LOG,
             self._cooldown_spin: mode in screen_modes,
         }
+        on_display = self._source_combo.currentData() == "display"
+        visible[self._source_combo] = mode in screen_modes
+        visible[self._display_combo] = mode in screen_modes and on_display
+        visible[self._display_hint] = mode in screen_modes and on_display
         for widget, show in visible.items():
             self._form.setRowVisible(widget, show)
         self._exe_edit.setPlaceholderText(
             "Optional: auto-selects this game when it starts"
-            if mode == DETECTION_MODE_LOG
+            if mode == DETECTION_MODE_LOG or (mode in screen_modes and on_display)
             else "Select the game's .exe"
         )
         self.adjustSize()
@@ -618,6 +641,11 @@ class AutoDetectWindow(QDialog):
             index = self._mode_combo.findData(row["mode"])
             self._mode_combo.setCurrentIndex(max(index, 0))
         options = self._database.get_detection_options(self._game_id)
+        display = options.get(OPTION_SCREEN_DISPLAY, 0)
+        if isinstance(display, int) and display > 0:
+            self._source_combo.setCurrentIndex(1)
+            index = self._display_combo.findData(display)
+            self._display_combo.setCurrentIndex(max(index, 0))
         self._log_edit.setText(str(options.get("log_path") or ""))
         self._pattern_edit.setText(str(options.get("log_pattern") or ""))
         self._update_calibration_label()
@@ -849,9 +877,29 @@ class AutoDetectWindow(QDialog):
             self._database.update_detection_options(
                 self._game_id, log_path=str(log_path), log_pattern=self._pattern_edit.text()
             )
-        elif mode != DETECTION_MODE_OFF and exe_path is None and not self._console_source():
-            QMessageBox.warning(self, "Select the Game", "Select the game's .exe first.")
+        on_display = (
+            mode in (DETECTION_MODE_TEMPLATE, DETECTION_MODE_SOULS, DETECTION_MODE_HEALTH)
+            and self._source_combo.currentData() == "display"
+        )
+        if on_display and self._display_combo.currentData() is None:
+            QMessageBox.warning(self, "No Display", "No display was found to watch.")
             return
+        if (
+            mode not in (DETECTION_MODE_OFF, DETECTION_MODE_LOG)
+            and not on_display
+            and exe_path is None
+            and not self._console_source()
+        ):
+            QMessageBox.warning(
+                self,
+                "Select the Game",
+                "Select the game's .exe first, or choose Watch: A whole display.",
+            )
+            return
+        self._database.update_detection_options(
+            self._game_id,
+            **{OPTION_SCREEN_DISPLAY: self._display_combo.currentData() if on_display else None},
+        )
         hotkey = self._database.get_setting(SETTING_HOTKEY_CALIBRATE, "f8").upper()
         if mode == DETECTION_MODE_TEMPLATE and not self._has_template():
             QMessageBox.information(self, "Teach It Your Death Screen", first_death_hint(hotkey))
