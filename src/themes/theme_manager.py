@@ -252,7 +252,9 @@ def customize_stylesheet(
         stylesheet = stylesheet.replace(f"color: {info.text};", f"color: {text_color};")
         stylesheet += f"\nQLabel#TitleLabel, QLabel#PageTitle {{ color: {text_color}; }}\n"
     if counter_color:
-        stylesheet += f"\nQLabel#CounterLabel {{ color: {counter_color}; }}\n"
+        stylesheet += (
+            f"\nQLabel#CounterLabel, QLabel#HomeCount {{ color: {counter_color}; }}\n"
+        )
     if font_family:
         family = font_family.replace('"', "")
         stylesheet += f'\nQWidget {{ font-family: "{family}"; }}\n'

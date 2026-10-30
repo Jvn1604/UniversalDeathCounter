@@ -315,8 +315,14 @@ class SettingsWindow(QDialog):
         hotkeys: HotkeyManager | None = None,
         parent=None,
         tab: int = 0,
+        embedded: bool = False,
     ) -> None:
         super().__init__(parent)
+        # Embedded: a page of the main window instead of a dialog. Save keeps
+        # it open, Discard Changes goes back to what's saved.
+        self._embedded = embedded
+        if embedded:
+            self.setWindowFlags(Qt.WindowType.Widget)
         self._database = database
         self._gamepad = gamepad
         self._hotkeys = hotkeys  # probes whether keys are taken by other programs
@@ -329,11 +335,63 @@ class SettingsWindow(QDialog):
         self._preview_timer.setInterval(120)  # one restyle per burst of changes
         self._preview_timer.timeout.connect(self._send_preview)
         self.setWindowTitle("Settings")
-        self.setMinimumSize(720, 620)  # all five tabs fit side by side
+        if not embedded:
+            self.setMinimumSize(720, 620)  # all five tabs fit side by side
         self._build_ui()
         self._load_current_values()
         self._connect_preview()
         self._tabs.setCurrentIndex(tab)
+        self._baseline = self._state()
+
+    # ----------------------------------------------------------------
+    # Embedded page: unsaved changes
+    # ----------------------------------------------------------------
+    def _state(self) -> dict:
+        """Everything the controls show (per control), to tell whether anything changed."""
+        values: dict = {
+            "look": sorted(self._look_values().items()),
+            "pads": sorted(self._pad_values.items()),
+        }
+        for widget in self.findChildren(QWidget):
+            if isinstance(widget, QCheckBox):
+                values[id(widget)] = widget.isChecked()
+            elif isinstance(widget, QComboBox):
+                values[id(widget)] = widget.currentIndex()
+            elif isinstance(widget, QKeySequenceEdit):
+                values[id(widget)] = widget.keySequence().toString()
+            elif isinstance(widget, (QSpinBox, QDoubleSpinBox, QSlider)):
+                values[id(widget)] = widget.value()
+            elif isinstance(widget, QLineEdit) and not isinstance(
+                widget.parent(), (QSpinBox, QDoubleSpinBox, QComboBox, QKeySequenceEdit)
+            ):
+                values[id(widget)] = widget.text()
+        return values
+
+    def has_changes(self) -> bool:
+        return self._state() != self._baseline
+
+    def reload(self) -> None:
+        """Show what's saved (e.g. changed from the overlay menu meanwhile)."""
+        self._preview_timer.stop()
+        self._load_current_values()
+        self._update_overlay_preview()
+        if self.previewed:
+            self.preview_changed.emit({})
+            self.previewed = False
+        self._baseline = self._state()
+
+    def set_tab(self, tab: int) -> None:
+        self._tabs.setCurrentIndex(tab)
+
+    def stop_recording(self) -> None:
+        if self._gamepad is not None:
+            self._gamepad.cancel_recording()
+
+    def keyPressEvent(self, event) -> None:  # noqa: N802 - Esc mustn't close a page
+        if self._embedded and event.key() == Qt.Key.Key_Escape:
+            event.ignore()
+            return
+        super().keyPressEvent(event)
 
     # ----------------------------------------------------------------
     # UI construction
@@ -418,12 +476,13 @@ class SettingsWindow(QDialog):
         buttons = QHBoxLayout()
         hint = QLabel("Looks change live as you edit; nothing is kept until you save.")
         hint.setObjectName("Muted")
-        cancel_button = QPushButton("Cancel")
+        cancel_button = QPushButton("Discard Changes" if self._embedded else "Cancel")
         cancel_button.setObjectName("GhostButton")
         cancel_button.clicked.connect(self.reject)
         apply_button = QPushButton("Apply")
         apply_button.setToolTip("Save without closing Settings.")
         apply_button.clicked.connect(self._apply)
+        apply_button.setVisible(not self._embedded)  # Save already keeps the page open
         save_button = QPushButton(" Save")
         save_button.setObjectName("AccentButton")
         icons.set_icon(save_button, "check", icons.ACCENT, size=16)
@@ -977,7 +1036,7 @@ class SettingsWindow(QDialog):
             self._set_pad(action, settings.get(pad_setting(action), ""))
 
     def _save(self) -> None:
-        if self._apply():
+        if self._apply() and not self._embedded:
             self.accept()
 
     def _apply(self) -> bool:
@@ -1037,8 +1096,12 @@ class SettingsWindow(QDialog):
         logger.info("Settings saved")
         self.settings_changed.emit()
         self.previewed = False  # what's shown is what's saved now
+        self._baseline = self._state()
         return True
 
     def reject(self) -> None:  # noqa: D102 - stop a pending preview first
         self._preview_timer.stop()
+        if self._embedded:
+            self.reload()  # Discard Changes
+            return
         super().reject()

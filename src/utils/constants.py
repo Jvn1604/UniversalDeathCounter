@@ -21,7 +21,7 @@ APP_BRAND: str = "DePhantom"  # big header text; APP_SUBTITLE goes underneath
 APP_SUBTITLE: str = "Universal Death Counter (DUDC)"
 # APP_ORG (below), the exe name and the data folder intentionally keep the
 # old internal name, so existing installs upgrade in place and keep data.
-APP_VERSION: str = "2.12.0"
+APP_VERSION: str = "2.13.0"
 APP_ORG: str = "UniversalDeathCounter"
 
 # GitHub repository ("owner/repo") used by the update checker. Edit this
@@ -167,6 +167,7 @@ SETTING_DEATHS_TXT_TEMPLATE: str = "deaths_txt_template"
 # --- v1.5 quality of life ---
 SETTING_MINIMIZE_TO_TRAY: str = "minimize_to_tray"
 SETTING_CONFIRM_CLOSE: str = "confirm_close"
+SETTING_SIDEBAR_COLLAPSED: str = "sidebar_collapsed"
 SETTING_CHECK_UPDATES: str = "check_updates"
 
 # --- auto death detection ---

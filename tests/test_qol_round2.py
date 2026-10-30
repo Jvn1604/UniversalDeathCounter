@@ -71,7 +71,9 @@ def test_timer_page_buttons_show_their_keys(window) -> None:
 def test_guide_adds_a_boss_list_game_and_ticks_it_off(window) -> None:
     from src.ui.guide_dialog import ACTION_TEMPLATE
 
-    assert window._first_game_btn.isVisibleTo(window)  # empty state
+    assert not window._first_game_btn.isHidden()  # empty state (Death Counter page)
+    window._refresh_home()
+    assert window._home_open_btn.text().strip() == "Add Your First Game"  # and on Home
     window.maybe_show_welcome()  # fresh install: the guide opens beside the window
     guide = window._guide
     assert guide is not None and guide.isVisible() and not guide.step_done("game")
@@ -79,7 +81,9 @@ def test_guide_adds_a_boss_list_game_and_ticks_it_off(window) -> None:
     window._refresh_home()
     assert window._game_combo.currentText() == "Elden Ring"
     assert window._boss_combo.currentText().startswith("Margit")  # first boss selected
-    assert not window._first_game_btn.isVisibleTo(window)
+    assert window._first_game_btn.isHidden()
+    assert window._home_open_btn.text().strip() == "Open Death Counter"
+    assert window._home_game.text() == "Elden Ring"
     assert guide.step_done("game") and guide.step_done("bosses")
     assert not guide.step_done("death")
     window._on_increment()

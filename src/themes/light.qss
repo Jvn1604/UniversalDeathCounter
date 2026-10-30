@@ -242,6 +242,19 @@ QPushButton#CounterCaption:hover {
     border-color: rgba(74, 78, 90, 90);
 }
 
+QLabel#HomeCount {
+    font-family: "Segoe UI Variable Display", "Segoe UI", sans-serif;
+    font-size: 54px;
+    font-weight: 900;
+    color: #e3263f;
+}
+
+/* Collapsed sidebar: icons only, centered. */
+QPushButton#NavButton[collapsed="true"] {
+    padding: 9px 0px;
+    text-align: center;
+}
+
 QLabel#SubCounterLabel {
     font-size: 13px;
     color: #626674;
@@ -282,6 +295,12 @@ QLabel#StatusPill[state="active"] {
     background-color: rgba(58, 208, 122, 0.12);
     border: 1px solid rgba(58, 208, 122, 0.45);
     color: #157a41;
+}
+
+QLabel#StatusPill[state="waiting"] {
+    background-color: rgba(214, 160, 20, 0.12);
+    border: 1px solid rgba(214, 160, 20, 0.45);
+    color: #8a6a0c;
 }
 
 QLabel#StatusPill[state="warning"] {
