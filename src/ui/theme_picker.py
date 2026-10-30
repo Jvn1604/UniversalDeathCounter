@@ -33,7 +33,7 @@ from src.themes.theme_manager import (
 from src.ui import icons
 
 
-class _ThemeDownload(QObject):
+class ThemeDownload(QObject):
     """Downloads one theme off the UI thread; ``finished(name, error)`` ("" = ok)."""
 
     finished = Signal(str, str)
@@ -171,7 +171,7 @@ class ThemeGallery(QWidget):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._theme = "dark"
-        self._downloads: dict[str, _ThemeDownload] = {}
+        self._downloads: dict[str, ThemeDownload] = {}
         grid = QGridLayout(self)
         grid.setContentsMargins(0, 0, 0, 0)
         grid.setSpacing(10)
@@ -201,7 +201,7 @@ class ThemeGallery(QWidget):
         if name in self._downloads:
             return
         self._cards[name].refresh(busy=True)
-        download = self._downloads[name] = _ThemeDownload(name)
+        download = self._downloads[name] = ThemeDownload(name)
         download.finished.connect(self._on_downloaded)
         download.start()
 

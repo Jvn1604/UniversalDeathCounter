@@ -294,15 +294,6 @@ QLabel#GuideBadge {
     border-radius: 36px;
 }
 
-QLabel#StepDot {
-    background-color: #2c2f3a;
-    border-radius: 4px;
-}
-
-QLabel#StepDot[active="true"] {
-    background-color: #ff3d55;
-}
-
 /* ---------------------------------------------------------------- buttons */
 
 QPushButton {
@@ -766,4 +757,116 @@ QLabel#PhoneLink {
     padding: 10px 12px;
     border: 1px dashed rgba(128, 128, 128, 0.45);
     border-radius: 10px;
+}
+
+/* ---------------------------------------------------------------- home dashboard */
+
+QLabel#DateChip {
+    background-color: rgba(255, 255, 255, 0.05);
+    border: 1px solid #22242d;
+    border-radius: 13px;
+    padding: 5px 12px;
+    color: #8a8f9c;
+    font-size: 12px;
+    font-weight: 600;
+}
+
+QLabel#TierName {
+    font-size: 13px;
+    font-weight: 800;
+    color: #ffffff;
+}
+
+QLabel#TierHint {
+    font-size: 11px;
+    color: #8a8f9c;
+}
+
+QProgressBar#TierProgress {
+    background-color: rgba(255, 255, 255, 0.05);
+    border: none;
+    border-radius: 3px;
+}
+
+QProgressBar#TierProgress::chunk {
+    background-color: #ff3d55;
+    border-radius: 3px;
+}
+
+QLabel#InsightValue {
+    font-family: "Segoe UI Variable Display", "Segoe UI", sans-serif;
+    font-size: 24px;
+    font-weight: 800;
+    color: #ffffff;
+}
+
+QLabel#DeltaChip {
+    border-radius: 11px;
+    border: 1px solid transparent;
+    padding: 3px 10px;
+    font-size: 11px;
+    font-weight: 700;
+    background-color: rgba(255, 255, 255, 0.05);
+    color: #8a8f9c;
+}
+
+QLabel#DeltaChip[tone="up"] {
+    border-radius: 11px;
+    border: 1px solid transparent;
+    padding: 3px 10px;
+    font-size: 11px;
+    font-weight: 700;
+    background-color: rgba(255, 61, 85, 0.14);
+    color: #ff3d55;
+}
+
+QLabel#DeltaChip[tone="down"] {
+    border-radius: 11px;
+    border: 1px solid transparent;
+    padding: 3px 10px;
+    font-size: 11px;
+    font-weight: 700;
+    background-color: rgba(58, 208, 122, 0.14);
+    color: #7ee2a8;
+}
+
+QFrame#StartBanner {
+    background-color: rgba(255, 61, 85, 0.08);
+    border: 1px solid rgba(255, 61, 85, 0.32);
+    border-radius: 16px;
+}
+
+QLabel#StartBannerIcon {
+    background-color: rgba(255, 61, 85, 0.16);
+    border-radius: 19px;
+}
+
+QLabel#StartBannerTitle, QLabel#StepTitle {
+    font-size: 14px;
+    font-weight: 800;
+    color: #ffffff;
+}
+
+QFrame#GuideStep {
+    background-color: rgba(255, 255, 255, 0.05);
+    border: 1px solid #22242d;
+    border-radius: 14px;
+}
+
+QFrame#GuideStep[done="true"] {
+    background-color: rgba(58, 208, 122, 0.06);
+    border: 1px solid rgba(58, 208, 122, 0.30);
+}
+
+QLabel#StepMark {
+    background-color: rgba(255, 61, 85, 0.14);
+    border: 1px solid rgba(255, 61, 85, 0.40);
+    border-radius: 15px;
+    color: #ff3d55;
+    font-weight: 800;
+}
+
+QLabel#StepMark[done="true"] {
+    background-color: rgb(58, 208, 122);
+    border: 1px solid rgb(58, 208, 122);
 }

@@ -15,7 +15,7 @@ import tempfile
 import threading
 import time
 from collections.abc import Callable
-from datetime import datetime
+from datetime import date, datetime, timedelta
 from html import escape
 from pathlib import Path
 
@@ -102,8 +102,8 @@ from src.detection.obs_client import ObsClient, ObsError
 from src.hotkeys.gamepad import GamepadManager, combo_label
 from src.hotkeys.hotkey_manager import HotkeyManager
 from src.overlay.overlay_window import OverlayWindow, available_screen_rects
-from src.themes.theme_manager import active_theme, apply_theme, theme_info
-from src.ui import icons
+from src.themes.theme_manager import active_theme, apply_theme, outdated_themes, theme_info
+from src.ui import dashboard, icons
 from src.ui.about_window import AboutWindow
 from src.ui.auto_detect_window import (
     AutoDetectWindow,
@@ -113,13 +113,28 @@ from src.ui.auto_detect_window import (
     first_death_hint,
 )
 from src.ui.boss_window import BossWindow
+from src.ui.dashboard import BossRanking, ProgressRing, SkullBadge, StartBanner, WeekChart
 from src.ui.death_log_window import DeathLogWindow
+from src.ui.guide_dialog import (
+    ACTION_ADD_EXE,
+    ACTION_BOSSES,
+    ACTION_CONSOLE,
+    ACTION_CONTROLS,
+    ACTION_DETECTION,
+    ACTION_HOME,
+    ACTION_OBS,
+    ACTION_OVERLAY,
+    ACTION_TEMPLATE,
+    ACTION_TIMER,
+    STEPS,
+    GuideDialog,
+)
 from src.ui.mini_window import MiniWindow
 from src.ui.obs_guide_window import ObsGuideWindow
 from src.ui.settings_window import SettingsWindow
 from src.ui.statistics_window import StatisticsWindow
+from src.ui.theme_picker import ThemeDownload
 from src.ui.timer_window import RunHistoryDialog, SplitsDialog, TimerWindow
-from src.ui.welcome_dialog import CHOICE_EXE, CHOICE_OBS, CHOICE_TEMPLATE, WelcomeDialog
 from src.ui.widgets import (
     ActionButton,
     AutoHideLabel,
@@ -178,11 +193,14 @@ from src.utils.constants import (
     SETTING_OVERLAY_BG_IMAGE,
     SETTING_OVERLAY_BG_MODE,
     SETTING_OVERLAY_COUNTER_SOURCE,
+    SETTING_OVERLAY_EVER_SHOWN,
     SETTING_OVERLAY_FONT_SIZE,
     SETTING_OVERLAY_GEOMETRY,
     SETTING_OVERLAY_LOCKED,
+    SETTING_OVERLAY_SHOW_SKULL,
     SETTING_PHONE_REMOTE,
     SETTING_PHONE_REMOTE_KEY,
+    SETTING_QUICK_START_HIDDEN,
     SETTING_THEME,
     SETTING_TIMER_AUTOSAVE,
     SETTING_TIMER_COMPARISON,
@@ -370,6 +388,13 @@ class MainWindow(QMainWindow):
         # waiting for the recovery prompt, and must not be cleared.
         self._autosave_written = False
         self._menu_icons: list[tuple[QAction, str]] = []  # re-tinted with the theme
+        self._guide: GuideDialog | None = None
+        # Home's charts and the guide's checklist: refreshed once after a burst of changes.
+        self._home_refresh = QTimer(self)
+        self._home_refresh.setSingleShot(True)
+        self._home_refresh.setInterval(150)
+        self._home_refresh.timeout.connect(self._refresh_home)
+        self._overlay.visibility_changed.connect(self._on_overlay_visibility)
 
         self._update_window_title()
         self._build_menu()
@@ -393,6 +418,7 @@ class MainWindow(QMainWindow):
         self._recovery_timer.timeout.connect(self._offer_run_recovery)
         self._recovery_timer.start(0)
         self._maybe_check_updates()
+        self._refresh_downloaded_themes()
         if self._database.get_setting(SETTING_PHONE_REMOTE, "false") == "true":
             self._set_phone_remote(True)
 
@@ -621,6 +647,26 @@ class MainWindow(QMainWindow):
     def _build_home_page(self) -> QWidget:
         page, layout = self._page_layout()
 
+        greeting = QHBoxLayout()
+        greeting_titles = QVBoxLayout()
+        greeting_titles.setSpacing(2)
+        self._greeting = QLabel()
+        self._greeting.setObjectName("PageTitle")
+        self._greeting_line = QLabel()
+        self._greeting_line.setObjectName("PageSubtitle")
+        greeting_titles.addWidget(self._greeting)
+        greeting_titles.addWidget(self._greeting_line)
+        self._date_chip = QLabel()
+        self._date_chip.setObjectName("DateChip")
+        greeting.addLayout(greeting_titles, 1)
+        greeting.addWidget(self._date_chip, 0, Qt.AlignmentFlag.AlignVCenter)
+        layout.addLayout(greeting)
+        self._start_banner = StartBanner()
+        self._start_banner.clicked.connect(lambda: self.maybe_show_welcome(force=True))
+        self._start_banner.dismissed.connect(self._hide_start_banner)
+        self._start_banner.hide()
+        layout.addWidget(self._start_banner)
+
         self._game_combo = QComboBox()
         self._game_combo.setPlaceholderText("Add a game: pick its .exe")
         self._game_combo.currentIndexChanged.connect(self._on_game_changed)
@@ -673,10 +719,15 @@ class MainWindow(QMainWindow):
         selectors.addWidget(manage_button, 0, Qt.AlignmentFlag.AlignBottom)
         layout.addLayout(selectors)
 
-        hero = HeroCard()
-        hero_layout = QVBoxLayout(hero)
-        hero_layout.setContentsMargins(22, 14, 22, 18)
+        hero = HeroCard(watermark="")
+        hero_row = QHBoxLayout(hero)
+        hero_row.setContentsMargins(24, 18, 22, 18)
+        hero_row.setSpacing(24)
+        self._skull_badge = SkullBadge()
+        hero_row.addWidget(self._skull_badge, 0, Qt.AlignmentFlag.AlignVCenter)
+        hero_layout = QVBoxLayout()
         hero_layout.setSpacing(0)
+        hero_row.addLayout(hero_layout, 1)
         self._counter_label = QLabel("0")
         self._counter_label.setObjectName("CounterLabel")
         self._counter_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -721,6 +772,36 @@ class MainWindow(QMainWindow):
         for button in (self._minus_btn, self._undo_btn):
             button.setMinimumHeight(58)
         layout.addLayout(row(self._plus_btn, self._minus_btn, self._undo_btn, stretch=(2, 1, 1)))
+
+        week, week_layout = card(margins=16)
+        week_layout.setSpacing(4)
+        week_top = QHBoxLayout()
+        week_top.addWidget(section_title("This week"))
+        week_top.addStretch()
+        self._week_delta = QLabel()
+        self._week_delta.setObjectName("DeltaChip")
+        week_top.addWidget(self._week_delta)
+        week_layout.addLayout(week_top)
+        self._week_total = QLabel()
+        self._week_total.setObjectName("InsightValue")
+        week_layout.addWidget(self._week_total)
+        self._week_chart = WeekChart()
+        week_layout.addWidget(self._week_chart, 1)
+
+        bosses, bosses_layout = card(margins=16)
+        bosses_layout.addWidget(section_title("Boss progress"))
+        boss_body = QHBoxLayout()
+        boss_body.setSpacing(18)
+        self._boss_ring = ProgressRing()
+        self._toughest = BossRanking()
+        boss_body.addWidget(self._boss_ring, 0, Qt.AlignmentFlag.AlignVCenter)
+        boss_body.addWidget(self._toughest, 1)
+        bosses_layout.addLayout(boss_body, 1)
+        insights = QHBoxLayout()
+        insights.setSpacing(16)
+        insights.addWidget(week, 3)
+        insights.addWidget(bosses, 2)
+        layout.addLayout(insights)
 
         status, status_layout = card(margins=14)
         self._detect_status_label = StatusPill("Auto-detect off")
@@ -1290,7 +1371,9 @@ class MainWindow(QMainWindow):
             self._refresh_timer_page()
         else:
             self._page_timer.stop()
-        if index == _PAGE_STATS:
+        if index == _PAGE_HOME:
+            self._refresh_home()
+        elif index == _PAGE_STATS:
             self._refresh_stats_page()
         elif index == _PAGE_DETECTION:
             self._refresh_detection_page()
@@ -1968,6 +2051,12 @@ class MainWindow(QMainWindow):
                 icons.DANGER: info.danger,
             }
         )
+        dashboard.set_colors(
+            settings.get(SETTING_UI_TEXT_COLOR, "") or info.text,
+            info.icon_muted,
+            settings.get(SETTING_UI_COUNTER_COLOR, "") or info.accent,
+            info.light,
+        )
         apply_theme(
             self,
             theme,
@@ -1993,6 +2082,10 @@ class MainWindow(QMainWindow):
             action.setIcon(icons.icon(icon_name, icons.color(icons.NORMAL), size=16))
         self._credit.refresh_icon()
         self._update_card.refresh_icon()
+        self._skull_badge.refresh_art()
+        self._start_banner.refresh_icon()
+        self._week_chart.update()
+        self._boss_ring.update()
         glow(self._counter_label, glow_color, radius=48)
 
     def _preview_appearance(self, values: dict[str, str]) -> None:
@@ -2000,6 +2093,21 @@ class MainWindow(QMainWindow):
         settings = self._database.get_all_settings()
         settings.update(values)
         self._apply_appearance(settings)
+
+    def _refresh_downloaded_themes(self) -> None:
+        """After an app update, fetch this version's copy of downloaded themes (quietly)."""
+        self._theme_downloads = []
+        for name in outdated_themes():
+            download = ThemeDownload(name)
+            download.finished.connect(self._on_theme_refreshed)
+            self._theme_downloads.append(download)
+            download.start()
+
+    def _on_theme_refreshed(self, name: str, error: str) -> None:
+        if error:
+            logger.info("Couldn't refresh theme '%s': %s", name, error)
+        elif self._database.get_setting(SETTING_THEME, "dark") == name:
+            self._apply_saved_settings()
 
     def _maybe_check_updates(self) -> None:
         """Check now and every few hours (if enabled); the sidebar card shows the result."""
@@ -2081,15 +2189,9 @@ class MainWindow(QMainWindow):
     # ----------------------------------------------------------------
     # Welcome guide, mini mode, quick renames
     # ----------------------------------------------------------------
-    def maybe_show_welcome(self, force: bool = False) -> None:
-        """The first-run guide: on a fresh install once, or on request."""
-        if not force and (
-            self._database.get_games()
-            or self._database.get_setting(SETTING_WELCOME_SHOWN, "") == "true"
-        ):
-            return
+    def _guide_keys(self) -> dict[str, str]:
         bindings = self._hotkey_bindings()
-        keys = {
+        return {
             action: QKeySequence(bindings.get(f"{action}_key", "")).toString(
                 QKeySequence.SequenceFormat.NativeText
             )
@@ -2104,15 +2206,171 @@ class MainWindow(QMainWindow):
                 "timer_reset",
             )
         }
-        dialog = WelcomeDialog(keys, parent=self)
-        dialog.exec()
-        self._database.set_setting(SETTING_WELCOME_SHOWN, "false" if dialog.show_again else "true")
-        if dialog.choice == CHOICE_EXE:
+
+    def maybe_show_welcome(self, force: bool = False) -> None:
+        """The Quick Start guide: on a fresh install once, or on request."""
+        if not force and (
+            self._database.get_games()
+            or self._database.get_setting(SETTING_WELCOME_SHOWN, "") == "true"
+        ):
+            return
+        if self._guide is None:
+            guide = self._guide = GuideDialog(self._guide_keys(), parent=self)
+            guide.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+            guide.again_check.setChecked(
+                self._database.get_setting(SETTING_WELCOME_SHOWN, "") == "false"
+            )
+            guide.action_requested.connect(self._on_guide_action)
+            guide.finished.connect(self._on_guide_closed)
+        self._guide.set_status(self._quick_start_status())
+        self._guide.show()
+        self._guide.raise_()
+        self._guide.activateWindow()
+
+    def _on_guide_closed(self, _result: int) -> None:
+        if self._guide is not None:
+            shown = "false" if self._guide.again_check.isChecked() else "true"
+            self._database.set_setting(SETTING_WELCOME_SHOWN, shown)
+        self._guide = None
+
+    def _on_guide_action(self, action: str) -> None:
+        """A guide button: do it here, where the real flows live."""
+        pages = {
+            ACTION_HOME: _PAGE_HOME,
+            ACTION_DETECTION: _PAGE_DETECTION,
+            ACTION_CONSOLE: _PAGE_CONSOLE,
+            ACTION_TIMER: _PAGE_TIMER,
+        }
+        if action == ACTION_ADD_EXE:
             self._add_game_from_exe()
-        elif dialog.choice == CHOICE_TEMPLATE:
-            self._add_template_game(dialog.template_name)
-        elif dialog.choice == CHOICE_OBS:
+        elif action.startswith(ACTION_TEMPLATE):
+            self._add_template_game(action[len(ACTION_TEMPLATE):])
+        elif action in pages:
+            self._show_page(pages[action])
+            self.showNormal()
+            self.raise_()
+            self.activateWindow()
+        elif action == ACTION_BOSSES:
+            self._open_boss_window()
+        elif action == ACTION_OVERLAY:
+            if not self._overlay.isVisible():
+                self._toggle_overlay()
+        elif action == ACTION_OBS:
             self._open_obs_guide()
+        elif action == ACTION_CONTROLS:
+            self._open_settings_window(SettingsWindow.TAB_CONTROLS)
+        self._home_refresh.start()
+
+    def _quick_start_status(self) -> dict[str, bool]:
+        """Which Quick Start steps the player has done (cheap: a few small queries)."""
+        db = self._database
+        game_id = self._counter_manager.current_game_id
+        detect = False
+        if game_id is not None:
+            row_ = db.get_game_detection(game_id)
+            mode = row_["mode"] if row_ is not None else DETECTION_MODE_OFF
+            source = bool(row_ is not None and row_["exe_path"]) or bool(self._obs_source(game_id))
+            if mode == DETECTION_MODE_LOG:
+                detect = True
+            elif mode == DETECTION_MODE_TEMPLATE:
+                detect = source and bool(db.get_death_templates(game_id, SCREEN_DEATH))
+            elif mode != DETECTION_MODE_OFF:
+                detect = source
+        return {
+            "game": game_id is not None or bool(db.get_games()),
+            "death": db.get_total_deaths() > 0,
+            "bosses": game_id is not None and self._boss_combo.count() > 1,
+            "detect": detect,
+            "stream": self._overlay.isVisible()
+            or db.get_setting(SETTING_OVERLAY_EVER_SHOWN, "false") == "true"
+            or db.get_setting(SETTING_DEATHS_TXT_ENABLED, "false") == "true",
+        }
+
+    def _on_overlay_visibility(self, visible: bool) -> None:
+        if visible and self._database.get_setting(SETTING_OVERLAY_EVER_SHOWN, "") != "true":
+            self._database.set_setting(SETTING_OVERLAY_EVER_SHOWN, "true")
+            self._home_refresh.start()
+
+    def _hide_start_banner(self) -> None:
+        self._database.set_setting(SETTING_QUICK_START_HIDDEN, "true")
+        self._start_banner.hide()
+
+    def _refresh_home(self) -> None:
+        """The guide's checklist, the banner, and (while Home shows) the greeting and charts."""
+        status = self._quick_start_status()
+        if self._guide is not None:
+            self._guide.set_status(status)
+        remaining = [title for key, title in STEPS if not status[key]]
+        hidden = self._database.get_setting(SETTING_QUICK_START_HIDDEN, "false") == "true"
+        if remaining and not hidden:
+            self._start_banner.set_progress(len(STEPS) - len(remaining), len(STEPS), remaining[0])
+        self._start_banner.setVisible(bool(remaining) and not hidden)
+        if self._pages.currentIndex() != _PAGE_HOME:
+            return
+
+        db = self._database
+        game_id = self._counter_manager.current_game_id
+        now = datetime.now()
+        hello = (
+            "Late-night grind" if now.hour < 5
+            else "Good morning" if now.hour < 12
+            else "Good afternoon" if now.hour < 18
+            else "Good evening"
+        )
+        profile = self._profile_manager.active_profile
+        self._greeting.setText(f"{hello}, {profile}" if profile != "Default" else hello)
+        self._date_chip.setText(f"{now:%a %d %b}")
+        today = date.today()
+        per_day = (
+            {row_["day"]: row_["deaths"] for row_ in db.get_deaths_per_day(game_id)}
+            if game_id is not None
+            else {}
+        )
+        today_deaths = per_day.get(today.isoformat(), 0)
+        if game_id is None:
+            line = "Add a game and let's start counting."
+        elif today_deaths <= 0:
+            line = "No deaths yet today. Clean run so far."
+        elif today_deaths < 10:
+            line = f"{today_deaths} death{'s' if today_deaths != 1 else ''} today. Warming up."
+        elif today_deaths < 30:
+            line = f"{today_deaths} deaths today. You're learning the fight."
+        else:
+            line = f"{today_deaths} deaths today. Persistence is a skill too."
+        self._greeting_line.setText(line)
+
+        days = [today - timedelta(days=offset) for offset in range(6, -1, -1)]
+        week = [(day.strftime("%a"), per_day.get(day.isoformat(), 0), day == today) for day in days]
+        self._week_chart.set_days(week)
+        this_week = sum(max(count, 0) for _, count, _ in week)
+        last_week = sum(
+            max(per_day.get((today - timedelta(days=offset)).isoformat(), 0), 0)
+            for offset in range(7, 14)
+        )
+        self._week_total.setText(f"{this_week} death{'s' if this_week != 1 else ''}")
+        change = this_week - last_week
+        self._week_delta.setVisible(bool(this_week or last_week))
+        self._week_delta.setText(f"{change:+d} vs last week" if change else "Same as last week")
+        tone = "up" if change > 0 else "down" if change < 0 else "flat"
+        self._week_delta.setProperty("tone", tone)
+        self._week_delta.style().unpolish(self._week_delta)
+        self._week_delta.style().polish(self._week_delta)
+
+        bosses = db.get_bosses(game_id) if game_id is not None else []
+        beaten = sum(1 for boss in bosses if boss["defeated"])
+        self._boss_ring.set_values(beaten, len(bosses))
+        totals = (
+            [(row_["name"], row_["total"]) for row_ in db.get_boss_death_totals(game_id)
+             if row_["total"] > 0]
+            if bosses
+            else []
+        )
+        self._toughest.set_rows(
+            totals,
+            "No bosses yet: add them with Games & Bosses to track every fight."
+            if not bosses
+            else "No boss deaths yet. Pick the boss you're fighting above.",
+        )
 
     def _add_template_game(self, name: str) -> None:
         template = get_template(name)
@@ -2477,6 +2735,8 @@ class MainWindow(QMainWindow):
             "total": snapshot.total_deaths,
         }
         self._counter_label.setText(str(big_numbers.get(source, snapshot.session_deaths)))
+        self._skull_badge.set_count(big_numbers.get(source, snapshot.session_deaths))
+        self._home_refresh.start()
         self._counter_caption.setText(_COUNTER_CAPTIONS.get(source, _COUNTER_CAPTIONS["session"]))
         self._tile_session.set_value(str(snapshot.session_deaths))
         boss = str(snapshot.boss_deaths) if snapshot.boss_name else "–"
@@ -2727,6 +2987,7 @@ class MainWindow(QMainWindow):
             )
         menu.addSeparator()
         for key, label, default in (
+            (SETTING_OVERLAY_SHOW_SKULL, "Skull Badge", "true"),
             (SETTING_OVERLAY_LOCKED, "Lock Position", "false"),
             (SETTING_OVERLAY_ALWAYS_ON_TOP, "Always on Top", "true"),
         ):

@@ -71,6 +71,7 @@ from src.utils.constants import (
     SETTING_OVERLAY_SECONDARY_COLOR,
     SETTING_OVERLAY_SHOW_BOSS,
     SETTING_OVERLAY_SHOW_GAME,
+    SETTING_OVERLAY_SHOW_SKULL,
     SETTING_OVERLAY_SHOW_STATS,
     SETTING_OVERLAY_TEXT_COLOR,
     SETTING_OVERLAY_TEXT_OUTLINE,
@@ -534,11 +535,13 @@ class SettingsWindow(QDialog):
         self._show_game_check = QCheckBox("Game name")
         self._show_boss_check = QCheckBox("Boss name")
         self._show_stats_check = QCheckBox("Session • All-time line")
+        self._show_skull_check = QCheckBox("Skull badge (it evolves every 10 deaths)")
         self._always_on_top_check = QCheckBox("Always on top of other windows")
         for check in (
             self._show_game_check,
             self._show_boss_check,
             self._show_stats_check,
+            self._show_skull_check,
             self._always_on_top_check,
         ):
             show_layout.addWidget(check)
@@ -585,6 +588,7 @@ class SettingsWindow(QDialog):
             self._show_game_check,
             self._show_boss_check,
             self._show_stats_check,
+            self._show_skull_check,
         ):
             check.toggled.connect(self._schedule_preview)
         self._update_overlay_preview()
@@ -629,6 +633,7 @@ class SettingsWindow(QDialog):
             SETTING_OVERLAY_SHOW_GAME: flag(self._show_game_check),
             SETTING_OVERLAY_SHOW_BOSS: flag(self._show_boss_check),
             SETTING_OVERLAY_SHOW_STATS: flag(self._show_stats_check),
+            SETTING_OVERLAY_SHOW_SKULL: flag(self._show_skull_check),
         }
 
     def _build_speedrun_page(self) -> QWidget:
@@ -907,6 +912,9 @@ class SettingsWindow(QDialog):
         self._show_boss_check.setChecked(settings.get(SETTING_OVERLAY_SHOW_BOSS, "true") == "true")
         self._show_stats_check.setChecked(
             settings.get(SETTING_OVERLAY_SHOW_STATS, "true") == "true"
+        )
+        self._show_skull_check.setChecked(
+            settings.get(SETTING_OVERLAY_SHOW_SKULL, "true") == "true"
         )
         self._always_on_top_check.setChecked(
             settings.get(SETTING_OVERLAY_ALWAYS_ON_TOP, "true") == "true"

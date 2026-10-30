@@ -2,8 +2,8 @@
 Transparent, always-on-top overlay window for OBS capture.
 
 The overlay is a frameless, drag-movable widget showing the game name,
-boss name, a large configurable counter, and a "Session • Total" stats
-line. It supports three background modes:
+boss name, the count as "DEATH - 12" beside a skull badge that evolves every
+10 deaths, and a "Session • Total" stats line. It supports three background modes:
 
 * ``dark``   — semi-transparent card in the player's color (default near-black)
 * ``chroma`` — solid chroma-key green (#00ff00) for OBS color-key filters
@@ -19,8 +19,8 @@ window behavior and background are shared with the speedrun timer through
 from __future__ import annotations
 
 from PySide6.QtCore import QPoint, Qt, Signal
-from PySide6.QtGui import QContextMenuEvent, QMouseEvent
-from PySide6.QtWidgets import QLabel, QSizeGrip, QVBoxLayout, QWidget
+from PySide6.QtGui import QContextMenuEvent, QMouseEvent, QPixmap
+from PySide6.QtWidgets import QHBoxLayout, QLabel, QSizeGrip, QVBoxLayout, QWidget
 
 from src.core.counter_manager import CounterSnapshot
 from src.overlay.capture_window import (
@@ -29,11 +29,13 @@ from src.overlay.capture_window import (
     CaptureWindow,
     available_screen_rects,
 )
+from src.ui.skulls import TIERS, skull_pixmap, tier_index
 from src.utils.constants import (
     SETTING_OVERLAY_COUNTER_SOURCE,
     SETTING_OVERLAY_FONT_SIZE,
     SETTING_OVERLAY_SHOW_BOSS,
     SETTING_OVERLAY_SHOW_GAME,
+    SETTING_OVERLAY_SHOW_SKULL,
     SETTING_OVERLAY_SHOW_STATS,
 )
 from src.utils.logger import get_logger
@@ -43,7 +45,8 @@ logger = get_logger(__name__)
 # Re-exported for existing importers.
 __all__ = ["CHROMA_GREEN", "DEFAULT_CARD_COLOR", "OverlayWindow", "available_screen_rects"]
 
-_CAPTIONS = {"session": "SESSION DEATHS", "boss": "BOSS DEATHS", "total": "ALL-TIME DEATHS"}
+_CAPTIONS = {"session": "THIS SESSION", "boss": "THIS BOSS", "total": "ALL-TIME"}
+_SKULL_BODY = "#ececf1"
 OVERLAY_WINDOW_TITLE = "DUDC Overlay"
 
 
@@ -70,11 +73,13 @@ class OverlayWindow(CaptureWindow):
         self._show_game = True
         self._show_boss = True
         self._show_stats = True
+        self._show_skull = True
+        self._skull_art: QPixmap | None = None
 
         self._last_snapshot: CounterSnapshot | None = None
 
         self.setMinimumSize(220, 110)
-        self.resize(280, 150)
+        self.resize(300, 160)
 
         self._build_ui()
         self._restyle()
@@ -89,13 +94,18 @@ class OverlayWindow(CaptureWindow):
 
         self._game_label = QLabel("No Game Selected")
         self._boss_label = QLabel("")
-        self._death_label = QLabel("0")
-        self._caption_label = QLabel("DEATHS")
+        self._skull_label = QLabel()
+        self._death_label = QLabel("DEATH - 0")
+        self._caption_label = QLabel("THIS SESSION")
         self._stats_label = QLabel("")
 
         layout.addWidget(self._game_label)
         layout.addWidget(self._boss_label)
-        layout.addWidget(self._death_label)
+        count_row = QHBoxLayout()
+        count_row.setSpacing(10)
+        count_row.addWidget(self._skull_label)
+        count_row.addWidget(self._death_label, 1)
+        layout.addLayout(count_row)
         layout.addWidget(self._caption_label)
         layout.addWidget(self._stats_label)
 
@@ -133,6 +143,7 @@ class OverlayWindow(CaptureWindow):
         self._game_label.setVisible(self._show_game)
         self._boss_label.setVisible(self._show_boss)
         self._stats_label.setVisible(self._show_stats)
+        self._skull_label.setVisible(self._show_skull)
 
     def contextMenuEvent(self, event: QContextMenuEvent) -> None:  # noqa: N802
         self.menu_requested.emit(event.globalPos())
@@ -158,6 +169,7 @@ class OverlayWindow(CaptureWindow):
         self._show_game = settings.get(SETTING_OVERLAY_SHOW_GAME, "true") == "true"
         self._show_boss = settings.get(SETTING_OVERLAY_SHOW_BOSS, "true") == "true"
         self._show_stats = settings.get(SETTING_OVERLAY_SHOW_STATS, "true") == "true"
+        self._show_skull = settings.get(SETTING_OVERLAY_SHOW_SKULL, "true") == "true"
         self._restyle()
         if self._last_snapshot is not None:
             self.update_counters(self._last_snapshot)
@@ -179,8 +191,21 @@ class OverlayWindow(CaptureWindow):
 
         self._game_label.setText(snapshot.game_name or "No Game Selected")
         self._boss_label.setText(snapshot.boss_name or "")
-        self._death_label.setText(str(big_number))
-        self._caption_label.setText(_CAPTIONS.get(self._counter_source, "DEATHS"))
+        self._death_label.setText(f"DEATH - {big_number}")
+        caption = _CAPTIONS.get(self._counter_source, "DEATHS")
+        if self._show_skull:
+            caption += f"  ·  {TIERS[tier_index(big_number)].name.upper()}"
+            art = skull_pixmap(
+                big_number,
+                round(self._font_size * 1.5),
+                _SKULL_BODY,
+                self._text_color,
+                self.devicePixelRatioF(),
+            )
+            if art is not self._skull_art:  # only when the tier, size or color changes
+                self._skull_art = art
+                self._skull_label.setPixmap(art)
+        self._caption_label.setText(caption)
         self._stats_label.setText(
             f"Session {snapshot.session_deaths}  •  All-time {snapshot.total_deaths}"
         )
