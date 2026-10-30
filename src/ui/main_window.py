@@ -99,6 +99,7 @@ from src.detection.game_window import (
     capture_game_frame,
     detection_available,
     exe_display_name,
+    list_displays,
     list_windows,
     request_capture_permission,
     running_exe_paths,
@@ -132,6 +133,7 @@ from src.ui.dashboard import BossRanking, ProgressRing, SkullBadge, StartBanner,
 from src.ui.death_log_window import DeathLogWindow
 from src.ui.guide_dialog import (
     ACTION_ADD_EXE,
+    ACTION_APPEARANCE,
     ACTION_BOSSES,
     ACTION_CONSOLE,
     ACTION_CONTROLS,
@@ -139,6 +141,8 @@ from src.ui.guide_dialog import (
     ACTION_DETECTION,
     ACTION_OBS,
     ACTION_OVERLAY,
+    ACTION_REPORT,
+    ACTION_SAVE,
     ACTION_TEMPLATE,
     ACTION_TIMER,
     STEPS,
@@ -146,6 +150,7 @@ from src.ui.guide_dialog import (
 )
 from src.ui.mini_window import MiniWindow
 from src.ui.obs_guide_window import ObsGuideWindow
+from src.ui.report_window import ErrorLogWindow, ProblemCounter, ReportBugDialog
 from src.ui.session_history_window import SessionHistoryWindow
 from src.ui.settings_window import SettingsWindow
 from src.ui.statistics_window import StatisticsWindow
@@ -268,6 +273,8 @@ logger = get_logger(__name__)
 # Last entry of the Game dropdown, which opens the add-game-from-.exe flow.
 _ADD_GAME_SENTINEL = "__add_game_from_exe__"
 _ADD_GAME_LABEL = "+ Add game from .exe…"
+_ADD_NO_EXE_SENTINEL = "__add_game_without_exe__"
+_ADD_NO_EXE_LABEL = "+ Add game without .exe…"
 _GAME_LAUNCH_POLL_MS = 3000
 _AUTOSAVE_MS = 10_000  # a run in progress is saved this often (crash recovery)
 _PROGRESS_SAVE_MS = 5 * 60_000  # the auto-save file (save_files) is rewritten this often
@@ -479,11 +486,14 @@ class MainWindow(QMainWindow):
 
         self._artwork: dict[int, QPixmap] = {}  # loaded banners, per game
         self._artwork_wanted = False  # the player asked: say so if none is found
+        # Errors logged this session turn the bug button red.
+        self._problems = ProblemCounter(self)
         self._artwork_fetcher = artwork.ArtworkFetcher(self)
         self._artwork_fetcher.finished.connect(self._on_artwork_found)
         self._update_window_title()
         self._build_menu()
         self._build_ui()
+        self._problems.problem_logged.connect(self._on_problem_logged)
         self._set_sidebar_collapsed(
             self._database.get_setting(SETTING_SIDEBAR_COLLAPSED, "false") == "true", save=False
         )
@@ -539,6 +549,8 @@ class MainWindow(QMainWindow):
         save.setShortcut(QKeySequence.StandardKey.Save)  # shown; the QShortcut fires it
         save.setShortcutVisibleInContextMenu(True)
         self._menu_action(menu, "upload", "Load Save…", self._load_save)
+        menu.addSeparator()
+        self._menu_action(menu, "scroll-text", "Error Log…", self._open_error_log)
         menu.addSeparator()
         self._menu_action(menu, "info", "About", self._open_about_window)
         menu.addSeparator()
@@ -659,6 +671,8 @@ class MainWindow(QMainWindow):
         )
         profile_button = self._top_button("users", "Profiles: switch, add or delete")
         profile_button.setMenu(self._profile_menu)
+        self._bug_button = self._top_button("bug", "Report a bug or glitch")
+        self._bug_button.clicked.connect(self._open_report_bug)
         help_button = self._top_button("circle-help", "Guide: how everything works")
         help_button.clicked.connect(lambda: self.maybe_show_welcome(force=True))
         more_button = self._top_button("ellipsis-vertical", "Backups, About, Quit")
@@ -666,6 +680,7 @@ class MainWindow(QMainWindow):
         layout.addWidget(self._profile_combo)
         layout.addWidget(profile_button)
         layout.addSpacing(4)
+        layout.addWidget(self._bug_button)
         layout.addWidget(help_button)
         layout.addWidget(more_button)
         return bar
@@ -1238,6 +1253,50 @@ class MainWindow(QMainWindow):
         status_layout.addWidget(self._detect_page_info)
         layout.addWidget(status)
 
+        watch, watch_layout = card(margins=18)
+        watch_layout.addWidget(section_title("What to watch"))
+        self._watch_buttons = QButtonGroup(self)
+        watch_row = QHBoxLayout()
+        watch_row.setSpacing(8)
+        for button_id, (text, icon_name, tip) in enumerate((
+            (" The game's window (.exe)", "app-window",
+             "Reads only the game's window. Pick its .exe."),
+            (" A whole display (no .exe)", "monitor",
+             "For launchers, emulators, cloud gaming, or when the .exe isn't found: "
+             "the display the game is on is watched instead."),
+        )):
+            choice = QPushButton(text)
+            choice.setCheckable(True)
+            choice.setToolTip(tip)
+            choice.setMinimumHeight(40)
+            icons.set_icon(choice, icon_name, size=16)
+            self._watch_buttons.addButton(choice, button_id)
+            watch_row.addWidget(choice, 1)
+        self._watch_buttons.idClicked.connect(self._on_watch_source_changed)
+        watch_layout.addLayout(watch_row)
+        display_row = QHBoxLayout()
+        self._watch_display_combo = QComboBox()
+        for number, label in list_displays():
+            self._watch_display_combo.addItem(label, userData=number)
+        self._watch_display_combo.activated.connect(self._on_watch_display_picked)
+        self._watch_exe_btn = QPushButton(" Change .exe…")
+        self._watch_exe_btn.setObjectName("GhostButton")
+        icons.set_icon(self._watch_exe_btn, "folder-open", size=16)
+        self._watch_exe_btn.clicked.connect(
+            lambda: self._counter_manager.current_game_id is not None
+            and self._pick_game_exe(self._counter_manager.current_game_id)
+        )
+        display_row.addWidget(self._watch_display_combo, 1)
+        display_row.addWidget(self._watch_exe_btn)
+        display_row.addStretch()
+        watch_layout.addLayout(display_row)
+        self._watch_hint = QLabel()
+        self._watch_hint.setObjectName("Muted")
+        self._watch_hint.setWordWrap(True)
+        watch_layout.addWidget(self._watch_hint)
+        self._watch_card = watch
+        layout.addWidget(watch)
+
         setup_button = QPushButton(" Set Up Detection")
         setup_button.setObjectName("AccentButton")
         icons.set_icon(setup_button, "wand-sparkles", icons.ACCENT, size=16)
@@ -1771,9 +1830,35 @@ class MainWindow(QMainWindow):
 
     def _refresh_detection_page(self) -> None:
         game_id = self._counter_manager.current_game_id
+        self._watch_card.setVisible(game_id is not None)
         if game_id is None:
-            self._detect_page_info.setText("Select or add a game first.")
+            self._detect_page_info.setText(
+                "Add a game first: in the game list on the Death Counter page, choose "
+                "<b>+ Add game from .exe…</b> or <b>+ Add game without .exe…</b>"
+            )
             return
+        display = self._screen_display(game_id)
+        detection = self._database.get_game_detection(game_id)
+        has_exe = detection is not None and bool(detection["exe_path"])
+        self._watch_buttons.button(1 if display else 0).setChecked(True)
+        self._watch_display_combo.setVisible(bool(display))
+        self._watch_exe_btn.setVisible(not display)
+        self._watch_exe_btn.setText(" Change .exe…" if has_exe else " Pick the .exe…")
+        if display:
+            index = self._watch_display_combo.findData(display)
+            if index >= 0:
+                self._watch_display_combo.setCurrentIndex(index)
+            self._watch_hint.setText(
+                "Keep the game on this display. Press F8 while your death screen shows "
+                "(or use Capture Screen after a death): the same screen there counts."
+            )
+        else:
+            self._watch_hint.setText(
+                f"Watching {Path(detection['exe_path']).name}. If it keeps saying "
+                "\"Waiting for … to start\" while you play, choose A whole display."
+                if has_exe
+                else "Pick the game's .exe, or choose A whole display if you can't find it."
+            )
         row_ = self._database.get_game_detection(game_id)
         mode = row_["mode"] if row_ is not None else DETECTION_MODE_OFF
         exe = Path(row_["exe_path"]).name if row_ is not None and row_["exe_path"] else "not set"
@@ -2371,6 +2456,75 @@ class MainWindow(QMainWindow):
             hotkey = self._database.get_setting(SETTING_HOTKEY_CALIBRATE, "f8").upper()
             QMessageBox.information(self, "Teach It Your Death Screen", first_death_hint(hotkey))
 
+    def _add_game_without_exe(self) -> None:
+        """A game whose .exe isn't known (or isn't found): watch the display it's on."""
+        name, ok = QInputDialog.getText(self, "Add Game", "Game name:")
+        if not ok or not name.strip():
+            return
+        existing = {g["name"].casefold(): g["id"] for g in self._database.get_games()}
+        game_id = existing.get(name.strip().casefold())
+        if game_id is None:
+            game_id = self._database.create_game(name.strip())
+        self._watch_display(game_id, self._main_display())
+        self._reload_games(select_game_id=game_id)
+        self._show_page(_PAGE_DETECTION)
+        if not self._database.get_death_templates(game_id):
+            hotkey = self._database.get_setting(SETTING_HOTKEY_CALIBRATE, "f8").upper()
+            QMessageBox.information(self, "Teach It Your Death Screen", first_death_hint(hotkey))
+
+    def _main_display(self) -> int:
+        """The display this window is on, numbered like the capture's displays (1 = first)."""
+        displays = list_displays()
+        if not displays:
+            return 1
+        screens = QGuiApplication.screens()
+        screen = self.screen()
+        index = screens.index(screen) + 1 if screen in screens else 1
+        return index if any(number == index for number, _label in displays) else displays[0][0]
+
+    def _watch_display(self, game_id: int, display: int) -> None:
+        """Watch ``display`` instead of the game's window; detection on if it was off."""
+        self._database.update_detection_options(game_id, **{OPTION_SCREEN_DISPLAY: display})
+        row = self._database.get_game_detection(game_id)
+        mode = row["mode"] if row is not None else DETECTION_MODE_OFF
+        exe_path = row["exe_path"] if row is not None else None
+        if mode in (DETECTION_MODE_OFF, DETECTION_MODE_LOG):
+            self._database.set_game_detection(game_id, exe_path, DETECTION_MODE_TEMPLATE)
+
+    def _on_watch_source_changed(self, button_id: int) -> None:
+        """The Detection page's "What to watch" choice."""
+        game_id = self._counter_manager.current_game_id
+        if game_id is None:
+            return
+        if button_id == 1:  # a whole display
+            self._watch_display(game_id, self._watch_display_combo.currentData() or 1)
+        else:
+            self._database.update_detection_options(game_id, **{OPTION_SCREEN_DISPLAY: None})
+            row = self._database.get_game_detection(game_id)
+            if row is None or not row["exe_path"]:
+                self._pick_game_exe(game_id)
+        self._configure_detection()
+
+    def _on_watch_display_picked(self, _index: int) -> None:
+        game_id = self._counter_manager.current_game_id
+        if game_id is not None and self._watch_buttons.checkedId() == 1:
+            self._watch_display(game_id, self._watch_display_combo.currentData() or 1)
+            self._configure_detection()
+
+    def _pick_game_exe(self, game_id: int) -> None:
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Select the Game", "", program_file_filter()
+        )
+        if not path:
+            return
+        row = self._database.get_game_detection(game_id)
+        mode = row["mode"] if row is not None else DETECTION_MODE_OFF
+        self._database.set_game_detection(
+            game_id, str(Path(path)),
+            DETECTION_MODE_TEMPLATE if mode == DETECTION_MODE_OFF else mode,
+        )
+        self._configure_detection()
+
     def _apply_saved_settings(self) -> None:
         """Startup and profile switch: the look, plus where the windows were."""
         settings = self._database.get_all_settings()
@@ -2615,6 +2769,12 @@ class MainWindow(QMainWindow):
             self._open_obs_guide()
         elif action == ACTION_CONTROLS:
             self._open_settings_window(SettingsWindow.TAB_CONTROLS)
+        elif action == ACTION_APPEARANCE:
+            self._open_settings_window(SettingsWindow.TAB_APPEARANCE)
+        elif action == ACTION_SAVE:
+            self._save_progress()
+        elif action == ACTION_REPORT:
+            self._open_report_bug()
         self._home_refresh.start()
 
     def _quick_start_status(self) -> dict[str, bool]:
@@ -2625,7 +2785,11 @@ class MainWindow(QMainWindow):
         if game_id is not None:
             row_ = db.get_game_detection(game_id)
             mode = row_["mode"] if row_ is not None else DETECTION_MODE_OFF
-            source = bool(row_ is not None and row_["exe_path"]) or bool(self._obs_source(game_id))
+            source = (
+                bool(row_ is not None and row_["exe_path"])
+                or bool(self._obs_source(game_id))
+                or bool(self._screen_display(game_id))
+            )
             if mode == DETECTION_MODE_LOG:
                 detect = True
             elif mode == DETECTION_MODE_TEMPLATE:
@@ -3049,6 +3213,7 @@ class MainWindow(QMainWindow):
         if games:
             self._game_combo.insertSeparator(self._game_combo.count())
         self._game_combo.addItem(_ADD_GAME_LABEL, userData=_ADD_GAME_SENTINEL)
+        self._game_combo.addItem(_ADD_NO_EXE_LABEL, userData=_ADD_NO_EXE_SENTINEL)
         self._game_combo.blockSignals(False)
         if games:
             if select_game_id is None:  # reopen on the game used last time
@@ -3108,14 +3273,18 @@ class MainWindow(QMainWindow):
     # Selector event handlers
     # ----------------------------------------------------------------
     def _on_game_changed(self, index: int) -> None:
-        if self._game_combo.itemData(index) == _ADD_GAME_SENTINEL:
+        if self._game_combo.itemData(index) in (_ADD_GAME_SENTINEL, _ADD_NO_EXE_SENTINEL):
             # Snap back to the previous game, then run the add flow (which
             # selects the new game itself if one is added).
+            without_exe = self._game_combo.itemData(index) == _ADD_NO_EXE_SENTINEL
             previous = self._game_combo.findData(self._counter_manager.current_game_id)
             self._game_combo.blockSignals(True)
             self._game_combo.setCurrentIndex(previous)
             self._game_combo.blockSignals(False)
-            self._add_game_from_exe()
+            if without_exe:
+                self._add_game_without_exe()
+            else:
+                self._add_game_from_exe()
             return
         game_id = self._game_combo.itemData(index)
         game_name = self._game_combo.itemText(index) if index >= 0 else None
@@ -3527,6 +3696,36 @@ class MainWindow(QMainWindow):
 
     def _open_overlay_settings(self) -> None:
         self._open_settings_window(tab=SettingsWindow.TAB_OVERLAY)
+
+    # Problems ------------------------------------------------------------
+    def _on_problem_logged(self, count: int) -> None:
+        icons.set_icon(self._bug_button, "bug", icons.DANGER, size=19)
+        self._bug_button.setToolTip(
+            f"{count} error{'' if count == 1 else 's'} logged this session: "
+            "click to report it (the error log is under ⋮)"
+        )
+
+    def _open_error_log(self) -> None:
+        window = ErrorLogWindow(parent=self)
+        window.report_requested.connect(self._open_report_bug)
+        window.exec()
+
+    def _open_report_bug(self) -> None:
+        settings = self._database.get_all_settings()
+        row = (
+            self._database.get_game_detection(self._counter_manager.current_game_id)
+            if self._counter_manager.current_game_id is not None
+            else None
+        )
+        details = {
+            "Theme": settings.get(SETTING_THEME, "dark"),
+            "Detection": (row["mode"] if row is not None else "off")
+            + (" (display, no .exe)" if row is not None
+               and self._screen_display(self._counter_manager.current_game_id) else ""),
+        }
+        dialog = ReportBugDialog(parent=self, extra_details=details)
+        dialog.log_button.clicked.connect(lambda: (dialog.reject(), self._open_error_log()))
+        dialog.exec()
 
     def _open_about_window(self) -> None:
         AboutWindow(parent=self).exec()
@@ -4076,6 +4275,7 @@ class MainWindow(QMainWindow):
         self._gamepad_manager.stop()
         self._phone_remote.stop()
         self._autosave_timer.stop()
+        self._problems.close()
         self._progress_timer.stop()
         self._home_refresh.stop()  # it reads the database being closed
         self._recovery_timer.stop()

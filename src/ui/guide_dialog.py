@@ -1,5 +1,5 @@
 """
-The Quick Start guide: a live checklist, your keys, and tips.
+The guide: a live checklist, lessons on every feature, and your keys.
 
 Shown once on a fresh install and any time from the ? button. Each step
 ticks itself off as the player actually does it (the main window feeds it
@@ -20,9 +20,12 @@ from PySide6.QtWidgets import (
     QGridLayout,
     QHBoxLayout,
     QLabel,
+    QListWidget,
+    QListWidgetItem,
     QProgressBar,
     QPushButton,
     QScrollArea,
+    QStackedWidget,
     QTabWidget,
     QVBoxLayout,
     QWidget,
@@ -54,6 +57,193 @@ ACTION_OBS = "obs"
 ACTION_CONTROLS = "controls"
 ACTION_CONSOLE = "console"
 ACTION_TIMER = "timer"
+ACTION_SAVE = "save"
+ACTION_APPEARANCE = "appearance"
+ACTION_REPORT = "report"
+
+# The Learn tab: (title, icon, explanation, button or None). {key} = the
+# player's own key for that action. Plain words, the steps in order.
+LESSONS: tuple[tuple[str, str, str, tuple[str, str, str] | None], ...] = (
+    (
+        "Counting deaths", "skull",
+        "<p>Press <b>{increment}</b> when you die. It works in game, even in "
+        "fullscreen, so you never have to leave the game.</p>"
+        "<ul>"
+        "<li><b>−1 Death</b> ({decrement}) takes one off, for a death counted by "
+        "mistake. It's logged as a −1.</li>"
+        "<li><b>Undo</b> ({undo}) takes back the last +1 or −1 as if it never "
+        "happened.</li>"
+        "<li><b>Set Exact Count</b> types in any number, e.g. deaths from before "
+        "you used the app.</li>"
+        "<li><b>Reset Session</b> starts the session count at 0 (the all-time "
+        "count keeps them). <b>Reset Total</b> clears the game's all-time count.</li>"
+        "<li>Click the caption under the big number to choose what it counts: all-time, "
+        "this session, this boss or this speedrun run. The overlay follows.</li>"
+        "</ul>"
+        "<p>Your skull evolves every 10 deaths, up to a golden God of Death at 1000.</p>",
+        ("Go to Death Counter", "skull", "counter"),
+    ),
+    (
+        "Sessions and saving", "history",
+        "<p>A <b>session</b> is one sitting. Closing the app (or an update, a crash, "
+        "a night's sleep) within 16 hours continues the same session.</p>"
+        "<ul>"
+        "<li><b>Sessions</b> (next to Undo) lists every session of the game. Pick one "
+        "and click <b>Continue This Session</b> to keep counting in it.</li>"
+        "<li>Everything is saved the moment it happens. On top of that, <b>⋮ → Save "
+        "Progress</b> (Ctrl+S) writes one file with everything, including the "
+        "session and speedrun run in progress: copy it to another PC or keep it "
+        "safe, and <b>⋮ → Load Save</b> carries on from it.</li>"
+        "<li>It also auto-saves every 5 minutes and when you close the app (closing "
+        "asks first; turn that off in Settings → General).</li>"
+        "</ul>",
+        ("Save Progress Now", "save", "save"),
+    ),
+    (
+        "Bosses", "trophy",
+        "<ol>"
+        "<li>Add the bosses with <b>Games &amp; Bosses</b>, or pick a ready-made boss "
+        "list when adding a game.</li>"
+        "<li>Choose the boss you're fighting in the Boss list: deaths now count "
+        "against it too.</li>"
+        "<li>◀ ▶ switch bosses. The trophy marks the boss beaten and moves on.</li>"
+        "<li>Beaten automatically: after a boss, <b>Capture Screen</b> → \"A boss "
+        "victory screen\". The next time that banner shows, the boss is marked "
+        "beaten (and the timer can split).</li>"
+        "</ol>"
+        "<p>Home shows how many you've beaten and which boss killed you most.</p>",
+        ("Games && Bosses", "library", "bosses"),
+    ),
+    (
+        "Auto-detect: the game's window", "scan-eye",
+        "<p>The app can count deaths by itself by watching for your death screen. It "
+        "only reads the screen, so it's safe with anti-cheat.</p>"
+        "<ol>"
+        "<li>Add the game from its <b>.exe</b> (game list → + Add game from .exe).</li>"
+        "<li>Run the game in <b>borderless</b> or <b>windowed</b> mode (exclusive "
+        "fullscreen can capture as black).</li>"
+        "<li>Die once. While the death screen shows, press <b>{calibrate}</b> and "
+        "draw a box around the death text (e.g. YOU DIED). Or afterwards, Detection "
+        "→ <b>Capture Screen</b> and pick the frame.</li>"
+        "<li>Done: the same screen now counts a death. Add more screens if some "
+        "deaths are missed.</li>"
+        "</ol>"
+        "<p>The dot shows what it's doing: <b>green</b> watching, <b>yellow</b> "
+        "waiting for the game, <b>red</b> needs attention, <b>grey</b> off.</p>",
+        ("Go to Detection", "scan-eye", "detection"),
+    ),
+    (
+        "Auto-detect without the .exe", "monitor",
+        "<p>Use this when the .exe isn't found: the status keeps saying "
+        "<i>Waiting for the game to start</i> while you play. Common with launchers, "
+        "emulators and cloud gaming.</p>"
+        "<ol>"
+        "<li>Add the game with <b>+ Add game without .exe</b> in the game list, or on "
+        "the Detection page choose <b>What to watch → A whole display</b>.</li>"
+        "<li>Pick the display the game is on.</li>"
+        "<li>Teach it your death screen like before: <b>{calibrate}</b> while it "
+        "shows, or Capture Screen afterwards.</li>"
+        "</ol>"
+        "<p>Anything on that display that looks like your death screen counts, so "
+        "use <b>Pause</b> when you're not playing.</p>",
+        ("Go to Detection", "monitor", "detection"),
+    ),
+    (
+        "No death screen?", "heart",
+        "<p>Some games don't show one (Hollow Knight, Cuphead, roguelikes). In "
+        "<b>Set Up Detection</b> choose another method:</p>"
+        "<ul>"
+        "<li><b>Health bar</b>: box your health bar at full health with "
+        "{calibrate}. A death counts when it empties.</li>"
+        "<li><b>Log file</b>: pick the game's log file and the text it writes when "
+        "you die. Test Text shows what it would find.</li>"
+        "<li>Souls games (Elden Ring, Dark Souls, Sekiro…) are recognized without any "
+        "setup.</li>"
+        "</ul>",
+        ("Set Up Detection", "wand-sparkles", "detection"),
+    ),
+    (
+        "Speedrun timer", "timer",
+        "<ol>"
+        "<li>On the Timer page, enter your splits (or load a list).</li>"
+        "<li><b>{timer_split}</b> starts the run and splits. While a run goes, "
+        "{timer_pause} pauses and {timer_reset} resets.</li>"
+        "<li><b>Game time</b> leaves out loads and pauses: mark your loading and "
+        "pause screens in Set Up Detection.</li>"
+        "<li>Reset a run by accident? <b>Run History</b> → Continue This Run.</li>"
+        "</ol>"
+        "<p>The big number can show <b>deaths this run</b> (click its caption).</p>",
+        ("Go to Timer", "timer", "timer"),
+    ),
+    (
+        "Overlay and OBS", "layers",
+        "<ul>"
+        "<li><b>Overlay</b> in the sidebar (or {toggle_overlay}) shows the counter "
+        "on top of your game. Drag it anywhere.</li>"
+        "<li>Right-click it for quick options; double-click for all its settings: "
+        "background (card, <b>green screen</b> for OBS, <b>transparent</b>, or an "
+        "image), font, colours, what it shows, alignment.</li>"
+        "<li><b>Click-through</b> lets clicks go to the game underneath. Turn it off "
+        "from the tray icon's menu.</li>"
+        "<li><b>OBS Setup</b> walks you through adding it to your stream: as a window "
+        "with Chroma Key, or as a text file (deaths.txt).</li>"
+        "</ul>",
+        ("OBS Setup", "radio", "obs"),
+    ),
+    (
+        "Mini mode, phone and controller", "smartphone",
+        "<ul>"
+        "<li><b>Mini Mode</b> swaps this window for a tiny always-on-top counter with "
+        "+1 and Undo.</li>"
+        "<li><b>Phone</b> (Console page): scan the code and count from your phone on "
+        "the same Wi-Fi.</li>"
+        "<li><b>Controller</b>: Settings → Controls binds a button combo to any "
+        "action, e.g. View + D-pad Up for +1.</li>"
+        "</ul>",
+        ("Change Keys", "keyboard", "controls"),
+    ),
+    (
+        "Playing on a console", "gamepad-2",
+        "<ul>"
+        "<li>Count from your <b>phone</b> or a <b>controller</b> on this PC.</li>"
+        "<li>With a <b>capture card</b> in OBS: on the Console page connect to OBS "
+        "and pick the card's source. Deaths are then detected from it like a PC "
+        "game.</li>"
+        "<li>PS Remote Play or a capture viewer on this PC: pick its window on the "
+        "Console page.</li>"
+        "</ul>",
+        ("Console Page", "gamepad-2", "console"),
+    ),
+    (
+        "Make it yours", "palette",
+        "<ul>"
+        "<li><b>Settings → Appearance</b>: themes (Phantom Dark, Daylight, and the "
+        "downloadable Glass and Clay), text and number colours, any font, a "
+        "background image.</li>"
+        "<li><b>Game artwork</b>: a faded banner of the game behind the counter "
+        "(found on Steam, or right-click the game → Choose Artwork).</li>"
+        "<li>The button at the top of the sidebar collapses it to icons.</li>"
+        "<li><b>Profiles</b> (top right) keep separate games and counts, e.g. for "
+        "two players on one PC.</li>"
+        "</ul>",
+        ("Appearance Settings", "palette", "appearance"),
+    ),
+    (
+        "Something not working?", "circle-alert",
+        "<ul>"
+        "<li><b>Deaths not counted</b>: check the dot on the Detection page. Yellow "
+        "\"Waiting for the game\" while you play → use <i>A whole display</i>. "
+        "\"Capture is black\" → run the game borderless or windowed.</li>"
+        "<li><b>A key does nothing</b>: another program may own it (Settings → "
+        "Controls warns you). Pick another key.</li>"
+        "<li><b>See what went wrong</b>: ⋮ → Error Log shows the warnings and "
+        "errors. The bug icon at the top turns red when an error happened.</li>"
+        "<li><b>Report it</b>: the bug icon opens a ready-made report on GitHub with "
+        "your app version and the last errors (your user name is removed).</li>"
+        "</ul>",
+        ("Report a Bug", "bug", "report"),
+    ),
+)
 
 _KEY_ROWS = (
     ("increment", "+1 death"),
@@ -158,8 +348,8 @@ class GuideDialog(QDialog):
         layout.addLayout(self._header())
         self.tabs = QTabWidget()
         self.tabs.addTab(self._scroll(self._checklist_page()), "Get Started")
+        self.tabs.addTab(self._learn_page(), "Learn")
         self.tabs.addTab(self._scroll(self._keys_page()), "Your Keys")
-        self.tabs.addTab(self._scroll(self._tips_page()), "Tips")
         layout.addWidget(self.tabs, 1)
 
         bottom = QHBoxLayout()
@@ -325,12 +515,47 @@ class GuideDialog(QDialog):
         frame_layout.addWidget(_muted(text))
         return frame
 
-    def _tips_page(self) -> QWidget:
+    def _learn_page(self) -> QWidget:
+        """Every major feature, explained step by step, with a button to try it."""
         page = QWidget()
-        layout = QVBoxLayout(page)
-        layout.setContentsMargins(12, 12, 12, 12)
-        layout.setSpacing(10)
+        layout = QHBoxLayout(page)
+        layout.setContentsMargins(8, 10, 8, 8)
+        layout.setSpacing(12)
+        self.lessons = QListWidget()
+        self.lessons.setFixedWidth(240)
+        self.lesson_pages = QStackedWidget()
+        keys = {action: self._keys.get(action) or "its key" for action, _w in _KEY_ROWS}
+        keys.setdefault("calibrate", "the capture key")
+        for title, icon_name, text, button in LESSONS:
+            item = QListWidgetItem(icons.icon(icon_name, icons.color(icons.NORMAL), size=16), title)
+            self.lessons.addItem(item)
+            lesson = QWidget()
+            lesson_layout = QVBoxLayout(lesson)
+            lesson_layout.setContentsMargins(4, 0, 4, 0)
+            heading = QLabel(title)
+            heading.setObjectName("PageTitle")
+            lesson_layout.addWidget(heading)
+            body = QLabel(text.format(**keys))
+            body.setWordWrap(True)
+            body.setTextFormat(Qt.TextFormat.RichText)
+            body.setAlignment(Qt.AlignmentFlag.AlignTop)
+            lesson_layout.addWidget(body)
+            if icon_name == "skull":
+                lesson_layout.addWidget(self._skull_strip())
+            if button is not None:
+                row = QHBoxLayout()
+                row.addWidget(self._button(*button))
+                row.addStretch()
+                lesson_layout.addLayout(row)
+            lesson_layout.addStretch()
+            self.lesson_pages.addWidget(self._scroll(lesson))
+        self.lessons.currentRowChanged.connect(self.lesson_pages.setCurrentIndex)
+        self.lessons.setCurrentRow(0)
+        layout.addWidget(self.lessons)
+        layout.addWidget(self.lesson_pages, 1)
+        return page
 
+    def _skull_strip(self) -> QWidget:
         skulls, skulls_layout = card(margins=14)
         skulls_layout.addWidget(QLabel("<b>Your skull evolves</b>"))
         skulls_layout.addWidget(
@@ -357,28 +582,7 @@ class GuideDialog(QDialog):
             strip.addLayout(column)
         strip.addStretch()
         skulls_layout.addLayout(strip)
-        layout.addWidget(skulls)
-
-        for tip in (
-            ("heart", "No death screen? (Hollow Knight, Cuphead…)",
-             "Watch the health bar or the game's log file instead.",
-             ("Set Up Detection", "scan-eye", ACTION_DETECTION)),
-            ("trophy", "Boss kills count too",
-             "Capture a boss's victory banner once: kills mark the boss beaten and move on "
-             "to the next one.", None),
-            ("gamepad-2", "PlayStation or Xbox?",
-             "Count from your phone, or watch the capture card through OBS.",
-             ("Console Page", "gamepad-2", ACTION_CONSOLE)),
-            ("timer", "Speedrunning?",
-             "Splits, personal best and game time without loads, like LiveSplit.",
-             ("Timer Page", "timer", ACTION_TIMER)),
-            ("layers", "Right-click the overlay",
-             "Count from it, change what it shows, lock it or move it to another screen. "
-             "Double-click it for all its settings.", None),
-        ):
-            layout.addWidget(self._tip(*tip))
-        layout.addStretch()
-        return page
+        return skulls
 
     # ----------------------------------------------------------------
     # State

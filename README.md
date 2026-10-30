@@ -70,7 +70,7 @@ No Python or anything else needed. Windows 10 or 11, macOS 11 or newer, or a 64-
 
 ### 💀 Automatic death detection
 - **Add a game straight from its `.exe`** (or its `.app` on a Mac; Proton and Wine games on Linux work too). The app watches that game's window and counts a death whenever the death screen appears.
-- **No `.exe`? Watch a whole display instead.** If the game's `.exe` isn't found (a launcher, an emulator, cloud gaming), choose **Watch: A whole display** in Set Up Detection, capture your death screen once (F8 on it, or Capture Screen afterwards), and the same screen on that display counts a death.
+- **No `.exe`? Watch a whole display instead.** If the game's `.exe` isn't found (a launcher, an emulator, cloud gaming), add it with **+ Add game without .exe…** in the game list (or choose **What to watch → A whole display** on the Detection page), capture your death screen once (F8 on it, or Capture Screen afterwards), and the same screen on that display counts a death.
 - **Works with any game.** Teach it the death screen once, either by pressing `F8` on the death screen or afterwards with **📷 Capture Screen…**, which lets you pick the frame from the last few seconds.
 - **Zero setup for Souls games.** The built-in preset recognizes Elden Ring, Dark Souls I–III and Sekiro.
 - **No death screen? Use the health bar.** Mark your health bar once at full health, and a death counts when it empties.
@@ -141,7 +141,9 @@ The **Console** page (sidebar) makes DUDC work when the game runs on a console:
 - **Death Counter page:** everything for counting in one place: game and boss, the big number with your skull, +1 / −1 / Undo / Sessions (all one height), auto-detect status, Set Exact Count and resets. Hover −1 and Undo to see the difference: −1 is logged as a death taken off, Undo takes back the last +1 or −1 as if it never happened.
 - **Auto-detect status at a glance:** a coloured dot: green = watching the game, yellow = waiting (for the game to start, or paused), red = needs attention, grey = off.
 - **Fits any window size:** rows rearrange when the window is narrow, so nothing is cut off. The button at the top of the sidebar collapses it to icons only (remembered).
-- **Quick Start guide:** a checklist that ticks itself off as you go (add your game, count a death, add bosses, set up auto-detect, put it on stream), with a button on each step that takes you straight there. It also lists your keys and tips. Home shows how far along you are until you're done; reopen it any time with the **?** at the top.
+- **Guide (the ? at the top):** a Get Started checklist that ticks itself off as you go, a **Learn** tab that explains every major feature step by step (counting, sessions and saving, bosses, auto-detect with and without the `.exe`, other detection methods, the speedrun timer, overlay and OBS, mini mode / phone / controller, consoles, looks, and what to do when something doesn't work), each with a button that takes you there, and your keys.
+- **Report a bug** (the bug icon at the top): write what happened and it opens a pre-filled issue on GitHub with your app version, system and the last errors (your user name removed). You review it there before sending. The icon turns red when an error was logged.
+- **Error log** (⋮ → Error Log): the app's recent warnings and errors, to see what went wrong, with Copy and Open Log Folder.
 - **Mini mode:** a tiny always-on-top window with the count, +1 and Undo, for one-monitor setups. Sidebar or tray.
 - **Right-click the Game or Boss box** to rename it or mark the boss defeated, without opening Games & Bosses.
 - **Tray menu** has +1, Undo, Boss Defeated, pause detection, start/split the timer, the timer window, mini mode and the overlay.
