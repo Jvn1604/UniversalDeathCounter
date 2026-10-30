@@ -1,13 +1,19 @@
 """
 Global controller bindings (Xbox, PlayStation, and generic gamepads).
 
-No extra dependencies; both backends are Windows APIs called via ctypes:
+No extra dependencies. On Windows both backends are Windows APIs called
+via ctypes:
 
 * **XInput** (``xinput1_4.dll``) for Xbox and other XInput controllers.
 * **WinMM joystick API** (``winmm.dll``) for everything else, including
   DualShock 4 / DualSense, which Windows exposes as standard game
   controllers. Sony pads are recognized by USB vendor id so their buttons
   get the right names; Microsoft pads are skipped there (XInput has them).
+
+On Linux the kernel's joystick devices (``/dev/input/js*``) are read
+directly; the driver says which standard button each one is, so Xbox,
+PlayStation, Steam Deck and other pads all get the shared names. macOS
+has no controller backend yet.
 
 Buttons are stored under shared names (``south``, ``back``, ``dpad_up``…),
 so a binding such as ``back+dpad_up`` works on Xbox *and* PlayStation
@@ -21,6 +27,10 @@ scan otherwise); signals reach Qt's main thread queued.
 
 from __future__ import annotations
 
+import array
+import glob
+import os
+import struct
 import sys
 import threading
 import time
@@ -245,7 +255,7 @@ def _load_xinput():
     return None
 
 
-class _Backends:
+class _WindowsBackends:
     """Reads every connected controller; owns all ctypes state."""
 
     _SCAN_INTERVAL = 2.0
@@ -300,6 +310,170 @@ class _Backends:
         return held
 
 
+# ----------------------------------------------------------------
+# Linux backend: /dev/input/js*
+# ----------------------------------------------------------------
+# Kernel input codes (linux/input-event-codes.h) -> shared names. 0x133 and
+# 0x134 depend on the driver: Xbox-style drivers send the X button as 0x133,
+# while Sony's send Triangle (the top button) there.
+_LINUX_BUTTONS: dict[int, str] = {
+    0x130: "south", 0x131: "east", 0x133: "west", 0x134: "north",
+    0x136: "lb", 0x137: "rb", 0x138: "lt", 0x139: "rt", 0x13A: "back", 0x13B: "start",
+    0x13C: "guide", 0x13D: "ls", 0x13E: "rs",
+    0x220: "dpad_up", 0x221: "dpad_down", 0x222: "dpad_left", 0x223: "dpad_right",
+}
+_SONY_SWAPPED = {0x133: "north", 0x134: "west"}
+_BTN_SOUTH = 0x130
+_ABS_Z, _ABS_RZ, _ABS_HAT0X, _ABS_HAT0Y = 0x02, 0x05, 0x10, 0x11
+# Before a driver reports its button map, assume the xpad (Xbox) order.
+_XPAD_ORDER = [0x130, 0x131, 0x133, 0x134, 0x136, 0x137, 0x13A, 0x13B, 0x13C, 0x13D, 0x13E]
+_JS_EVENT = struct.Struct("<IhBB")  # time, value, type, number
+_JS_BUTTON, _JS_AXIS, _JS_INIT = 0x01, 0x02, 0x80
+_JSIOCGAXES, _JSIOCGBUTTONS = 0x80016A11, 0x80016A12
+_JSIOCGAXMAP, _JSIOCGBTNMAP = 0x80406A32, 0x84006A34
+
+
+def linux_button_name(code: int, number: int, vendor_id: int) -> str:
+    """Shared name for a kernel button code (``button<n>`` if it isn't a gamepad button)."""
+    if vendor_id == _SONY_VENDOR_ID and code in _SONY_SWAPPED:
+        return _SONY_SWAPPED[code]
+    return _LINUX_BUTTONS.get(code, f"button{number + 1}")
+
+
+def linux_axis_buttons(code: int, value: int) -> set[str]:
+    """Buttons an axis counts as: the d-pad hat, and the analog triggers past halfway."""
+    if code == _ABS_HAT0X:
+        return {"dpad_left"} if value < 0 else {"dpad_right"} if value > 0 else set()
+    if code == _ABS_HAT0Y:
+        return {"dpad_up"} if value < 0 else {"dpad_down"} if value > 0 else set()
+    if code == _ABS_Z and value > 0:
+        return {"lt"}
+    if code == _ABS_RZ and value > 0:
+        return {"rt"}
+    return set()
+
+
+class _Joystick:
+    """One open /dev/input/jsN: its button/axis map and what is held right now."""
+
+    def __init__(self, path: str) -> None:
+        import fcntl
+
+        self.path = path
+        self._fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK)
+        vendor_id = self._vendor_id(path)
+        counts = array.array("B", [0])
+        fcntl.ioctl(self._fd, _JSIOCGBUTTONS, counts, True)
+        button_count = counts[0]
+        fcntl.ioctl(self._fd, _JSIOCGAXES, counts, True)
+        axis_count = counts[0]
+        button_map = array.array("H", [0] * 512)
+        axis_map = array.array("B", [0] * 64)
+        try:
+            fcntl.ioctl(self._fd, _JSIOCGBTNMAP, button_map, True)
+            fcntl.ioctl(self._fd, _JSIOCGAXMAP, axis_map, True)
+        except OSError:  # an older kernel's map size
+            button_map = array.array("H", _XPAD_ORDER + [0] * 512)
+            axis_map = array.array("B", [0, 1, _ABS_Z, 3, 4, _ABS_RZ, _ABS_HAT0X, _ABS_HAT0Y])
+        self._buttons = {
+            number: linux_button_name(button_map[number], number, vendor_id)
+            for number in range(button_count)
+        }
+        is_gamepad = _BTN_SOUTH in button_map[:button_count]
+        # Analog triggers only on real gamepads: on a joystick ABS_Z is a throttle.
+        self._axes = {
+            number: axis_map[number] for number in range(min(axis_count, len(axis_map)))
+            if is_gamepad or axis_map[number] in (_ABS_HAT0X, _ABS_HAT0Y)
+        }
+        self._pressed: set[str] = set()
+        self._axis_buttons: dict[int, set[str]] = {}
+
+    @staticmethod
+    def _vendor_id(path: str) -> int:
+        name = os.path.basename(path)
+        try:
+            with open(f"/sys/class/input/{name}/device/id/vendor", encoding="ascii") as file:
+                return int(file.read().strip(), 16)
+        except (OSError, ValueError):
+            return 0
+
+    def read(self) -> set[str]:
+        """Apply waiting events; raises OSError once the controller is unplugged."""
+        while True:
+            try:
+                data = os.read(self._fd, _JS_EVENT.size * 32)
+            except BlockingIOError:
+                break
+            if not data:
+                break
+            for offset in range(0, len(data) - _JS_EVENT.size + 1, _JS_EVENT.size):
+                _time, value, kind, number = _JS_EVENT.unpack_from(data, offset)
+                kind &= ~_JS_INIT
+                if kind == _JS_BUTTON and number in self._buttons:
+                    name = self._buttons[number]
+                    if value:
+                        self._pressed.add(name)
+                    else:
+                        self._pressed.discard(name)
+                elif kind == _JS_AXIS and number in self._axes:
+                    self._axis_buttons[number] = linux_axis_buttons(self._axes[number], value)
+        held = set(self._pressed)
+        for buttons in self._axis_buttons.values():
+            held |= buttons
+        return held
+
+    def close(self) -> None:
+        try:
+            os.close(self._fd)
+        except OSError:
+            pass
+
+
+class _LinuxBackends:
+    """Reads every /dev/input/js* controller."""
+
+    _SCAN_INTERVAL = 2.0
+
+    def __init__(self) -> None:
+        self._pads: dict[str, _Joystick] = {}
+        self._next_scan = 0.0
+
+    def _scan(self) -> None:
+        for path in sorted(glob.glob("/dev/input/js*")):
+            if path in self._pads:
+                continue
+            try:
+                self._pads[path] = _Joystick(path)
+                logger.info("Controller found: %s", path)
+            except OSError:
+                logger.debug("Can't read %s", path, exc_info=True)
+
+    def connected(self) -> bool:
+        return bool(self._pads)
+
+    def held(self) -> set[str]:
+        now = time.monotonic()
+        if now >= self._next_scan:
+            self._scan()
+            self._next_scan = now + self._SCAN_INTERVAL
+        held: set[str] = set()
+        for path, pad in list(self._pads.items()):
+            try:
+                held |= pad.read()
+            except OSError:  # unplugged
+                pad.close()
+                del self._pads[path]
+        return held
+
+
+_Backends = _LinuxBackends if sys.platform.startswith("linux") else _WindowsBackends
+
+
+def controllers_supported() -> bool:
+    """Whether controller bindings work on this OS."""
+    return sys.platform == "win32" or sys.platform.startswith("linux")
+
+
 class GamepadManager(QObject):
     """
     Polls controllers and emits per-action signals for bound combos.
@@ -330,7 +504,7 @@ class GamepadManager(QObject):
         self.connected = False
 
     def start(self) -> None:
-        if sys.platform != "win32" or self._thread is not None:
+        if not controllers_supported() or self._thread is not None:
             return
         self._stop_event.clear()
         self._thread = threading.Thread(target=self._run, name="GamepadListener", daemon=True)

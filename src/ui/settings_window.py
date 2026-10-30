@@ -42,8 +42,8 @@ from PySide6.QtWidgets import (
 from src.core.counter_manager import CounterSnapshot
 from src.database.database import Database
 from src.hotkeys.conflicts import ERROR, WARNING, Conflict, find_conflicts, has_errors
-from src.hotkeys.gamepad import GamepadManager, combo_label
-from src.hotkeys.hotkey_manager import HotkeyManager
+from src.hotkeys.gamepad import GamepadManager, combo_label, controllers_supported
+from src.hotkeys.hotkey_manager import HotkeyManager, global_hotkeys_available
 from src.overlay.overlay_window import OverlayWindow
 from src.ui import icons
 from src.ui.theme_picker import ThemeGallery
@@ -92,6 +92,7 @@ from src.utils.constants import (
     pad_setting,
 )
 from src.utils.logger import get_logger
+from src.utils.platform_info import IS_MAC, login_item_label
 
 logger = get_logger(__name__)
 
@@ -273,6 +274,23 @@ class _ImageChoice(QWidget):
             QMessageBox.warning(self, "Couldn't Use That Image", str(exc))
 
 
+def _keyboard_note() -> str:
+    """What's different about keyboard shortcuts on this computer, or ""."""
+    if not global_hotkeys_available():
+        return (
+            "This desktop (Wayland) doesn't let apps hear keys while a game has focus, so "
+            "keyboard shortcuts only work inside this window. Use a controller combo or "
+            "the phone remote in-game, or log in with an X11 (Xorg) session."
+        )
+    if IS_MAC:
+        return (
+            "On a Mac, F-keys control brightness and volume unless you hold fn. To use "
+            "F9 on its own, turn on \"Use F1, F2, etc. keys as standard function keys\" "
+            "in System Settings → Keyboard."
+        )
+    return ""
+
+
 class SettingsWindow(QDialog):
     """
     Modal dialog exposing all user-configurable settings.
@@ -339,7 +357,7 @@ class SettingsWindow(QDialog):
         general_form = QFormLayout(general_group)
         self._minimize_tray_check = QCheckBox("Minimize to system tray on close")
         general_form.addRow(self._minimize_tray_check)
-        self._start_with_windows_check = QCheckBox("Start with Windows")
+        self._start_with_windows_check = QCheckBox(login_item_label())
         if not startup.startup_supported():
             self._start_with_windows_check.setEnabled(False)
             self._start_with_windows_check.setToolTip(
@@ -688,6 +706,12 @@ class SettingsWindow(QDialog):
         )
         intro.setWordWrap(True)
         layout.addWidget(intro)
+        note = _keyboard_note()
+        if note:
+            note_label = QLabel(note)
+            note_label.setObjectName("Muted")
+            note_label.setWordWrap(True)
+            layout.addWidget(note_label)
 
         grid = QGridLayout()
         for column, title in enumerate(("Action", "Keyboard", "", "Controller", "", "")):
@@ -757,8 +781,8 @@ class SettingsWindow(QDialog):
     # Controller binding helpers
     # ----------------------------------------------------------------
     def _update_pad_status(self, _connected: bool | None = None) -> None:
-        if self._gamepad is None:
-            text = "Controller support is unavailable on this system."
+        if self._gamepad is None or not controllers_supported():
+            text = "Controllers aren't supported on this system yet."
         elif self._gamepad.connected:
             text = "Controller connected ✓"
         else:
@@ -966,7 +990,7 @@ class SettingsWindow(QDialog):
             try:
                 startup.set_enabled(self._start_with_windows_check.isChecked())
             except OSError as exc:
-                QMessageBox.warning(self, "Start with Windows", f"Could not update: {exc}")
+                QMessageBox.warning(self, login_item_label(), f"Could not update: {exc}")
         db.set_setting(
             SETTING_CHECK_UPDATES,
             "true" if self._check_updates_check.isChecked() else "false",

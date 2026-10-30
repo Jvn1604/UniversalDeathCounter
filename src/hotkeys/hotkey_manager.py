@@ -14,19 +14,24 @@ loop; its callbacks reach Qt's main thread through queued signals.
 Two consequences of the OS API: a registered key is consumed (the game
 does not also receive it), and a key combo another program has already
 registered cannot be used, which :attr:`HotkeyManager.registration_failed`
-reports. Global hotkeys are Windows-only; the in-app buttons work everywhere.
+reports.
+
+macOS (Carbon hot keys, :mod:`src.hotkeys.mac_hotkeys`) and Linux (X11 key
+grabs, :mod:`src.hotkeys.x11_hotkeys`) work the same way: only the bound
+combos are ever seen. A Linux session without X11 (pure Wayland) has no
+global hotkeys; the in-app buttons, phone remote and controller still work.
 """
 
 from __future__ import annotations
 
-import sys
 import threading
 
 from PySide6.QtCore import QObject, Signal
 
 from src.utils.logger import get_logger
+from src.utils.platform_info import IS_LINUX, IS_MAC, IS_WINDOWS
 
-if sys.platform == "win32":
+if IS_WINDOWS:
     import ctypes
     from ctypes import wintypes
 
@@ -160,6 +165,50 @@ class _HotkeyThread(threading.Thread):
         self.join(timeout=2.0)
 
 
+def global_hotkeys_available() -> bool:
+    """Whether this OS session lets the app listen for keys while a game has focus."""
+    if IS_WINDOWS:
+        return True
+    if IS_MAC:
+        from src.hotkeys import mac_hotkeys
+
+        return mac_hotkeys.available()
+    if IS_LINUX:
+        from src.hotkeys import x11_hotkeys
+
+        return x11_hotkeys.available()
+    return False
+
+
+def _make_listener(combos, on_hotkey, on_failed):
+    """This OS's listener: has start(), stop(), ready and held_combos."""
+    if IS_MAC:
+        from src.hotkeys.mac_hotkeys import MacHotkeys
+
+        return MacHotkeys(combos, on_hotkey, on_failed)
+    if IS_LINUX:
+        from src.hotkeys.x11_hotkeys import X11HotkeyThread
+
+        return X11HotkeyThread(combos, on_hotkey, on_failed)
+    return _HotkeyThread(combos, on_hotkey, on_failed)
+
+
+def _probe(modifiers: int, vk: int) -> bool:
+    if IS_MAC:
+        from src.hotkeys import mac_hotkeys
+
+        return mac_hotkeys.probe(modifiers, vk)
+    if IS_LINUX:
+        from src.hotkeys import x11_hotkeys
+
+        return x11_hotkeys.probe(modifiers, vk)
+    probe_id = 0xBFFF  # top of the application hotkey id range
+    if not _user32.RegisterHotKey(None, probe_id, modifiers | _MOD_NOREPEAT, vk):
+        return False
+    _user32.UnregisterHotKey(None, probe_id)
+    return True
+
+
 class HotkeyManager(QObject):
     """
     Registers global hotkeys and emits Qt signals when they fire.
@@ -212,14 +261,14 @@ class HotkeyManager(QObject):
             "prev_boss": self.prev_boss_triggered,
             "next_boss": self.next_boss_triggered,
         }
-        self._thread: _HotkeyThread | None = None
+        self._thread = None  # this OS's listener (see _make_listener)
 
-        if sys.platform != "win32":
-            logger.warning("Global hotkeys need Windows; in-app buttons still work.")
+        if not global_hotkeys_available():
+            logger.warning("No global hotkeys in this session; in-app buttons still work.")
 
     def start(self) -> None:
-        """Register all hotkeys with Windows."""
-        if sys.platform != "win32" or self._thread is not None:
+        """Register all hotkeys with the OS."""
+        if self._thread is not None or not global_hotkeys_available():
             return
         combos: list[tuple[str, int, int]] = []
         unknown: list[tuple[str, str]] = []
@@ -232,7 +281,7 @@ class HotkeyManager(QObject):
             else:
                 combos.append((action, *parsed))
 
-        self._thread = _HotkeyThread(combos, self._emit_action, self._report_taken)
+        self._thread = _make_listener(combos, self._emit_action, self._report_taken)
         self._thread.start()
         self._thread.ready.wait(timeout=2.0)
         if unknown:
@@ -280,16 +329,11 @@ class HotkeyManager(QObject):
         probed by registering and immediately releasing them.
         """
         parsed = parse_hotkey(key)
-        if sys.platform != "win32" or parsed is None:
+        if parsed is None or not global_hotkeys_available():
             return True
         if self._thread is not None and parsed in self._thread.held_combos:
             return True
-        modifiers, vk = parsed
-        probe_id = 0xBFFF  # top of the application hotkey id range
-        if not _user32.RegisterHotKey(None, probe_id, modifiers | _MOD_NOREPEAT, vk):
-            return False
-        _user32.UnregisterHotKey(None, probe_id)
-        return True
+        return _probe(*parsed)
 
     def _report_taken(self, actions: list[str]) -> None:
         taken = [(action, self._bindings[action]) for action in actions]

@@ -86,6 +86,7 @@ from src.detection.game_window import (
     detection_available,
     exe_display_name,
     list_windows,
+    request_capture_permission,
     running_exe_paths,
 )
 from src.detection.log_watcher import LogWatchConfig, LogWatcher, compile_death_pattern
@@ -226,6 +227,7 @@ from src.utils.game_templates import add_template_bosses, get_template
 from src.utils.logger import get_logger
 from src.utils.phone_remote import ACTIONS as PHONE_ACTIONS
 from src.utils.phone_remote import PhoneRemote, new_key
+from src.utils.platform_info import program_file_filter
 from src.utils.profiles import DEFAULT_PROFILE_NAME, ProfileManager
 from src.utils.screens import display_name, fit_to_screens, screen_index_at
 from src.utils.stream_writer import render_template, write_deaths_file
@@ -1532,9 +1534,15 @@ class MainWindow(QMainWindow):
         if self.isVisible():
             self.hide()
         else:
-            self.show()
-            self.raise_()
-            self.activateWindow()
+            self.bring_to_front()
+
+    def bring_to_front(self) -> None:
+        """Show the window (from the tray, too) and give it focus."""
+        if self.isMinimized():
+            self.showNormal()
+        self.show()
+        self.raise_()
+        self.activateWindow()
 
     # ----------------------------------------------------------------
     # Hotkeys / settings
@@ -1692,11 +1700,13 @@ class MainWindow(QMainWindow):
         elif mode == DETECTION_MODE_LOG:
             log_config, status = self._log_watch_config(game_id)
         elif not detection_available():
-            status = "Auto-detect needs Windows"
+            status = "Auto-detect can't run here"
         elif not row["exe_path"] and not self._obs_source(game_id):
             status = "Auto-detect off"
         else:
             screen_config = self._screen_watch_config(game_id, mode, row["exe_path"])
+            if row["exe_path"]:
+                request_capture_permission()  # macOS asks once for Screen Recording
         if self._timer_needs_watching(game_id, row):
             # A run is going: also watch for loads, pauses and crashes, even
             # if death detection itself is off or uses the log file.
@@ -2000,7 +2010,7 @@ class MainWindow(QMainWindow):
     def _add_game_from_exe(self) -> None:
         """Create (or reuse) a game from its .exe and set up detection in one go."""
         path, _ = QFileDialog.getOpenFileName(
-            self, "Select the Game's .exe", "", "Programs (*.exe)"
+            self, "Select the Game", "", program_file_filter()
         )
         if not path:
             return

@@ -7,9 +7,10 @@ throughout the codebase and makes future configuration changes trivial.
 
 from __future__ import annotations
 
-import os
 import sys
 from pathlib import Path
+
+from src.utils.platform_info import IS_WINDOWS, user_data_dir
 
 # --------------------------------------------------------------------------
 # Application metadata
@@ -20,7 +21,7 @@ APP_BRAND: str = "DePhantom"  # big header text; APP_SUBTITLE goes underneath
 APP_SUBTITLE: str = "Universal Death Counter (DUDC)"
 # APP_ORG (below), the exe name and the data folder intentionally keep the
 # old internal name, so existing installs upgrade in place and keep data.
-APP_VERSION: str = "2.10.0"
+APP_VERSION: str = "2.11.0"
 APP_ORG: str = "UniversalDeathCounter"
 
 # GitHub repository ("owner/repo") used by the update checker. Edit this
@@ -41,9 +42,11 @@ CREATOR_CHANNEL_URL: str = "https://www.youtube.com/@ImDePhantom"
 # exits. Bundled *read-only* resources (themes, icons) are fine to read
 # from there, but user data (the SQLite DB, logs) MUST live somewhere
 # persistent, or every session would silently lose its history. For a
-# frozen build we therefore store data next to the executable if that
-# location is writable, falling back to the user's per-app data folder
-# (%APPDATA% on Windows, ~/.local/share elsewhere) otherwise.
+# frozen Windows build we therefore store data next to the executable if
+# that location is writable, falling back to %APPDATA% otherwise. A macOS
+# .app and a Linux AppImage are read-only (and replaced on update), so they
+# always use the per-user folder (~/Library/Application Support, or
+# ~/.local/share).
 
 
 def _is_frozen() -> bool:
@@ -55,6 +58,8 @@ def _resolve_persistent_data_dir() -> Path:
     """Choose a writable, persistent directory for the database and logs."""
     if not _is_frozen():
         return PROJECT_ROOT / "saves"
+    if not IS_WINDOWS:
+        return user_data_dir(APP_ORG) / "saves"
 
     exe_dir = Path(sys.executable).resolve().parent
     try:
@@ -67,8 +72,7 @@ def _resolve_persistent_data_dir() -> Path:
     except OSError:
         # Installed to a protected location (e.g. Program Files); fall back
         # to the standard per-user application data directory instead.
-        base = Path(os.environ.get("APPDATA", Path.home() / ".local" / "share"))
-        return base / APP_ORG / "saves"
+        return user_data_dir(APP_ORG) / "saves"
 
 
 PROJECT_ROOT: Path = Path(__file__).resolve().parents[2]

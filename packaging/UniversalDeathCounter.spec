@@ -2,8 +2,12 @@
 """
 PyInstaller spec for DePhantom Universal Death Counter (DUDC).
 
-Build locally (Windows, from the project root):
+Build locally (from the project root, on the OS you're building for):
     pyinstaller packaging/UniversalDeathCounter.spec
+
+The same spec builds all three: on macOS it also wraps the folder in
+dist/UniversalDeathCounter.app; on Linux, packaging/make_appimage.sh turns
+the folder into an AppImage.
 
 Produces a folder build at dist/UniversalDeathCounter/ (the .exe plus its
 libraries in _internal/). A folder build is used instead of a single-file
@@ -17,17 +21,11 @@ from APP_VERSION in src/utils/constants.py, the single source of truth.
 """
 
 import re
+import sys
 from pathlib import Path
 
-from PyInstaller.utils.win32.versioninfo import (
-    FixedFileInfo,
-    StringFileInfo,
-    StringStruct,
-    StringTable,
-    VarFileInfo,
-    VarStruct,
-    VSVersionInfo,
-)
+IS_WINDOWS = sys.platform == "win32"
+IS_MAC = sys.platform == "darwin"
 
 block_cipher = None
 
@@ -43,29 +41,41 @@ APP_VERSION = re.search(
 _numeric = [int(p) for p in re.findall(r"\d+", APP_VERSION)[:4]]
 VERSION_TUPLE = tuple(_numeric + [0] * (4 - len(_numeric)))
 
-VERSION_INFO = VSVersionInfo(
-    ffi=FixedFileInfo(filevers=VERSION_TUPLE, prodvers=VERSION_TUPLE),
-    kids=[
-        StringFileInfo(
-            [
-                StringTable(
-                    "040904B0",
-                    [
-                        StringStruct("CompanyName", "Jeeventhiran Sivanantham"),
-                        StringStruct("FileDescription", "DePhantom Universal Death Counter (DUDC)"),
-                        StringStruct("FileVersion", APP_VERSION),
-                        StringStruct("InternalName", "UniversalDeathCounter"),
-                        StringStruct("LegalCopyright", "MIT License"),
-                        StringStruct("OriginalFilename", "UniversalDeathCounter.exe"),
-                        StringStruct("ProductName", "DePhantom Universal Death Counter"),
-                        StringStruct("ProductVersion", APP_VERSION),
-                    ],
-                )
-            ]
-        ),
-        VarFileInfo([VarStruct("Translation", [0x0409, 1200])]),
-    ],
-)
+
+def _windows_version_info():
+    from PyInstaller.utils.win32.versioninfo import (
+        FixedFileInfo,
+        StringFileInfo,
+        StringStruct,
+        StringTable,
+        VarFileInfo,
+        VarStruct,
+        VSVersionInfo,
+    )
+
+    return VSVersionInfo(
+        ffi=FixedFileInfo(filevers=VERSION_TUPLE, prodvers=VERSION_TUPLE),
+        kids=[
+            StringFileInfo(
+                [
+                    StringTable(
+                        "040904B0",
+                        [
+                            StringStruct("CompanyName", "Jeeventhiran Sivanantham"),
+                            StringStruct("FileDescription", "DePhantom Universal Death Counter (DUDC)"),
+                            StringStruct("FileVersion", APP_VERSION),
+                            StringStruct("InternalName", "UniversalDeathCounter"),
+                            StringStruct("LegalCopyright", "MIT License"),
+                            StringStruct("OriginalFilename", "UniversalDeathCounter.exe"),
+                            StringStruct("ProductName", "DePhantom Universal Death Counter"),
+                            StringStruct("ProductVersion", APP_VERSION),
+                        ],
+                    )
+                ]
+            ),
+            VarFileInfo([VarStruct("Translation", [0x0409, 1200])]),
+        ],
+    )
 
 # collect_submodules("src") silently skips some modules (e.g. src.ui.main_window,
 # src.database.database), causing ModuleNotFoundError at runtime. Walk the
@@ -121,7 +131,20 @@ _UNUSED_QT = (
     # Platform and touch plugins: Windows only needs qwindows.
     "PySide6/plugins/platforms/qdirect2d",
     "PySide6/plugins/platforms/qminimal",
+    "PySide6/plugins/platforms/libqminimal",
     "PySide6/plugins/platforms/qoffscreen",
+    "PySide6/plugins/platforms/libqoffscreen",
+    "PySide6/plugins/platforms/libqvnc",
+    "PySide6/plugins/platforms/libqlinuxfb",
+    "PySide6/plugins/platforms/libqeglfs",
+    "PySide6/plugins/egldeviceintegrations/",
+    # macOS frameworks of the same unused Qt parts.
+    "QtQuick.framework",
+    "QtQml",
+    "QtPdf.framework",
+    "QtNetwork.framework",
+    "QtVirtualKeyboard",
+    "QtSvg.framework",
     "PySide6/plugins/generic/",
     # Image formats nobody picks as a background (SVG would need Qt6Svg anyway).
     "PySide6/plugins/imageformats/qtiff",
@@ -138,7 +161,8 @@ _UNUSED_QT = (
 
 
 def _is_unused_qt(dest_path):
-    path = dest_path.replace("\\", "/")
+    # macOS and Linux wheels keep Qt's plugins under PySide6/Qt/plugins.
+    path = dest_path.replace("\\", "/").replace("PySide6/Qt/plugins/", "PySide6/plugins/")
     return any(part in path for part in _UNUSED_QT)
 
 
@@ -163,8 +187,9 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon=str(PROJECT_ROOT / "assets" / "icons" / "app_icon.ico"),
-    version=VERSION_INFO,
+    # macOS turns the PNG into an .icns (needs Pillow at build time).
+    icon=str(PROJECT_ROOT / "assets" / "icons" / ("app_icon_1024.png" if IS_MAC else "app_icon.ico")),
+    version=_windows_version_info() if IS_WINDOWS else None,
 )
 
 coll = COLLECT(
@@ -176,3 +201,21 @@ coll = COLLECT(
     upx=False,
     name="UniversalDeathCounter",
 )
+
+if IS_MAC:
+    app = BUNDLE(
+        coll,
+        name="UniversalDeathCounter.app",
+        icon=str(PROJECT_ROOT / "assets" / "icons" / "app_icon_1024.png"),
+        bundle_identifier="com.dephantom.universaldeathcounter",
+        version=APP_VERSION,
+        info_plist={
+            "CFBundleName": "DUDC",
+            "CFBundleDisplayName": "DePhantom Universal Death Counter",
+            "CFBundleShortVersionString": APP_VERSION,
+            "CFBundleVersion": APP_VERSION,
+            "NSHighResolutionCapable": True,
+            "LSMinimumSystemVersion": "11.0",
+            "NSHumanReadableCopyright": "MIT License",
+        },
+    )
