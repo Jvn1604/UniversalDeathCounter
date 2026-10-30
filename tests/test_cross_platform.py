@@ -172,7 +172,9 @@ def test_second_copy_knocks_on_the_first(monkeypatch, tmp_path: Path) -> None:
 
     app = QCoreApplication.instance() or QCoreApplication([])
     monkeypatch.setattr(single_instance, "_lock_path", lambda: tmp_path / "lock")
-    monkeypatch.setattr(single_instance, "_socket_path", lambda: str(tmp_path / "s.sock"))
+    # tmp_path is too long for a socket on macOS (104 bytes), so use /tmp.
+    socket_path = f"/tmp/dudc-test-{os.getpid()}.sock"
+    monkeypatch.setattr(single_instance, "_socket_path", lambda: socket_path)
     assert single_instance.acquire()
     shown: list[bool] = []
     single_instance.listen_for_others(lambda: shown.append(True))
@@ -192,6 +194,8 @@ def test_second_copy_knocks_on_the_first(monkeypatch, tmp_path: Path) -> None:
         assert shown
     finally:
         single_instance.release()
+        if os.path.exists(socket_path):
+            os.unlink(socket_path)
 
 
 # ----------------------------------------------------------------

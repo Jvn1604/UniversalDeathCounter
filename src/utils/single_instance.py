@@ -102,7 +102,9 @@ def release() -> None:
 
 def _socket_path() -> str:
     folder = os.environ.get("XDG_RUNTIME_DIR") or tempfile.gettempdir()
-    return os.path.join(folder, f"dudc-{os.getuid()}.sock")
+    path = os.path.join(folder, f"dudc-{os.getuid()}.sock")
+    # Socket paths are limited to 104 bytes on macOS (108 on Linux).
+    return path if len(path.encode()) < 100 else f"/tmp/dudc-{os.getuid()}.sock"
 
 
 def listen_for_others(show_window: Callable[[], None]) -> None:
