@@ -163,6 +163,7 @@ from src.utils.constants import (
     CONTROL_ACTIONS,
     CREATOR_CHANNEL_URL,
     CREATOR_NAME,
+    DEFAULT_COUNTER_SOURCE,
     DETECTION_MODE_HEALTH,
     DETECTION_MODE_LOG,
     DETECTION_MODE_OFF,
@@ -733,11 +734,18 @@ class MainWindow(QMainWindow):
         self._counter_label = QLabel("0")
         self._counter_label.setObjectName("CounterLabel")
         self._counter_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._counter_caption = QLabel(_COUNTER_CAPTIONS["session"])
+        # The caption doubles as the switch for what the big number counts.
+        self._counter_caption = QPushButton(_COUNTER_CAPTIONS[DEFAULT_COUNTER_SOURCE])
         self._counter_caption.setObjectName("CounterCaption")
-        self._counter_caption.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._counter_caption.setLayoutDirection(Qt.LayoutDirection.RightToLeft)  # icon after
+        self._counter_caption.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._counter_caption.setToolTip(
+            "Choose what the big number counts (here, on the overlay and in mini mode)."
+        )
+        icons.set_icon(self._counter_caption, "chevron-down", size=14)
+        self._counter_caption.clicked.connect(self._show_counter_source_menu)
         hero_layout.addWidget(self._counter_label)
-        hero_layout.addWidget(self._counter_caption)
+        hero_layout.addWidget(self._counter_caption, 0, Qt.AlignmentFlag.AlignHCenter)
         # Empty state: one obvious first step instead of a lonely 0.
         self._first_game_btn = QPushButton(" Add Your First Game")
         self._first_game_btn.setObjectName("AccentButton")
@@ -1919,11 +1927,11 @@ class MainWindow(QMainWindow):
             self._start_play_session(current)
 
     def _start_play_session(self, game_id: int) -> None:
-        """Begin a new session for a game launch, reusing a still-empty one."""
-        sessions = self._session_manager
-        if sessions.current_game_id == game_id and sessions.get_session_deaths() == 0:
-            return  # e.g. the app was just opened on this game: no empty duplicate
-        sessions.start_new_session(game_id)
+        """
+        A game launched: continue its session after a short break (or when the
+        app itself just restarted, e.g. for an update), else start a fresh one.
+        """
+        self._session_manager.continue_or_start(game_id)
         self._refresh_counters()
 
     def _save_death_template(self, game_id: int, template: DeathTemplate) -> None:
@@ -2734,11 +2742,32 @@ class MainWindow(QMainWindow):
         else:
             self._apply_snapshot(self._counter_manager.set_total_count(target))
 
+    def _show_counter_source_menu(self) -> None:
+        current = self._database.get_setting(SETTING_OVERLAY_COUNTER_SOURCE, DEFAULT_COUNTER_SOURCE)
+        menu = QMenu(self)
+        group = QActionGroup(menu)
+        for value, text in (
+            ("total", "All-time deaths in this game"),
+            ("session", "Deaths this session"),
+            ("boss", "Deaths on this boss"),
+        ):
+            action = menu.addAction(text)
+            action.setCheckable(True)
+            action.setChecked(value == current)
+            group.addAction(action)
+            action.triggered.connect(
+                lambda _=False, v=value: self._set_overlay_setting(
+                    SETTING_OVERLAY_COUNTER_SOURCE, v
+                )
+            )
+        caption = self._counter_caption
+        menu.exec(caption.mapToGlobal(caption.rect().bottomLeft()))
+
     def _refresh_counters(self) -> None:
         self._apply_snapshot(self._counter_manager.get_snapshot())
 
     def _apply_snapshot(self, snapshot: CounterSnapshot) -> None:
-        source = self._database.get_setting(SETTING_OVERLAY_COUNTER_SOURCE, "session")
+        source = self._database.get_setting(SETTING_OVERLAY_COUNTER_SOURCE, DEFAULT_COUNTER_SOURCE)
         big_numbers = {
             "session": snapshot.session_deaths,
             "boss": snapshot.boss_deaths,
@@ -2747,7 +2776,9 @@ class MainWindow(QMainWindow):
         self._counter_label.setText(str(big_numbers.get(source, snapshot.session_deaths)))
         self._skull_badge.set_count(big_numbers.get(source, snapshot.session_deaths))
         self._home_refresh.start()
-        self._counter_caption.setText(_COUNTER_CAPTIONS.get(source, _COUNTER_CAPTIONS["session"]))
+        self._counter_caption.setText(
+            _COUNTER_CAPTIONS.get(source, _COUNTER_CAPTIONS[DEFAULT_COUNTER_SOURCE])
+        )
         self._tile_session.set_value(str(snapshot.session_deaths))
         boss = str(snapshot.boss_deaths) if snapshot.boss_name else "–"
         self._tile_boss.set_value(
@@ -2781,7 +2812,7 @@ class MainWindow(QMainWindow):
         template = self._database.get_setting(
             SETTING_DEATHS_TXT_TEMPLATE, "{game} - {boss}: {deaths}"
         )
-        source = self._database.get_setting(SETTING_OVERLAY_COUNTER_SOURCE, "session")
+        source = self._database.get_setting(SETTING_OVERLAY_COUNTER_SOURCE, DEFAULT_COUNTER_SOURCE)
         write_deaths_file(path, render_template(template, snapshot, source))
 
     # ----------------------------------------------------------------
@@ -2973,7 +3004,7 @@ class MainWindow(QMainWindow):
             SETTING_OVERLAY_COUNTER_SOURCE,
             (("session", "This Session", True), ("boss", "This Boss", True),
              ("total", "All-Time", True)),
-            settings.get(SETTING_OVERLAY_COUNTER_SOURCE, "session"),
+            settings.get(SETTING_OVERLAY_COUNTER_SOURCE, DEFAULT_COUNTER_SOURCE),
         )
         has_image = bool(settings.get(SETTING_OVERLAY_BG_IMAGE, ""))
         choices(

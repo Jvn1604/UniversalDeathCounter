@@ -157,13 +157,13 @@ def test_counter_labels_name_each_count(window) -> None:
     game_id = db.create_game("Dark Souls")
     window._reload_games(select_game_id=game_id)
     window._on_increment()
-    assert window._counter_caption.text() == "DEATHS THIS SESSION"
+    assert window._counter_caption.text() == "ALL-TIME DEATHS"  # the default
     assert window._tile_session.value.text() == "1"
     assert window._tile_boss.value.text() == "–"  # no boss selected
     assert window._tile_total.value.text() == "1"
-    db.set_setting("overlay_counter_source", "total")
+    db.set_setting("overlay_counter_source", "session")
     window._refresh_counters()
-    assert window._counter_caption.text() == "ALL-TIME DEATHS"
+    assert window._counter_caption.text() == "DEATHS THIS SESSION"
 
 
 def test_profile_box_lists_profiles(window) -> None:

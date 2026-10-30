@@ -75,7 +75,7 @@ No Python or anything else needed. Windows 10 or 11, macOS 11 or newer, or a 64-
 - **No death screen? Use the health bar.** Mark your health bar once at full health, and a death counts when it empties.
 - **Or the game's log file.** For games that log deaths, such as Minecraft, it counts every new line that matches your text. This mode doesn't capture the screen at all.
 - **Missed a death?** Add another death screen in two clicks. Any saved one counts.
-- **Switches to the right game** when you launch it, and starts a fresh session.
+- **Switches to the right game** when you launch it. A new session starts after a break of 6 hours or more; a restart, crash or update in between continues the same session.
 - **Screen capture only:** no memory reading and no injection, so it's safe with anti-cheat.
 
 ### 🎮 Controls, your way
@@ -111,6 +111,7 @@ Every 10 deaths your skull earns something new: horns, a nose ring, blades, a cr
 - **Multi-monitor:** move the overlay to any display. Windows come back on-screen if a monitor is unplugged.
 
 ### 📊 Tracking & stats
+- **The big number shows the game's all-time deaths** by default. Click the caption under it (or right-click the overlay) to show this session's or this boss's deaths instead; Home, the overlay and mini mode follow.
 - Session, boss and all-time counts, all at once, and they're independent: **Reset Session** starts a fresh session without touching the all-time total, and **Reset Total** zeroes the total without touching the session. Counts never go below zero.
 - Switch bosses with the ◀ ▶ buttons or `Ctrl+F9` / `Ctrl+F10` from in-game. Defeated bosses are skipped.
 - **Boss kills are detected too.** After your first boss of a game, use **Capture Screen** (Detection page) to teach it that game's victory banner (e.g. *GREAT ENEMY FELLED*). Every later kill of the selected boss then marks it **Defeated ✓**, keeps your "deaths until victory", selects the next boss, and can split the speedrun timer. There's also a **Boss Defeated** key (`Ctrl+F11`) for doing it by hand.

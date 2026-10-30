@@ -62,10 +62,10 @@ def test_overlay_shows_death_dash_number_with_its_skull(window) -> None:
         window._on_increment()
     overlay = window._overlay
     assert overlay._death_label.text() == "DEATH - 12"
-    assert overlay._caption_label.text() == "THIS SESSION  ·  BRUISED"
+    assert overlay._caption_label.text() == "ALL-TIME  ·  BRUISED"  # the default: all-time
     assert not overlay._skull_label.pixmap().isNull()
     window._set_overlay_setting("overlay_show_skull", "false")
-    assert overlay._caption_label.text() == "THIS SESSION"
+    assert overlay._caption_label.text() == "ALL-TIME"
     assert not overlay._skull_label.isVisibleTo(overlay)
 
 

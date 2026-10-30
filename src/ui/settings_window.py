@@ -51,6 +51,7 @@ from src.utils import startup
 from src.utils.backgrounds import IMAGE_FILTER, import_background
 from src.utils.constants import (
     CONTROL_ACTIONS,
+    DEFAULT_COUNTER_SOURCE,
     SETTING_BOSS_AUTO_ADVANCE,
     SETTING_BOSS_AUTO_SPLIT,
     SETTING_BOSS_DETECTION,
@@ -926,7 +927,8 @@ class SettingsWindow(QDialog):
 
         _select_data(self._bg_mode_combo, settings.get(SETTING_OVERLAY_BG_MODE, "dark"))
         _select_data(
-            self._counter_source_combo, settings.get(SETTING_OVERLAY_COUNTER_SOURCE, "session")
+            self._counter_source_combo,
+            settings.get(SETTING_OVERLAY_COUNTER_SOURCE, DEFAULT_COUNTER_SOURCE),
         )
         self._text_color = settings.get(SETTING_OVERLAY_TEXT_COLOR, "#ff4d4d") or "#ff4d4d"
         self._update_color_button()

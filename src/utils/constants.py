@@ -21,7 +21,7 @@ APP_BRAND: str = "DePhantom"  # big header text; APP_SUBTITLE goes underneath
 APP_SUBTITLE: str = "Universal Death Counter (DUDC)"
 # APP_ORG (below), the exe name and the data folder intentionally keep the
 # old internal name, so existing installs upgrade in place and keep data.
-APP_VERSION: str = "2.11.0"
+APP_VERSION: str = "2.11.1"
 APP_ORG: str = "UniversalDeathCounter"
 
 # GitHub repository ("owner/repo") used by the update checker. Edit this
@@ -142,6 +142,9 @@ SETTING_OVERLAY_BG_IMAGE: str = "overlay_background_image"  # used by the "image
 SETTING_OVERLAY_CORNER_RADIUS: str = "overlay_corner_radius"
 SETTING_OVERLAY_TEXT_OUTLINE: str = "overlay_text_outline"  # "true" = shadow behind text
 SETTING_OVERLAY_COUNTER_SOURCE: str = "overlay_counter_source"  # session|boss|total
+# The big number shows the game's all-time deaths unless the player picks
+# otherwise: a session restarts at 0, which looked like lost deaths.
+DEFAULT_COUNTER_SOURCE: str = "total"
 SETTING_OVERLAY_SHOW_GAME: str = "overlay_show_game"
 SETTING_OVERLAY_SHOW_BOSS: str = "overlay_show_boss"
 SETTING_OVERLAY_SHOW_STATS: str = "overlay_show_stats"
@@ -271,7 +274,7 @@ DEFAULT_SETTINGS: dict[str, str] = {
     SETTING_OVERLAY_GEOMETRY: "",
     SETTING_OVERLAY_BG_MODE: "dark",
     SETTING_OVERLAY_TEXT_COLOR: "#ff4d4d",
-    SETTING_OVERLAY_COUNTER_SOURCE: "session",
+    SETTING_OVERLAY_COUNTER_SOURCE: DEFAULT_COUNTER_SOURCE,
     SETTING_OVERLAY_SHOW_GAME: "true",
     SETTING_OVERLAY_SHOW_BOSS: "true",
     SETTING_OVERLAY_SHOW_STATS: "true",
