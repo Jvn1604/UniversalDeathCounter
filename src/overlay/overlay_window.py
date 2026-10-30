@@ -3,11 +3,12 @@ Transparent, always-on-top overlay window for OBS capture.
 
 The overlay is a frameless, drag-movable widget showing the game name,
 boss name, the count as "DEATH - 12" beside a skull badge that evolves every
-10 deaths, and a "Session • Total" stats line. It supports three background modes:
+10 deaths, and a "Session • Total" stats line. It supports four background modes:
 
 * ``dark``   — semi-transparent card in the player's color (default near-black)
 * ``chroma`` — solid chroma-key green (#00ff00) for OBS color-key filters
 * ``image``  — the player's own picture, filling the card
+* ``transparent`` — no background, just the text
 
 Every visual aspect (colors, font, counter source, which lines are shown,
 font size, opacity, corner roundness, text outline) is user-configurable
@@ -32,9 +33,12 @@ from src.overlay.capture_window import (
 from src.ui.skulls import TIERS, skull_pixmap, tier_index
 from src.utils.constants import (
     DEFAULT_COUNTER_SOURCE,
+    SETTING_OVERLAY_ALIGN,
+    SETTING_OVERLAY_COUNT_LABEL,
     SETTING_OVERLAY_COUNTER_SOURCE,
     SETTING_OVERLAY_FONT_SIZE,
     SETTING_OVERLAY_SHOW_BOSS,
+    SETTING_OVERLAY_SHOW_CAPTION,
     SETTING_OVERLAY_SHOW_GAME,
     SETTING_OVERLAY_SHOW_SKULL,
     SETTING_OVERLAY_SHOW_STATS,
@@ -50,6 +54,11 @@ _CAPTIONS = {
     "session": "THIS SESSION", "boss": "THIS BOSS", "total": "ALL-TIME", "run": "THIS RUN"
 }
 _SKULL_BODY = "#ececf1"
+_ALIGNMENTS = {
+    "left": Qt.AlignmentFlag.AlignLeft,
+    "center": Qt.AlignmentFlag.AlignHCenter,
+    "right": Qt.AlignmentFlag.AlignRight,
+}
 OVERLAY_WINDOW_TITLE = "DUDC Overlay"
 
 
@@ -77,6 +86,9 @@ class OverlayWindow(CaptureWindow):
         self._show_boss = True
         self._show_stats = True
         self._show_skull = True
+        self._show_caption = True
+        self._count_label = "DEATH"
+        self._align = "left"
         self._skull_art: QPixmap | None = None
 
         self._last_snapshot: CounterSnapshot | None = None
@@ -104,10 +116,11 @@ class OverlayWindow(CaptureWindow):
 
         layout.addWidget(self._game_label)
         layout.addWidget(self._boss_label)
-        count_row = QHBoxLayout()
+        count_row = self._count_row = QHBoxLayout()
         count_row.setSpacing(10)
         count_row.addWidget(self._skull_label)
-        count_row.addWidget(self._death_label, 1)
+        count_row.addWidget(self._death_label)
+        count_row.addStretch(1)
         layout.addLayout(count_row)
         layout.addWidget(self._caption_label)
         layout.addWidget(self._stats_label)
@@ -147,6 +160,20 @@ class OverlayWindow(CaptureWindow):
         self._boss_label.setVisible(self._show_boss)
         self._stats_label.setVisible(self._show_stats)
         self._skull_label.setVisible(self._show_skull)
+        self._caption_label.setVisible(self._show_caption)
+        align = _ALIGNMENTS.get(self._align, Qt.AlignmentFlag.AlignLeft)
+        for label in (self._game_label, self._boss_label, self._caption_label, self._stats_label):
+            label.setAlignment(align | Qt.AlignmentFlag.AlignVCenter)
+        # The skull + number row: stretch on the side(s) away from the alignment.
+        row = self._count_row
+        while row.count():
+            row.takeAt(0)
+        if self._align in ("center", "right"):
+            row.addStretch(1)
+        row.addWidget(self._skull_label)
+        row.addWidget(self._death_label)
+        if self._align in ("center", "left"):
+            row.addStretch(1)
 
     def contextMenuEvent(self, event: QContextMenuEvent) -> None:  # noqa: N802
         self.menu_requested.emit(event.globalPos())
@@ -173,6 +200,9 @@ class OverlayWindow(CaptureWindow):
         self._show_boss = settings.get(SETTING_OVERLAY_SHOW_BOSS, "true") == "true"
         self._show_stats = settings.get(SETTING_OVERLAY_SHOW_STATS, "true") == "true"
         self._show_skull = settings.get(SETTING_OVERLAY_SHOW_SKULL, "true") == "true"
+        self._show_caption = settings.get(SETTING_OVERLAY_SHOW_CAPTION, "true") == "true"
+        self._count_label = settings.get(SETTING_OVERLAY_COUNT_LABEL, "DEATH").strip()
+        self._align = settings.get(SETTING_OVERLAY_ALIGN, "left")
         self._restyle()
         if self._last_snapshot is not None:
             self.update_counters(self._last_snapshot)
@@ -195,7 +225,8 @@ class OverlayWindow(CaptureWindow):
 
         self._game_label.setText(snapshot.game_name or "No Game Selected")
         self._boss_label.setText(snapshot.boss_name or "")
-        self._death_label.setText(f"DEATH - {big_number}")
+        label = self._count_label
+        self._death_label.setText(f"{label} - {big_number}" if label else str(big_number))
         caption = _CAPTIONS.get(self._counter_source, "DEATHS")
         if self._show_skull:
             caption += f"  ·  {TIERS[tier_index(big_number)].name.upper()}"

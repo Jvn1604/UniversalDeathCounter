@@ -61,17 +61,23 @@ from src.utils.constants import (
     SETTING_DEATHS_TXT_PATH,
     SETTING_DEATHS_TXT_TEMPLATE,
     SETTING_MINIMIZE_TO_TRAY,
+    SETTING_OVERLAY_ALIGN,
     SETTING_OVERLAY_ALWAYS_ON_TOP,
     SETTING_OVERLAY_BG_IMAGE,
     SETTING_OVERLAY_BG_MODE,
+    SETTING_OVERLAY_BORDER,
     SETTING_OVERLAY_CARD_COLOR,
+    SETTING_OVERLAY_CLICK_THROUGH,
     SETTING_OVERLAY_CORNER_RADIUS,
+    SETTING_OVERLAY_COUNT_LABEL,
     SETTING_OVERLAY_COUNTER_SOURCE,
     SETTING_OVERLAY_FONT,
     SETTING_OVERLAY_FONT_SIZE,
+    SETTING_OVERLAY_LOCKED,
     SETTING_OVERLAY_OPACITY,
     SETTING_OVERLAY_SECONDARY_COLOR,
     SETTING_OVERLAY_SHOW_BOSS,
+    SETTING_OVERLAY_SHOW_CAPTION,
     SETTING_OVERLAY_SHOW_GAME,
     SETTING_OVERLAY_SHOW_SKULL,
     SETTING_OVERLAY_SHOW_STATS,
@@ -101,7 +107,11 @@ logger = get_logger(__name__)
 _BG_MODES: tuple[tuple[str, str], ...] = (
     ("dark", "Card (solid color)"),
     ("chroma", "Green screen (for OBS Chroma Key)"),
+    ("transparent", "Transparent (just the text)"),
     ("image", "Image"),
+)
+_ALIGN_LABELS: tuple[tuple[str, str], ...] = (
+    ("left", "Left"), ("center", "Center"), ("right", "Right"),
 )
 _COUNTER_SOURCE_LABELS: tuple[tuple[str, str], ...] = (
     ("session", "Deaths this session"),
@@ -590,6 +600,15 @@ class SettingsWindow(QDialog):
         self._radius_spin.setRange(0, 40)
         self._radius_spin.setSuffix(" px")
         overlay_form.addRow("Corner roundness", self._radius_spin)
+        self._border_check = QCheckBox("Thin border around the card")
+        overlay_form.addRow(self._border_check)
+        transparent_note = QLabel(
+            "Transparent shows just the text over your game. For OBS, Green screen "
+            "keys out cleanest."
+        )
+        transparent_note.setObjectName("Muted")
+        transparent_note.setWordWrap(True)
+        overlay_form.addRow(transparent_note)
         layout.addWidget(overlay_group)
 
         text_group = QGroupBox("Text")
@@ -610,6 +629,15 @@ class SettingsWindow(QDialog):
         text_form.addRow("Other text color", self._secondary_color)
         self._outline_check = QCheckBox("Shadow behind text (readable over images)")
         text_form.addRow(self._outline_check)
+        self._count_label_edit = QLineEdit()
+        self._count_label_edit.setPlaceholderText("Empty: just the number")
+        self._count_label_edit.setMaxLength(24)
+        self._count_label_edit.setToolTip('Shown before the number, e.g. "DEATH - 12".')
+        text_form.addRow("Text before number", self._count_label_edit)
+        self._align_combo = QComboBox()
+        for value, label in _ALIGN_LABELS:
+            self._align_combo.addItem(label, userData=value)
+        text_form.addRow("Alignment", self._align_combo)
         layout.addWidget(text_group)
 
         show_group = QGroupBox("Show")
@@ -618,16 +646,31 @@ class SettingsWindow(QDialog):
         self._show_boss_check = QCheckBox("Boss name")
         self._show_stats_check = QCheckBox("Session • All-time line")
         self._show_skull_check = QCheckBox("Skull badge (it evolves every 10 deaths)")
-        self._always_on_top_check = QCheckBox("Always on top of other windows")
+        self._show_caption_check = QCheckBox("What it counts, and the skull's rank")
         for check in (
             self._show_game_check,
             self._show_boss_check,
-            self._show_stats_check,
             self._show_skull_check,
-            self._always_on_top_check,
+            self._show_caption_check,
+            self._show_stats_check,
         ):
             show_layout.addWidget(check)
         layout.addWidget(show_group)
+
+        window_group = QGroupBox("Window")
+        window_layout = QVBoxLayout(window_group)
+        self._always_on_top_check = QCheckBox("Always on top of other windows")
+        self._locked_check = QCheckBox("Lock position (can't be dragged by accident)")
+        self._click_through_check = QCheckBox(
+            "Click-through: clicks go to the game underneath"
+        )
+        self._click_through_check.setToolTip(
+            "While on, the overlay can't be dragged or right-clicked. Turn it off here "
+            "or from the tray icon's menu."
+        )
+        for check in (self._always_on_top_check, self._locked_check, self._click_through_check):
+            window_layout.addWidget(check)
+        layout.addWidget(window_group)
         layout.addStretch()
         return self._scrolling(page)
 
@@ -652,6 +695,8 @@ class SettingsWindow(QDialog):
             self._overlay_font_combo,
         ):
             combo.currentIndexChanged.connect(self._schedule_preview)
+        self._align_combo.currentIndexChanged.connect(self._schedule_preview)
+        self._count_label_edit.textChanged.connect(self._schedule_preview)
         for choice in (
             self._ui_text_color,
             self._ui_counter_color,
@@ -671,6 +716,8 @@ class SettingsWindow(QDialog):
             self._show_boss_check,
             self._show_stats_check,
             self._show_skull_check,
+            self._show_caption_check,
+            self._border_check,
         ):
             check.toggled.connect(self._schedule_preview)
         self._update_overlay_preview()
@@ -716,6 +763,10 @@ class SettingsWindow(QDialog):
             SETTING_OVERLAY_SHOW_BOSS: flag(self._show_boss_check),
             SETTING_OVERLAY_SHOW_STATS: flag(self._show_stats_check),
             SETTING_OVERLAY_SHOW_SKULL: flag(self._show_skull_check),
+            SETTING_OVERLAY_SHOW_CAPTION: flag(self._show_caption_check),
+            SETTING_OVERLAY_BORDER: flag(self._border_check),
+            SETTING_OVERLAY_COUNT_LABEL: self._count_label_edit.text().strip(),
+            SETTING_OVERLAY_ALIGN: self._align_combo.currentData(),
         }
 
     def _build_speedrun_page(self) -> QWidget:
@@ -1011,6 +1062,16 @@ class SettingsWindow(QDialog):
         self._always_on_top_check.setChecked(
             settings.get(SETTING_OVERLAY_ALWAYS_ON_TOP, "true") == "true"
         )
+        self._show_caption_check.setChecked(
+            settings.get(SETTING_OVERLAY_SHOW_CAPTION, "true") == "true"
+        )
+        self._border_check.setChecked(settings.get(SETTING_OVERLAY_BORDER, "true") == "true")
+        self._count_label_edit.setText(settings.get(SETTING_OVERLAY_COUNT_LABEL, "DEATH"))
+        _select_data(self._align_combo, settings.get(SETTING_OVERLAY_ALIGN, "left"))
+        self._locked_check.setChecked(settings.get(SETTING_OVERLAY_LOCKED, "false") == "true")
+        self._click_through_check.setChecked(
+            settings.get(SETTING_OVERLAY_CLICK_THROUGH, "false") == "true"
+        )
 
         self._deaths_txt_check.setChecked(
             settings.get(SETTING_DEATHS_TXT_ENABLED, "false") == "true"
@@ -1072,6 +1133,13 @@ class SettingsWindow(QDialog):
         db.set_setting(
             SETTING_OVERLAY_ALWAYS_ON_TOP,
             "true" if self._always_on_top_check.isChecked() else "false",
+        )
+        db.set_setting(
+            SETTING_OVERLAY_LOCKED, "true" if self._locked_check.isChecked() else "false"
+        )
+        db.set_setting(
+            SETTING_OVERLAY_CLICK_THROUGH,
+            "true" if self._click_through_check.isChecked() else "false",
         )
 
         db.set_setting(

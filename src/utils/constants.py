@@ -21,7 +21,7 @@ APP_BRAND: str = "DePhantom"  # big header text; APP_SUBTITLE goes underneath
 APP_SUBTITLE: str = "Universal Death Counter (DUDC)"
 # APP_ORG (below), the exe name and the data folder intentionally keep the
 # old internal name, so existing installs upgrade in place and keep data.
-APP_VERSION: str = "2.13.0"
+APP_VERSION: str = "2.14.0"
 APP_ORG: str = "UniversalDeathCounter"
 
 # GitHub repository ("owner/repo") used by the update checker. Edit this
@@ -150,6 +150,11 @@ SETTING_OVERLAY_SHOW_BOSS: str = "overlay_show_boss"
 SETTING_OVERLAY_SHOW_STATS: str = "overlay_show_stats"
 SETTING_OVERLAY_SHOW_SKULL: str = "overlay_show_skull"  # the evolving skull badge
 SETTING_OVERLAY_LOCKED: str = "overlay_locked"  # "true" = can't be dragged
+SETTING_OVERLAY_SHOW_CAPTION: str = "overlay_show_caption"  # "THIS SESSION · BRUISED"
+SETTING_OVERLAY_COUNT_LABEL: str = "overlay_count_label"  # text before the number
+SETTING_OVERLAY_ALIGN: str = "overlay_align"  # left | center | right
+SETTING_OVERLAY_BORDER: str = "overlay_border"  # thin outline around the card
+SETTING_OVERLAY_CLICK_THROUGH: str = "overlay_click_through"  # clicks go to the game
 # Console players
 SETTING_PHONE_REMOTE: str = "phone_remote_enabled"  # "true" = serve the phone page
 SETTING_PHONE_REMOTE_KEY: str = "phone_remote_key"  # secret part of the phone link
@@ -157,6 +162,8 @@ SETTING_PHONE_REMOTE_KEY: str = "phone_remote_key"  # secret part of the phone l
 OPTION_WINDOW_TITLE: str = "window_title"
 # Detection option: read this OBS source (a capture card) instead of a window.
 OPTION_OBS_SOURCE: str = "obs_source"
+# No .exe: watch this whole display instead (1 = first display, as numbered by mss).
+OPTION_SCREEN_DISPLAY: str = "screen_display"
 SETTING_OBS_HOST: str = "obs_host"
 SETTING_OBS_PORT: str = "obs_port"
 SETTING_OBS_PASSWORD: str = "obs_password"  # OBS's WebSocket password (local only)
@@ -281,6 +288,11 @@ DEFAULT_SETTINGS: dict[str, str] = {
     SETTING_OVERLAY_SHOW_BOSS: "true",
     SETTING_OVERLAY_SHOW_STATS: "true",
     SETTING_OVERLAY_SHOW_SKULL: "true",
+    SETTING_OVERLAY_SHOW_CAPTION: "true",
+    SETTING_OVERLAY_COUNT_LABEL: "DEATH",
+    SETTING_OVERLAY_ALIGN: "left",
+    SETTING_OVERLAY_BORDER: "true",
+    SETTING_OVERLAY_CLICK_THROUGH: "false",
     SETTING_DEATHS_TXT_ENABLED: "false",
     SETTING_DEATHS_TXT_PATH: "",  # empty = SAVES_DIR/deaths.txt
     SETTING_DEATHS_TXT_TEMPLATE: "{game} - {boss}: {deaths}",
