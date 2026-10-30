@@ -66,6 +66,7 @@ from src.core.speedrun import (
     GOLD,
     IDLE,
     RUNNING,
+    RunRecord,
     SpeedrunController,
     SpeedrunTimer,
     format_time,
@@ -132,6 +133,7 @@ from src.ui.guide_dialog import (
 )
 from src.ui.mini_window import MiniWindow
 from src.ui.obs_guide_window import ObsGuideWindow
+from src.ui.session_history_window import SessionHistoryWindow
 from src.ui.settings_window import SettingsWindow
 from src.ui.statistics_window import StatisticsWindow
 from src.ui.theme_picker import ThemeDownload
@@ -318,6 +320,7 @@ _COUNTER_CAPTIONS = {
     "session": "DEATHS THIS SESSION",
     "boss": "DEATHS ON THIS BOSS",
     "total": "ALL-TIME DEATHS",
+    "run": "DEATHS THIS RUN",
 }
 
 
@@ -2750,6 +2753,7 @@ class MainWindow(QMainWindow):
             ("total", "All-time deaths in this game"),
             ("session", "Deaths this session"),
             ("boss", "Deaths on this boss"),
+            ("run", "Deaths this speedrun run"),
         ):
             action = menu.addAction(text)
             action.setCheckable(True)
@@ -2760,18 +2764,49 @@ class MainWindow(QMainWindow):
                     SETTING_OVERLAY_COUNTER_SOURCE, v
                 )
             )
+        menu.addSeparator()
+        past = menu.addAction("Continue a past session…")
+        past.setEnabled(self._counter_manager.current_game_id is not None)
+        past.triggered.connect(self._continue_past_session)
         caption = self._counter_caption
         menu.exec(caption.mapToGlobal(caption.rect().bottomLeft()))
+
+    def _continue_past_session(self) -> None:
+        """Pick an earlier session of this game and keep counting in it."""
+        game_id = self._counter_manager.current_game_id
+        if game_id is None:
+            return
+        sessions = self._session_manager
+        dialog = SessionHistoryWindow(
+            self._database, game_id, parent=self, can_continue=True,
+            current_session_id=sessions.current_session_id,
+        )
+        dialog.exec()
+        if dialog.continue_session_id is None:
+            return
+        sessions.continue_session(game_id, dialog.continue_session_id)
+        self._refresh_counters()
+        deaths = sessions.get_session_deaths()
+        self._notify(f"Continuing that session: {deaths} death{'' if deaths == 1 else 's'} so far.")
 
     def _refresh_counters(self) -> None:
         self._apply_snapshot(self._counter_manager.get_snapshot())
 
+    def _run_deaths(self) -> int:
+        """Deaths in the speedrun in progress (0 when no run is going)."""
+        controller = self._speedrun
+        if controller is None or controller.game_id != self._counter_manager.current_game_id:
+            return 0
+        return controller.timer.deaths if controller.timer.state != IDLE else 0
+
     def _apply_snapshot(self, snapshot: CounterSnapshot) -> None:
+        snapshot.run_deaths = self._run_deaths()
         source = self._database.get_setting(SETTING_OVERLAY_COUNTER_SOURCE, DEFAULT_COUNTER_SOURCE)
         big_numbers = {
             "session": snapshot.session_deaths,
             "boss": snapshot.boss_deaths,
             "total": snapshot.total_deaths,
+            "run": snapshot.run_deaths,
         }
         self._counter_label.setText(str(big_numbers.get(source, snapshot.session_deaths)))
         self._skull_badge.set_count(big_numbers.get(source, snapshot.session_deaths))
@@ -3002,8 +3037,8 @@ class MainWindow(QMainWindow):
         choices(
             "Big Number Shows",
             SETTING_OVERLAY_COUNTER_SOURCE,
-            (("session", "This Session", True), ("boss", "This Boss", True),
-             ("total", "All-Time", True)),
+            (("total", "All-Time", True), ("session", "This Session", True),
+             ("boss", "This Boss", True), ("run", "This Speedrun Run", True)),
             settings.get(SETTING_OVERLAY_COUNTER_SOURCE, DEFAULT_COUNTER_SOURCE),
         )
         has_image = bool(settings.get(SETTING_OVERLAY_BG_IMAGE, ""))
@@ -3287,6 +3322,7 @@ class MainWindow(QMainWindow):
         self._timer_window.refresh()
         self._refresh_timer_page()
         self._sync_run_hotkeys()
+        self._refresh_counters()  # "Deaths this run" starts or ends with the run
 
     def _on_timer_window_action(self, action: str) -> None:
         if action == "edit_splits":
@@ -3308,8 +3344,29 @@ class MainWindow(QMainWindow):
         if self._speedrun is None or self._speedrun.game_id is None:
             QMessageBox.information(self, "Select a Game", "Select a game first.")
             return
-        RunHistoryDialog(self._database, self._speedrun, parent=self).exec()
+        dialog = RunHistoryDialog(self._database, self._speedrun, parent=self)
+        dialog.exec()
+        if dialog.continue_run is not None:
+            self._continue_saved_run(self._speedrun.game_id, dialog.continue_run)
+            return
         self._timer_window.set_controller(self._speedrun)  # history may have changed
+
+    def _continue_saved_run(self, game_id: int, run: RunRecord) -> None:
+        """Carry on a reset attempt: paused at its time, with its splits and deaths."""
+        if self._speedrun is not None and self._speedrun.running:
+            return
+        timer = SpeedrunTimer.restore(run.resume_data())
+        if run.run_id is not None:
+            # It's an attempt in progress again; it's saved anew when it ends.
+            self._database.delete_speedrun_run(run.run_id)
+        self._resume_recovered_run(game_id, timer)
+        self._autosave()
+        self._refresh_timer_page()
+        self._refresh_counters()
+        pause_key = self._hotkey_bindings().get("timer_pause_key", "").upper() or "Pause"
+        self._notify(
+            f"Run continued at {format_time(timer.elapsed_ms())}: press {pause_key} to go on."
+        )
 
     def _open_splits_dialog(self) -> None:
         game_id = self._counter_manager.current_game_id

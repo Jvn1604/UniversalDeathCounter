@@ -96,6 +96,25 @@ class RunRecord:
     ended_at: str = ""
     game_times: list[int | None] = field(default_factory=list)
     run_id: int | None = None
+    # Clock readings when the attempt ended (None for attempts saved before
+    # v2.12): where a continued run picks up.
+    real_ms: int | None = None
+    game_ms: int | None = None
+
+    def resume_data(self) -> dict[str, Any]:
+        """A :meth:`SpeedrunTimer.restore` snapshot that carries on from where it stopped."""
+        last_real = next((t for t in reversed(self.split_times) if t is not None), 0)
+        last_game = next((t for t in reversed(self.game_times) if t is not None), last_real)
+        return {
+            "split_names": self.split_names,
+            "split_times": self.split_times,
+            "game_times": self.game_times,
+            "deaths": self.deaths,
+            "started_at": self.started_at,
+            "real_ms": self.real_ms if self.real_ms is not None else last_real,
+            "game_ms": self.game_ms if self.game_ms is not None else last_game,
+            "finished": False,
+        }
 
     def times(self, method: str = REAL) -> list[int | None]:
         """Cumulative times by timing method (runs saved before game time: all None)."""
@@ -323,6 +342,8 @@ class SpeedrunTimer:
             started_at=self.started_at,
             ended_at=datetime.now(UTC).isoformat(timespec="seconds"),
             game_times=list(self.game_times),
+            real_ms=self.elapsed_ms(REAL),
+            game_ms=self.elapsed_ms(GAME),
         )
         self.state = IDLE
         self.split_times, self.game_times = [], []

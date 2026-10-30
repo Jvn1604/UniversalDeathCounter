@@ -106,6 +106,7 @@ _COUNTER_SOURCE_LABELS: tuple[tuple[str, str], ...] = (
     ("session", "Deaths this session"),
     ("boss", "Deaths on this boss"),
     ("total", "All-time deaths"),
+    ("run", "Deaths this speedrun run"),
 )
 
 

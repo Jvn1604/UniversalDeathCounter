@@ -19,7 +19,9 @@ from src.ui import icons
 from src.utils.constants import DEFAULT_COUNTER_SOURCE
 
 MINI_WINDOW_TITLE = "DUDC Mini"
-_CAPTIONS = {"session": "THIS SESSION", "boss": "THIS BOSS", "total": "ALL-TIME"}
+_CAPTIONS = {
+    "session": "THIS SESSION", "boss": "THIS BOSS", "total": "ALL-TIME", "run": "THIS RUN"
+}
 
 
 class MiniWindow(CaptureWindow):
@@ -112,6 +114,7 @@ class MiniWindow(CaptureWindow):
             "session": snapshot.session_deaths,
             "boss": snapshot.boss_deaths,
             "total": snapshot.total_deaths,
+            "run": snapshot.run_deaths,
         }
         self._count.setText(str(values.get(self._counter_source, snapshot.session_deaths)))
         self._caption.setText(_CAPTIONS.get(self._counter_source, _CAPTIONS["session"]))

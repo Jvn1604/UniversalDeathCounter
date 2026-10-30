@@ -17,7 +17,7 @@ from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
-RESUME_WITHIN = timedelta(hours=6)
+RESUME_WITHIN = timedelta(hours=16)  # overnight counts as the same sitting
 
 
 class SessionManager:
@@ -79,6 +79,15 @@ class SessionManager:
                 logger.info("Continued session id=%s game_id=%s", session_id, game_id)
                 return session_id
         return self.start_new_session(game_id)
+
+    def continue_session(self, game_id: int, session_id: int) -> None:
+        """Make an earlier session of ``game_id`` the active one again (the player chose it)."""
+        if self._current_session_id == session_id:
+            return
+        self.end_current_session()
+        self._database.reopen_session(session_id)
+        self._current_session_id, self._current_game_id = session_id, game_id
+        logger.info("Continuing earlier session id=%s game_id=%s", session_id, game_id)
 
     def end_current_session(self) -> None:
         """End the currently active session, if one exists."""

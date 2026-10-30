@@ -28,6 +28,7 @@ class CounterSnapshot:
     session_deaths: int
     total_deaths: int
     boss_deaths: int = 0
+    run_deaths: int = 0  # the speedrun in progress (filled in by the main window)
 
 
 class CounterManager:

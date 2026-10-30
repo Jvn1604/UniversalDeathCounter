@@ -46,7 +46,9 @@ logger = get_logger(__name__)
 # Re-exported for existing importers.
 __all__ = ["CHROMA_GREEN", "DEFAULT_CARD_COLOR", "OverlayWindow", "available_screen_rects"]
 
-_CAPTIONS = {"session": "THIS SESSION", "boss": "THIS BOSS", "total": "ALL-TIME"}
+_CAPTIONS = {
+    "session": "THIS SESSION", "boss": "THIS BOSS", "total": "ALL-TIME", "run": "THIS RUN"
+}
 _SKULL_BODY = "#ececf1"
 OVERLAY_WINDOW_TITLE = "DUDC Overlay"
 
@@ -187,6 +189,7 @@ class OverlayWindow(CaptureWindow):
             "session": snapshot.session_deaths,
             "boss": snapshot.boss_deaths,
             "total": snapshot.total_deaths,
+            "run": snapshot.run_deaths,
         }
         big_number = source_values.get(self._counter_source, snapshot.session_deaths)
 
