@@ -70,13 +70,13 @@ THEMES: dict[str, ThemeInfo] = {
         "glass", "Glass", "Frosted panels over a deep violet glow.",
         base="#120d24", text="#f2efff", surface="#2a2245", accent="#ff4f8b",
         icon="#e4ddff", icon_muted="#a99fce", danger="#ff86ae",
-        builtin=False, size_kb=16,
+        builtin=False, size_kb=20,
     ),
     "clay": ThemeInfo(
         "clay", "Clay", "Soft, puffy pastel buttons you want to press.",
         base="#efe7df", text="#3a2f36", surface="#fbf6f1", accent="#ff6f61",
         icon="#5a4a52", icon_muted="#8f7f87", danger="#e0503f", light=True,
-        builtin=False, size_kb=17,
+        builtin=False, size_kb=20,
     ),
 }
 
@@ -99,6 +99,27 @@ def is_installed(name: str) -> bool:
 def available_themes() -> list[str]:
     """Themes that can be used right now: built in, or downloaded."""
     return [name for name in THEMES if is_installed(name)]
+
+
+# First line of a downloaded theme: the app version it was downloaded for.
+# After an update the app fetches the new copy, which styles the new screens.
+_VERSION_MARK = "/* DUDC theme for v{} */\n"
+
+
+def outdated_themes() -> list[str]:
+    """Downloaded themes that came with an older version of the app."""
+    stale = []
+    for name, info in THEMES.items():
+        if info.builtin:
+            continue
+        try:
+            with _installed_path(name).open(encoding="utf-8") as file:
+                first_line = file.readline()
+        except OSError:
+            continue  # not installed
+        if first_line != _VERSION_MARK.format(APP_VERSION):
+            stale.append(name)
+    return stale
 
 
 def _theme_urls(name: str) -> list[str]:
@@ -150,7 +171,7 @@ def install_theme(name: str) -> Path:
     INSTALLED_THEMES_DIR.mkdir(parents=True, exist_ok=True)
     target = _installed_path(name)
     partial = target.with_suffix(".part")
-    partial.write_text(text, encoding="utf-8")
+    partial.write_text(_VERSION_MARK.format(APP_VERSION) + text, encoding="utf-8")
     os.replace(partial, target)
     logger.info("Installed theme '%s'", name)
     return target

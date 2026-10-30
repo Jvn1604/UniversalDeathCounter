@@ -75,6 +75,7 @@ No Python or anything else needed. Windows 10 or 11.
 - **Its own OBS-ready window** (**Timer → Timer Window**, with an ON/OFF tag), styled like the overlay. It only redraws while a run is going.
 
 ### 📺 Made for streaming
+- **The overlay reads `DEATH - 12`** next to a **skull that evolves every 10 deaths**: horns at 10, a nose ring at 20, blades, a crown, a third eye, burning eyes, flames and an aura, then new colours at 150, 200, 300, 500 and a golden God of Death at 1000. Turn the skull off from the overlay's right-click menu or its settings.
 - **OBS-ready overlay, styled your way:** a card in any color, your own picture as the background, or green-screen mode for OBS's Chroma Key. Choose the font, number and text colors, size, corner roundness, opacity, a shadow that keeps text readable, and which lines show.
 - **`deaths.txt`** for OBS Text sources, with your own template, e.g. `{game} - {boss}: {deaths}`.
 - **OBS Setup** (sidebar) walks you through both methods, with one-click setup buttons.
@@ -98,11 +99,12 @@ The **Console** page (sidebar) makes DUDC work when the game runs on a console:
 
 ### 🎨 Themes
 - **Phantom Dark** and **Daylight** are built in.
-- **Glass** (frosted panels over a violet glow) and **Clay** (soft, puffy pastel buttons) are **downloaded only when you pick them** in Settings → Appearance (about 16 KB each, from this repository) and can be **uninstalled** again, so the install stays small.
+- **Glass** (frosted panels over a violet glow) and **Clay** (soft, puffy pastel buttons) are **downloaded only when you pick them** in Settings → Appearance (about 20 KB each, from this repository) and can be **uninstalled** again, so the install stays small.
 - Every button has a clear icon ([Lucide](https://lucide.dev), ISC licence).
 
 ### ✨ Comfort
-- **Guide** on first launch: add your game (from its .exe or a built-in boss list), then a short tour of the keys, auto-detect, the timer and the overlay. Reopen it any time with the **?** at the top.
+- **Home dashboard:** a friendly greeting with today's deaths, your skull and how far it is to the next one, this week's deaths per day (and versus last week), and boss progress with the bosses that killed you most.
+- **Quick Start guide:** a checklist that ticks itself off as you go (add your game, count a death, add bosses, set up auto-detect, put it on stream), with a button on each step that takes you straight there. It also lists your keys and tips. Home shows how far along you are until you're done; reopen it any time with the **?** at the top.
 - **Mini mode:** a tiny always-on-top window with the count, +1 and Undo, for one-monitor setups. Sidebar or tray.
 - **Right-click the Game or Boss box** to rename it or mark the boss defeated, without opening Games & Bosses.
 - **Tray menu** has +1, Undo, Boss Defeated, pause detection, start/split the timer, the timer window, mini mode and the overlay.

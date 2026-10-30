@@ -141,7 +141,7 @@ def test_overlay_right_click_menu_changes_it(window, monkeypatch) -> None:
     assert len(window._menu_icons) == before  # the menu's icons aren't kept around
 
     window._set_overlay_setting(SETTING_OVERLAY_COUNTER_SOURCE, "total")
-    assert window._overlay._caption_label.text() == "ALL-TIME DEATHS"
+    assert window._overlay._caption_label.text().startswith("ALL-TIME")
     assert window._counter_caption.text() == "ALL-TIME DEATHS"
     window._set_overlay_setting(SETTING_OVERLAY_LOCKED, "true")
     assert window._overlay.is_locked()
@@ -203,17 +203,32 @@ def test_font_list_draws_fonts_without_giving_every_item_a_font() -> None:
 
 
 # ---------------------------------------------------------------- guide + icons
-def test_guide_pages_through_to_done(window) -> None:
-    from src.ui.welcome_dialog import WelcomeDialog
+def test_guide_buttons_go_to_the_right_place(window, monkeypatch) -> None:
+    from src.ui.guide_dialog import (
+        ACTION_BOSSES,
+        ACTION_CONSOLE,
+        ACTION_OVERLAY,
+        ACTION_TIMER,
+        GuideDialog,
+    )
 
-    dialog = WelcomeDialog({"timer_split": "Num+1"}, parent=window)
-    pages = dialog._stack.count()
-    assert pages == 5 and not dialog._back.isVisibleTo(dialog)
-    for _ in range(pages - 1):
-        dialog._go(+1)
-    assert dialog._next.text().strip() == "Done"
-    dialog._go(+1)
-    assert dialog.result() == WelcomeDialog.DialogCode.Accepted and dialog.choice is None
+    opened: list[str] = []
+    monkeypatch.setattr(window, "_open_boss_window", lambda: opened.append("bosses"))
+    dialog = GuideDialog({"timer_split": "Num+1"}, parent=window)
+    dialog.action_requested.connect(window._on_guide_action)
+    assert dialog.tabs.count() == 3
+    dialog.action_requested.emit(ACTION_CONSOLE)
+    assert window._pages.currentIndex() == 4
+    dialog.action_requested.emit(ACTION_TIMER)
+    assert window._pages.currentIndex() == 1
+    dialog.action_requested.emit(ACTION_BOSSES)
+    assert opened == ["bosses"]
+    dialog.action_requested.emit(ACTION_OVERLAY)
+    assert window._overlay.isVisible()
+    assert window._quick_start_status()["stream"]
+    assert window._database.get_setting("overlay_ever_shown") == "true"
+    window._overlay.hide()
+    dialog.close()
 
 
 def test_icons_are_tinted_and_cached() -> None:

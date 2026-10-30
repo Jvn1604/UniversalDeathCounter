@@ -63,37 +63,39 @@ def test_timer_page_buttons_show_their_keys(window) -> None:
 
 
 # ---------------------------------------------------------------- 3. first-run guide
-def test_welcome_guide_adds_a_boss_list_game(window, monkeypatch) -> None:
-    from src.ui.welcome_dialog import CHOICE_TEMPLATE, WelcomeDialog
+def test_guide_adds_a_boss_list_game_and_ticks_it_off(window) -> None:
+    from src.ui.guide_dialog import ACTION_TEMPLATE
 
     assert window._first_game_btn.isVisibleTo(window)  # empty state
-    shown: list[bool] = []
-
-    def fake_exec(dialog):
-        shown.append(True)
-        dialog.template_name = "Elden Ring"
-        dialog.choice = CHOICE_TEMPLATE
-        return 1
-
-    monkeypatch.setattr(WelcomeDialog, "exec", fake_exec)
-    window.maybe_show_welcome()
-    assert shown == [True]
+    window.maybe_show_welcome()  # fresh install: the guide opens beside the window
+    guide = window._guide
+    assert guide is not None and guide.isVisible() and not guide.step_done("game")
+    guide.action_requested.emit(ACTION_TEMPLATE + "Elden Ring")
+    window._refresh_home()
     assert window._game_combo.currentText() == "Elden Ring"
     assert window._boss_combo.currentText().startswith("Margit")  # first boss selected
     assert not window._first_game_btn.isVisibleTo(window)
+    assert guide.step_done("game") and guide.step_done("bosses")
+    assert not guide.step_done("death")
+    window._on_increment()
+    window._refresh_home()
+    assert guide.step_done("death")
+    guide.accept()
+    assert window._guide is None
     assert window._database.get_setting("welcome_shown") == "true"
     window.maybe_show_welcome()  # has games now: not shown again
-    assert shown == [True]
+    assert window._guide is None
 
 
-def test_welcome_guide_lists_the_current_keys(window) -> None:
+def test_guide_lists_the_current_keys(window) -> None:
     from PySide6.QtWidgets import QLabel
 
-    from src.ui.welcome_dialog import WelcomeDialog
+    from src.ui.guide_dialog import GuideDialog
 
-    dialog = WelcomeDialog({"increment": "F7", "calibrate": "F6"}, parent=window)
-    texts = " ".join(label.text() for label in dialog.findChildren(QLabel))
-    assert "<b>F7</b> +1 death" in texts and "<b>F6</b>" in texts
+    dialog = GuideDialog({"increment": "F7", "calibrate": "F6"}, parent=window)
+    texts = [label.text() for label in dialog.findChildren(QLabel)]
+    assert "F7" in texts and "F6" in texts  # keycaps
+    assert any("<b>F6</b>" in text for text in texts)  # the detection step's hint
     dialog.close()
 
 
