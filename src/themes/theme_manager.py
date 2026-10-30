@@ -53,6 +53,10 @@ class ThemeInfo:
     light: bool = False  # dark text on a light window
     builtin: bool = True
     size_kb: int = 0
+    on_accent: str = "#ffffff"  # text and icons on the filled accent buttons
+    # Soft colored glow painted behind see-through panels (Glass, Clay):
+    # (x, y, radius) as fractions of the window, then "#rrggbb" and alpha 0-255.
+    backdrop: tuple[tuple[float, float, float, str, int], ...] = ()
 
 
 THEMES: dict[str, ThemeInfo] = {
@@ -67,16 +71,28 @@ THEMES: dict[str, ThemeInfo] = {
         icon="#3b3e48", icon_muted="#6b6f7b", danger="#cc1f37", light=True,
     ),
     "glass": ThemeInfo(
-        "glass", "Glass", "Frosted panels over a deep violet glow.",
-        base="#120d24", text="#f2efff", surface="#2a2245", accent="#ff4f8b",
-        icon="#e4ddff", icon_muted="#a99fce", danger="#ff86ae",
-        builtin=False, size_kb=20,
+        "glass", "Glass", "Frosted dark panels over a lime and teal glow.",
+        base="#0d0f12", text="#f2f4f3", surface="#1c1f24", accent="#c8f169",
+        icon="#e3e8e6", icon_muted="#a6adab", danger="#ff7b86",
+        builtin=False, size_kb=22, on_accent="#10140c",
+        backdrop=(
+            (0.22, 0.88, 0.55, "#a3e635", 165),
+            (0.88, 0.28, 0.50, "#2dd4bf", 135),
+            (0.70, 0.98, 0.38, "#facc15", 95),
+            (0.40, 0.05, 0.32, "#84cc16", 80),
+        ),
     ),
     "clay": ThemeInfo(
-        "clay", "Clay", "Soft, puffy pastel buttons you want to press.",
-        base="#efe7df", text="#3a2f36", surface="#fbf6f1", accent="#ff6f61",
-        icon="#5a4a52", icon_muted="#8f7f87", danger="#e0503f", light=True,
-        builtin=False, size_kb=20,
+        "clay", "Clay", "Soft, puffy white shapes on lavender. Made to be pressed.",
+        base="#efecfa", text="#1e2145", surface="#ffffff", accent="#6c5ce7",
+        icon="#4e4b73", icon_muted="#7d7a9e", danger="#d93a4a", light=True,
+        builtin=False, size_kb=22,
+        backdrop=(
+            (0.15, 0.12, 0.42, "#b9a6ff", 230),
+            (0.95, 0.30, 0.36, "#9ff0c8", 220),
+            (0.85, 0.98, 0.40, "#ffcfa3", 230),
+            (0.30, 0.95, 0.34, "#d4c8ff", 220),
+        ),
     ),
 }
 
@@ -171,7 +187,10 @@ def install_theme(name: str) -> Path:
     INSTALLED_THEMES_DIR.mkdir(parents=True, exist_ok=True)
     target = _installed_path(name)
     partial = target.with_suffix(".part")
-    partial.write_text(_VERSION_MARK.format(APP_VERSION) + text, encoding="utf-8")
+    # One line-ending style: "\r\n" written in text mode on Windows would
+    # read back as blank lines, and the theme's rules wouldn't match.
+    text = text.replace("\r\n", "\n")
+    partial.write_text(_VERSION_MARK.format(APP_VERSION) + text, encoding="utf-8", newline="\n")
     os.replace(partial, target)
     logger.info("Installed theme '%s'", name)
     return target

@@ -9,7 +9,15 @@ colors and fonts apply to them automatically.
 from __future__ import annotations
 
 from PySide6.QtCore import QRectF, Qt, QUrl, Signal
-from PySide6.QtGui import QColor, QDesktopServices, QMouseEvent, QPainter, QPainterPath, QPixmap
+from PySide6.QtGui import (
+    QColor,
+    QDesktopServices,
+    QLinearGradient,
+    QMouseEvent,
+    QPainter,
+    QPainterPath,
+    QPixmap,
+)
 from PySide6.QtWidgets import (
     QFrame,
     QGraphicsDropShadowEffect,
@@ -228,15 +236,59 @@ class ActionButton(QPushButton):
 
 
 class HeroCard(QFrame):
-    """The big counter card, with a faint skull watermark in the corner."""
+    """
+    The big counter card, with a faint skull watermark in the corner, or
+    the game's artwork fading in from the right (see :meth:`set_artwork`).
+    """
 
     def __init__(self, watermark: str = "skull", parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setObjectName("HeroCard")
         self._watermark = watermark
+        self._art: QPixmap | None = None
+        self._art_faded: QPixmap | None = None  # cache: redrawn only on resize
+
+    def set_artwork(self, pixmap: QPixmap | None) -> None:
+        if pixmap is self._art:
+            return
+        self._art, self._art_faded = pixmap, None
+        self.update()
+
+    def has_artwork(self) -> bool:
+        return self._art is not None
+
+    def _fade_artwork(self) -> QPixmap:
+        """The artwork filling the card, see-through on the left where the text is."""
+        from src.utils.backgrounds import cover  # here: backgrounds imports widgets' deps
+
+        faded = QPixmap(self.size())
+        faded.fill(Qt.GlobalColor.transparent)
+        painter = QPainter(faded)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        path = QPainterPath()
+        path.addRoundedRect(QRectF(self.rect()).adjusted(1, 1, -1, -1), 22, 22)
+        painter.setClipPath(path)
+        painter.setOpacity(0.42)
+        painter.drawPixmap(0, 0, cover(self._art, self.size()))
+        painter.setOpacity(1.0)
+        painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_DestinationIn)
+        fade = QLinearGradient(0, 0, self.width(), 0)
+        fade.setColorAt(0.0, QColor(0, 0, 0, 25))
+        fade.setColorAt(0.55, QColor(0, 0, 0, 150))
+        fade.setColorAt(1.0, QColor(0, 0, 0, 255))
+        painter.fillRect(self.rect(), fade)
+        painter.end()
+        return faded
 
     def paintEvent(self, event) -> None:  # noqa: N802
         super().paintEvent(event)
+        if self._art is not None and not self._art.isNull():
+            if self._art_faded is None or self._art_faded.size() != self.size():
+                self._art_faded = self._fade_artwork()
+            painter = QPainter(self)
+            painter.drawPixmap(0, 0, self._art_faded)
+            painter.end()
+            return  # the artwork replaces the watermark
         size = min(self.height() // 2, 110)
         if size < 48 or not self._watermark or self.width() < 560:
             return

@@ -99,7 +99,9 @@ def test_downloadable_theme_files_are_valid() -> None:
             continue
         text = theme_manager._check_stylesheet((root / "themes" / f"{name}.qss").read_bytes())
         assert f"color: {info.text};" in text  # the player's text color can replace it
-        assert abs(len(text.encode()) / 1024 - info.size_kb) < 2
+        # As downloaded (plain line endings), whatever this checkout uses.
+        downloaded = text.replace("\r\n", "\n")
+        assert abs(len(downloaded.encode()) / 1024 - info.size_kb) < 2
 
 
 # ---------------------------------------------------------------- shell
