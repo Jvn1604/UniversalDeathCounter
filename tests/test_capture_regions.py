@@ -96,11 +96,18 @@ def fake_game(monkeypatch):
     return _FakeCapture()
 
 
-def _run(watcher: dw.DeathWatcher, capture: _FakeCapture, seconds: float) -> None:
+def _run(
+    watcher: dw.DeathWatcher, capture: _FakeCapture, seconds: float, min_grabs: int = 0
+) -> None:
+    """Watch for ``seconds``, then (up to 10 s) until ``min_grabs`` more grabs on a slow CI."""
     watcher._stop_event.clear()
     thread = threading.Thread(target=watcher._watch_loop, args=(capture,), daemon=True)
+    target = len(capture.sizes) + min_grabs
     thread.start()
     time.sleep(seconds)
+    deadline = time.monotonic() + 10
+    while len(capture.sizes) < target and time.monotonic() < deadline:
+        time.sleep(0.02)
     watcher._stop_event.set()
     thread.join(2)
 
@@ -117,10 +124,10 @@ def test_watcher_grabs_only_the_death_text_area_and_still_counts(fake_game) -> N
     watcher.death_detected.connect(deaths.append, Qt.ConnectionType.DirectConnection)
     watcher.configure(dw.WatchConfig(game_id=7, exe_path="game.exe", matcher=matcher))
 
-    _run(watcher, capture, 0.4)
+    _run(watcher, capture, 0.4, min_grabs=15)
     assert deaths == []
     capture.screen = _screen(death=True)
-    _run(watcher, capture, 0.4)
+    _run(watcher, capture, 0.4, min_grabs=15)
     assert deaths == [7]
 
     full = (w, h)
