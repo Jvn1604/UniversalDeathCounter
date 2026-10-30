@@ -218,9 +218,9 @@ def test_guide_buttons_go_to_the_right_place(window, monkeypatch) -> None:
     dialog.action_requested.connect(window._on_guide_action)
     assert dialog.tabs.count() == 3
     dialog.action_requested.emit(ACTION_CONSOLE)
-    assert window._pages.currentIndex() == 4
+    assert window._pages.currentIndex() == 5
     dialog.action_requested.emit(ACTION_TIMER)
-    assert window._pages.currentIndex() == 1
+    assert window._pages.currentIndex() == 2
     dialog.action_requested.emit(ACTION_BOSSES)
     assert opened == ["bosses"]
     dialog.action_requested.emit(ACTION_OVERLAY)

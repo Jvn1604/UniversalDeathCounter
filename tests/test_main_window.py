@@ -181,7 +181,7 @@ def test_custom_ui_colors_apply() -> None:
     custom = customize_stylesheet(base, "dark", "#7fd1ff", "#00ff88")
     assert "color: #ececf1;" not in custom
     assert "color: #7fd1ff;" in custom
-    assert custom.rstrip().endswith("QLabel#CounterLabel { color: #00ff88; }")
+    assert custom.rstrip().endswith("QLabel#CounterLabel, QLabel#HomeCount { color: #00ff88; }")
     assert "color: #ffffff;" in custom  # text on red buttons stays readable
     assert customize_stylesheet(base, "dark") == base
 
@@ -199,18 +199,23 @@ def test_timeline_has_a_point_per_change(window) -> None:
 def test_sidebar_switches_pages(window) -> None:
     from src.ui.main_window import (
         _PAGE_CONSOLE,
+        _PAGE_COUNTER,
         _PAGE_DETECTION,
         _PAGE_HOME,
+        _PAGE_SETTINGS,
         _PAGE_STATS,
         _PAGE_TIMER,
     )
 
     assert window._pages.currentIndex() == _PAGE_HOME
-    for index in (_PAGE_TIMER, _PAGE_STATS, _PAGE_DETECTION, _PAGE_CONSOLE, _PAGE_HOME):
+    for index in (
+        _PAGE_COUNTER, _PAGE_TIMER, _PAGE_STATS, _PAGE_DETECTION, _PAGE_CONSOLE,
+        _PAGE_SETTINGS, _PAGE_HOME,
+    ):
         window._nav_buttons[index].click()
         assert window._pages.currentIndex() == index
         assert window._nav_buttons[index].isChecked()
-    assert window._pages.count() == 5
+    assert window._pages.count() == 7
 
 
 def test_stats_page_shows_this_games_numbers(window) -> None:

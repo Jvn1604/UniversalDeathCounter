@@ -19,6 +19,7 @@ saves/*.db
 saves/*.db-journal
 saves/logs/
 saves/backgrounds/
+saves/Saved Progress/
 
 # --- Testing / tooling ---
 .pytest_cache/

@@ -13,6 +13,7 @@ from PySide6.QtGui import QColor, QDesktopServices, QMouseEvent, QPainter, QPain
 from PySide6.QtWidgets import (
     QFrame,
     QGraphicsDropShadowEffect,
+    QGridLayout,
     QHBoxLayout,
     QLabel,
     QPushButton,
@@ -23,9 +24,12 @@ from PySide6.QtWidgets import (
 
 from src.ui import icons
 
-# Words in a detection status that mean "working" or "needs attention".
+# Words in a detection status that mean "working", "waiting" or "needs attention".
 _ACTIVE_WORDS = ("watching",)
+_WAITING_WORDS = ("waiting", "paused", "starting")
 _WARNING_WORDS = ("black", "not responding", "needs", "error", "can't", "minimized", "stopped")
+# The status dot: green = hooked, yellow = waiting, red = needs attention, grey = off.
+_DOT_COLORS = {"active": "#3ad07a", "waiting": "#f5c84c", "warning": "#ff5c5c", "": "#7a7d88"}
 
 
 class StatTile(QFrame):
@@ -62,6 +66,8 @@ class StatusPill(QLabel):
         self.setObjectName("StatusPill")
         self._mirrors: list[StatusPill] = []
         self._apply_state(text)
+        # Room for the dot (QSS padding-left would be overwritten by themes).
+        self.setIndent(14)
 
     def add_mirror(self, mirror: StatusPill) -> None:
         self._mirrors.append(mirror)
@@ -79,12 +85,27 @@ class StatusPill(QLabel):
             state = "warning"
         elif any(word in lowered for word in _ACTIVE_WORDS):
             state = "active"
+        elif any(word in lowered for word in _WAITING_WORDS):
+            state = "waiting"
         else:
             state = ""
         if self.property("state") != state:
             self.setProperty("state", state)
             self.style().unpolish(self)  # re-evaluate [state=...] selectors
             self.style().polish(self)
+
+
+    def state(self) -> str:
+        return self.property("state") or ""
+
+    def paintEvent(self, event) -> None:  # noqa: N802
+        super().paintEvent(event)
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor(_DOT_COLORS.get(self.state(), _DOT_COLORS[""])))
+        painter.drawEllipse(QRectF(13, self.height() / 2 - 4, 8, 8))
+        painter.end()
 
 
 class AutoHideLabel(QLabel):
@@ -130,7 +151,19 @@ class NavToggle(QPushButton):
         layout.addWidget(self._state, 0, Qt.AlignmentFlag.AlignVCenter)
         self.set_on(False)
 
+    def set_compact(self, compact: bool) -> None:
+        """Collapsed sidebar: no ON/OFF tag; the tooltip says it instead."""
+        if not hasattr(self, "_tip"):
+            self._tip = self.toolTip()
+        self._compact = compact
+        self._state.setVisible(not compact)
+        self.set_on(self.is_on())
+
     def set_on(self, on: bool) -> None:
+        if getattr(self, "_compact", False):
+            self.setToolTip(f"Overlay: {'ON' if on else 'OFF'}\n{self._tip}")
+        elif hasattr(self, "_tip"):
+            self.setToolTip(self._tip)
         self._state.setText("ON" if on else "OFF")
         self._state.setProperty("on", "true" if on else "false")
         self._state.style().unpolish(self._state)
@@ -262,6 +295,8 @@ class UpdateCard(QFrame):
         self.setObjectName("UpdateCard")
         self._version = version
         self._state = "idle"
+        self._latest = ""
+        self._compact = False
         layout = QVBoxLayout(self)
         layout.setContentsMargins(12, 9, 8, 10)
         layout.setSpacing(8)
@@ -312,6 +347,18 @@ class UpdateCard(QFrame):
         self.style().unpolish(self)
         self.style().polish(self)
         self.refresh_icon()
+        self._latest = latest
+        if self._compact:
+            self.set_compact(True)
+
+    def set_compact(self, compact: bool) -> None:
+        """Collapsed sidebar: just the status icon (and Update, when there is one)."""
+        self._compact = compact
+        for widget in (self._title, self._detail):
+            widget.setVisible(not compact)
+        self._check.setVisible(not compact and self._state != "available")
+        self.button.setText("" if compact else f" Update to {self._latest}")
+        self.setToolTip(f"{self._title.text()} ({self._detail.text()})" if compact else "")
 
     def refresh_icon(self) -> None:
         icon_name, color, _title = self._LOOK[self._state]
@@ -345,6 +392,8 @@ class CreditCard(QFrame):
         texts.addWidget(small)
         texts.addWidget(big)
         self._play = QLabel()
+        self._texts = (small, big)
+        self._layout = layout
         layout.addWidget(avatar)
         layout.addLayout(texts, 1)
         layout.addWidget(self._play)
@@ -354,6 +403,12 @@ class CreditCard(QFrame):
     def refresh_icon(self) -> None:
         self._play.setPixmap(icons.pixmap("youtube", "#ff0033", 18))
 
+    def set_compact(self, compact: bool) -> None:
+        """Collapsed sidebar: only the logo, still a link to the channel."""
+        for widget in (*self._texts, self._play):
+            widget.setVisible(not compact)
+        self._layout.setContentsMargins(*((6, 6, 6, 6) if compact else (10, 8, 10, 8)))
+
     def mouseReleaseEvent(self, event: QMouseEvent) -> None:  # noqa: N802
         if event.button() == Qt.MouseButton.LeftButton and self.rect().contains(
             event.position().toPoint()
@@ -361,6 +416,68 @@ class CreditCard(QFrame):
             self.clicked.emit()
             QDesktopServices.openUrl(QUrl(self._url))
         super().mouseReleaseEvent(event)
+
+
+class ResponsiveGrid(QWidget):
+    """
+    Widgets side by side that rearrange when space runs out.
+
+    Wide: one row, with ``stretch`` per widget. Compact: ``columns`` per row,
+    and widgets listed in ``full_width`` take a whole row. The main window
+    switches it from the width it has (see ``MainWindow._fit_to_width``).
+    """
+
+    def __init__(
+        self,
+        widgets: list[QWidget],
+        stretch: tuple[int, ...] = (),
+        columns: int = 1,
+        full_width: tuple[QWidget, ...] = (),
+        spacing: int = 10,
+        align: dict[QWidget, Qt.AlignmentFlag] | None = None,
+        parent: QWidget | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self._widgets = list(widgets)
+        self._stretch = stretch
+        self._columns = max(1, columns)
+        self._full = set(full_width)
+        self._align = align or {}
+        self._grid = QGridLayout(self)
+        self._grid.setContentsMargins(0, 0, 0, 0)
+        self._grid.setSpacing(spacing)
+        self.compact: bool | None = None
+        self.set_compact(False)
+
+    def set_compact(self, compact: bool) -> None:
+        if compact == self.compact:
+            return
+        self.compact = compact
+        grid = self._grid
+        for widget in self._widgets:
+            grid.removeWidget(widget)
+        for column in range(grid.columnCount()):
+            grid.setColumnStretch(column, 0)
+        if not compact:
+            for index, widget in enumerate(self._widgets):
+                grid.addWidget(widget, 0, index, self._align.get(widget, Qt.AlignmentFlag(0)))
+                stretch = self._stretch[index] if index < len(self._stretch) else 0
+                grid.setColumnStretch(index, stretch)
+            return
+        row = column = 0
+        for widget in self._widgets:
+            if widget in self._full:
+                if column:
+                    row, column = row + 1, 0
+                grid.addWidget(widget, row, 0, 1, self._columns)
+                row += 1
+                continue
+            grid.addWidget(widget, row, column)
+            column += 1
+            if column == self._columns:
+                row, column = row + 1, 0
+        for column in range(self._columns):
+            grid.setColumnStretch(column, 1)
 
 
 def page_header(title: str, subtitle: str = "") -> QWidget:

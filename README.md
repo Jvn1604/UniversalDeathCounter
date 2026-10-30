@@ -97,7 +97,7 @@ No Python or anything else needed. Windows 10 or 11, macOS 11 or newer, or a 64-
 - **Its own OBS-ready window** (**Timer → Timer Window**, with an ON/OFF tag), styled like the overlay. It only redraws while a run is going.
 
 ### 💀 A skull that evolves as you die
-Every 10 deaths your skull earns something new: horns, a nose ring, blades, a crown, a third eye, burning eyes, flames and an aura. Past 100 it changes colour, up to a golden **God of Death** at 1000. It sits next to the counter on Home (with how many deaths until the next one) and on the stream overlay.
+Every 10 deaths your skull earns something new: horns, a nose ring, blades, a crown, a third eye, burning eyes, flames and an aura. Past 100 it changes colour, up to a golden **God of Death** at 1000. It sits next to the counter on the Death Counter page (with how many deaths until the next one) and on the stream overlay.
 
 <p align="center">
   <img src="docs/screenshots/skull-tiers.png" alt="The 16 skull tiers, from Fresh Spawn at 0 deaths to God of Death at 1000" width="760">
@@ -112,7 +112,7 @@ Every 10 deaths your skull earns something new: horns, a nose ring, blades, a cr
 - **Multi-monitor:** move the overlay to any display. Windows come back on-screen if a monitor is unplugged.
 
 ### 📊 Tracking & stats
-- **The big number shows the game's all-time deaths** by default. Click the caption under it (or right-click the overlay) to show this session's, this boss's or **this speedrun run's** deaths instead; Home, the overlay and mini mode follow.
+- **The big number shows the game's all-time deaths** by default. Click the caption under it (or right-click the overlay) to show this session's, this boss's or **this speedrun run's** deaths instead; the counter, the overlay and mini mode follow.
 - **Continue a past session:** the **Sessions** button next to Undo lists every session of the game (when, how long, how many deaths). Pick one and keep counting in it.
 - Session, boss and all-time counts, all at once, and they're independent: **Reset Session** starts a fresh session without touching the all-time total, and **Reset Total** zeroes the total without touching the session. Counts never go below zero.
 - Switch bosses with the ◀ ▶ buttons or `Ctrl+F9` / `Ctrl+F10` from in-game. Defeated bosses are skipped.
@@ -120,7 +120,7 @@ Every 10 deaths your skull earns something new: horns, a nose ring, blades, a cr
 - Notes on individual deaths, session history, and graphs: per boss, over time, and per session.
 - Ready-made boss lists for Elden Ring, Dark Souls III, Sekiro, Bloodborne, Hollow Knight and Cuphead.
 - **Multiple profiles** (switch from the box at the top), JSON backup and restore, and CSV export.
-- **Make the main window yours** in **Settings → Appearance**: any installed font (each shown in its own style), text and death-number colors, and a background image with adjustable dimming. **Changes preview live** as you edit, on the main window and the overlay; Cancel puts everything back.
+- **Make the main window yours** in **Settings → Appearance**: any installed font (each shown in its own style), text and death-number colors, and a background image with adjustable dimming. **Changes preview live** as you edit, on the main window and the overlay; Discard Changes puts everything back.
 
 ### 🎮 PlayStation & Xbox
 The **Console** page (sidebar) makes DUDC work when the game runs on a console:
@@ -134,12 +134,15 @@ The **Console** page (sidebar) makes DUDC work when the game runs on a console:
 - Every button has a clear icon ([Lucide](https://lucide.dev), ISC licence).
 
 ### ✨ Comfort
-- **Home dashboard:** a friendly greeting with today's deaths, your skull and how far it is to the next one, this week's deaths per day (and versus last week), and boss progress with the bosses that killed you most.
+- **Home dashboard:** a friendly greeting, **Now playing** (the game, its count and whether auto-detect is hooked, one click from counting), today / this session / all-time / bosses beaten, this week's deaths per day (and versus last week), and boss progress with the bosses that killed you most.
+- **Death Counter page:** everything for counting in one place: game and boss, the big number with your skull, +1 / −1 / Undo / Sessions (all one height), auto-detect status, Set Exact Count and resets. Hover −1 and Undo to see the difference: −1 is logged as a death taken off, Undo takes back the last +1 or −1 as if it never happened.
+- **Auto-detect status at a glance:** a coloured dot: green = watching the game, yellow = waiting (for the game to start, or paused), red = needs attention, grey = off.
+- **Fits any window size:** rows rearrange when the window is narrow, so nothing is cut off. The button at the top of the sidebar collapses it to icons only (remembered).
 - **Quick Start guide:** a checklist that ticks itself off as you go (add your game, count a death, add bosses, set up auto-detect, put it on stream), with a button on each step that takes you straight there. It also lists your keys and tips. Home shows how far along you are until you're done; reopen it any time with the **?** at the top.
 - **Mini mode:** a tiny always-on-top window with the count, +1 and Undo, for one-monitor setups. Sidebar or tray.
 - **Right-click the Game or Boss box** to rename it or mark the boss defeated, without opening Games & Bosses.
 - **Tray menu** has +1, Undo, Boss Defeated, pause detection, start/split the timer, the timer window, mini mode and the overlay.
-- **One place for everything:** pages and tools in the sidebar, profiles and backups at the top right. No duplicated menus.
+- **One place for everything:** pages and tools in the sidebar (Settings is a page too, not a separate window), profiles and saves at the top right. No duplicated menus.
 - **One-click updates:** the card at the bottom of the sidebar shows whether you are up to date (checked at startup, every 6 hours, or with its refresh button). When a new version is out, click **Update**: the installed app downloads it, updates itself and reopens. (Portable copies, Mac and Linux open the download page.)
 - Deleting a game tells you exactly what goes with it (deaths, bosses, sessions, runs).
 
@@ -179,7 +182,7 @@ You can always count by hand too: **+1 Death** (`F9`), **-1** (`F10`), **Undo** 
 
 The timer keys use the number pad, as in LiveSplit, so **Num Lock must be on**. No number pad? Rebind them. Only Start / Split is held all the time; pause, reset, undo and skip are claimed only while a run is going, so the number pad keeps working in other apps the rest of the time.
 
-To change any of them, go to **Settings → Preferences… → Controls**:
+To change any of them, go to **Settings → Controls**:
 - **Keyboard:** click a field and press a key.
 - **Controller:** click **Record**, then hold a button combo and release it.
 

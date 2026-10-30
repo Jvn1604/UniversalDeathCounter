@@ -19,7 +19,7 @@ from datetime import date, datetime, timedelta
 from html import escape
 from pathlib import Path
 
-from PySide6.QtCore import QByteArray, QObject, QPoint, Qt, QTimer, QUrl, Signal
+from PySide6.QtCore import QByteArray, QEvent, QObject, QPoint, Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import (
     QAction,
     QActionGroup,
@@ -124,8 +124,8 @@ from src.ui.guide_dialog import (
     ACTION_BOSSES,
     ACTION_CONSOLE,
     ACTION_CONTROLS,
+    ACTION_COUNTER,
     ACTION_DETECTION,
-    ACTION_HOME,
     ACTION_OBS,
     ACTION_OVERLAY,
     ACTION_TEMPLATE,
@@ -146,6 +146,7 @@ from src.ui.widgets import (
     CreditCard,
     HeroCard,
     NavToggle,
+    ResponsiveGrid,
     StatTile,
     StatusPill,
     UpdateCard,
@@ -209,6 +210,7 @@ from src.utils.constants import (
     SETTING_PHONE_REMOTE,
     SETTING_PHONE_REMOTE_KEY,
     SETTING_QUICK_START_HIDDEN,
+    SETTING_SIDEBAR_COLLAPSED,
     SETTING_THEME,
     SETTING_TIMER_AUTOSAVE,
     SETTING_TIMER_COMPARISON,
@@ -304,14 +306,26 @@ class _UpdateDownload(QObject):
 
 
 # Sidebar pages, in stack order: (name, icon).
-_PAGE_HOME, _PAGE_TIMER, _PAGE_STATS, _PAGE_DETECTION, _PAGE_CONSOLE = range(5)
+(
+    _PAGE_HOME,
+    _PAGE_COUNTER,
+    _PAGE_TIMER,
+    _PAGE_STATS,
+    _PAGE_DETECTION,
+    _PAGE_CONSOLE,
+    _PAGE_SETTINGS,
+) = range(7)
 _PAGES = (
     ("Home", "house"),
+    ("Death Counter", "skull"),
     ("Timer", "timer"),
     ("Stats", "chart-column"),
     ("Detection", "scan-eye"),
     ("Console", "gamepad-2"),
 )
+_PAGE_NAMES = [name for name, _icon in _PAGES] + ["Settings"]  # Settings sits under Tools
+_COMPACT_BELOW = 820  # page width (px) under which rows rearrange to fit
+_SIDEBAR_WIDTH, _SIDEBAR_COLLAPSED_WIDTH = 214, 68
 _TIMER_STATUS_COLORS = {AHEAD: "#3ad07a", BEHIND: "#ff5c5c", GOLD: "#ffd24a"}
 _MODE_NAMES = {
     DETECTION_MODE_OFF: "Off",
@@ -410,8 +424,12 @@ class MainWindow(QMainWindow):
         self._update_window_title()
         self._build_menu()
         self._build_ui()
+        self._set_sidebar_collapsed(
+            self._database.get_setting(SETTING_SIDEBAR_COLLAPSED, "false") == "true", save=False
+        )
         self._rebuild_profile_menu()  # again, now that the header's profile box exists
         self._detect_status_label.add_mirror(self._detect_status_label_mirror)
+        self._detect_status_label.add_mirror(self._home_detect)
         self._build_tray()
         self._setup_hotkeys()
         self._setup_death_watcher()
@@ -513,12 +531,15 @@ class MainWindow(QMainWindow):
         body.setContentsMargins(0, 0, 0, 0)
         body.setSpacing(0)
         self._pages = QStackedWidget()
-        body.addWidget(self._build_sidebar())
+        self._responsive: list[ResponsiveGrid] = []  # rows that rearrange when narrow
+        self._sidebar = self._build_sidebar()
+        body.addWidget(self._sidebar)
         body.addWidget(self._pages, 1)
         shell.addLayout(body, 1)
 
         for builder in (
             self._build_home_page,
+            self._build_counter_page,
             self._build_timer_page,
             self._build_stats_page,
             self._build_detection_page,
@@ -531,6 +552,12 @@ class MainWindow(QMainWindow):
             scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
             scroll.setWidget(page)
             self._pages.addWidget(scroll)
+        # Settings is built the first time it's opened (it's big; startup stays quick).
+        self._settings: SettingsWindow | None = None
+        self._settings_host = QWidget()
+        QVBoxLayout(self._settings_host).setContentsMargins(10, 8, 10, 4)
+        self._pages.addWidget(self._settings_host)
+        self._pages.installEventFilter(self)  # resizes: see _fit_to_width
         self._pages.currentChanged.connect(self._on_page_changed)
         self._page_timer = QTimer(self)  # live Timer page while it's showing
         self._page_timer.timeout.connect(self._refresh_timer_page)
@@ -595,13 +622,24 @@ class MainWindow(QMainWindow):
     def _build_sidebar(self) -> QWidget:
         sidebar = QFrame()
         sidebar.setObjectName("Sidebar")
-        sidebar.setFixedWidth(214)
+        sidebar.setFixedWidth(_SIDEBAR_WIDTH)
         layout = QVBoxLayout(sidebar)
         layout.setContentsMargins(0, 8, 0, 12)
         layout.setSpacing(1)
         menu_title = QLabel("MENU")
         menu_title.setObjectName("NavSection")
-        layout.addWidget(menu_title)
+        self._collapse_btn = QPushButton()
+        self._collapse_btn.setObjectName("TopIconButton")
+        self._collapse_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._collapse_btn.clicked.connect(
+            lambda: self._set_sidebar_collapsed(not self._sidebar_collapsed)
+        )
+        header = self._sidebar_header = QHBoxLayout()
+        header.setContentsMargins(0, 0, 12, 0)
+        header.addWidget(menu_title, 1)
+        header.addWidget(self._collapse_btn, 0, Qt.AlignmentFlag.AlignBottom)
+        layout.addLayout(header)
+        self._nav_titles = [(menu_title, "MENU")]
         self._nav_group = QButtonGroup(self)
         self._nav_group.setExclusive(True)
         self._nav_buttons: list[QPushButton] = []
@@ -615,6 +653,10 @@ class MainWindow(QMainWindow):
         tools_title = QLabel("TOOLS")
         tools_title.setObjectName("NavSection")
         layout.addWidget(tools_title)
+        self._nav_titles.append((tools_title, "TOOLS"))
+        self._nav_texts: dict[QPushButton, str] = {
+            button: text for button, (text, _icon) in zip(self._nav_buttons, _PAGES, strict=True)
+        }
         self._overlay_nav = NavToggle("Overlay", "layers")
         self._overlay_nav.setToolTip(
             "Show or hide the overlay for OBS. Right-click the overlay for its options."
@@ -622,17 +664,24 @@ class MainWindow(QMainWindow):
         self._overlay_nav.clicked.connect(self._toggle_overlay)
         self._overlay.visibility_changed.connect(self._overlay_nav.set_on)
         layout.addWidget(self._overlay_nav)
+        self._nav_texts[self._overlay_nav] = "Overlay"
         for text, icon_name, handler, tip in (
             ("Mini Mode", "picture-in-picture-2", self._toggle_mini_mode,
              "A tiny always-on-top counter instead of this window"),
             ("OBS Setup", "radio", self._open_obs_guide, "Put the counter on your stream"),
-            ("Settings", "settings", self._open_settings_window,
-             "Look, themes, overlay, timer and controls"),
         ):
             button = nav_button(text, icon_name, checkable=False)
             button.setToolTip(tip)
             button.clicked.connect(handler)
             layout.addWidget(button)
+            self._nav_texts[button] = text
+        settings_button = nav_button("Settings", "settings")
+        settings_button.setToolTip("Look, themes, overlay, timer and controls")
+        settings_button.clicked.connect(lambda: self._show_page(_PAGE_SETTINGS))
+        self._nav_group.addButton(settings_button, _PAGE_SETTINGS)
+        self._nav_buttons.append(settings_button)  # index == _PAGE_SETTINGS
+        self._nav_texts[settings_button] = "Settings"
+        layout.addWidget(settings_button)
         layout.addStretch()
 
         self._update_card = UpdateCard(APP_VERSION)
@@ -652,7 +701,41 @@ class MainWindow(QMainWindow):
         credit_row.addWidget(credit)
         credit_row.setContentsMargins(12, 0, 12, 4)
         layout.addLayout(credit_row)
+        self._sidebar_rows = (update_row, credit_row)
+        self._sidebar_collapsed = False
         return sidebar
+
+    def _set_sidebar_collapsed(self, collapsed: bool, save: bool = True) -> None:
+        """Icons only (68 px) or icons with names; the choice is remembered."""
+        self._sidebar_collapsed = collapsed
+        self._sidebar.setFixedWidth(_SIDEBAR_COLLAPSED_WIDTH if collapsed else _SIDEBAR_WIDTH)
+        for title, text in self._nav_titles:
+            title.setText("" if collapsed else text)
+        menu_title = self._nav_titles[0][0]
+        menu_title.setVisible(not collapsed)  # the collapse button sits alone, centered
+        self._sidebar_header.setContentsMargins(*((0, 6, 0, 2) if collapsed else (0, 0, 12, 0)))
+        self._sidebar_header.setAlignment(
+            self._collapse_btn,
+            Qt.AlignmentFlag.AlignHCenter if collapsed else Qt.AlignmentFlag.AlignBottom,
+        )
+        for button, text in self._nav_texts.items():
+            button.setText("" if collapsed else f"  {text}")
+            button.setProperty("collapsed", "true" if collapsed else "false")
+            button.style().unpolish(button)
+            button.style().polish(button)
+            if not button.toolTip():
+                button.setToolTip(text)  # the only name left when collapsed
+        self._overlay_nav.set_compact(collapsed)
+        self._update_card.set_compact(collapsed)
+        self._credit.set_compact(collapsed)
+        for row_ in self._sidebar_rows:
+            row_.setContentsMargins(*((8, 0, 8, 6) if collapsed else (12, 0, 12, 6)))
+        icons.set_icon(
+            self._collapse_btn, "panel-left-open" if collapsed else "panel-left-close", size=17
+        )
+        self._collapse_btn.setToolTip("Show the menu names" if collapsed else "Collapse the menu")
+        if save:
+            self._database.set_setting(SETTING_SIDEBAR_COLLAPSED, "true" if collapsed else "false")
 
     @staticmethod
     def _page_layout() -> tuple[QWidget, QVBoxLayout]:
@@ -662,7 +745,7 @@ class MainWindow(QMainWindow):
         layout.setSpacing(16)
         return page, layout
 
-    # Home -------------------------------------------------------------
+    # Home: the dashboard --------------------------------------------
     def _build_home_page(self) -> QWidget:
         page, layout = self._page_layout()
 
@@ -686,6 +769,103 @@ class MainWindow(QMainWindow):
         self._start_banner.hide()
         layout.addWidget(self._start_banner)
 
+        # Now playing: the selected game at a glance, one click from counting.
+        now, now_layout = card("HeroCard", margins=20)
+        now_row = QHBoxLayout()
+        now_row.setSpacing(16)
+        now_texts = QVBoxLayout()
+        now_texts.setSpacing(2)
+        now_texts.addWidget(section_title("Now playing"))
+        self._home_game = QLabel()
+        self._home_game.setObjectName("PageTitle")
+        self._home_game.setWordWrap(True)
+        self._home_boss = QLabel()
+        self._home_boss.setObjectName("PageSubtitle")
+        self._home_boss.setWordWrap(True)
+        now_texts.addWidget(self._home_game)
+        now_texts.addWidget(self._home_boss)
+        now_texts.addSpacing(6)
+        self._home_detect = StatusPill("Auto-detect off")
+        now_texts.addWidget(self._home_detect, 0, Qt.AlignmentFlag.AlignLeft)
+        now_row.addLayout(now_texts, 1)
+        count_box = QVBoxLayout()
+        count_box.setSpacing(0)
+        self._home_count = QLabel("0")
+        self._home_count.setObjectName("HomeCount")
+        self._home_count.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._home_count_caption = QLabel()
+        self._home_count_caption.setObjectName("StatLabel")
+        self._home_count_caption.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        count_box.addWidget(self._home_count)
+        count_box.addWidget(self._home_count_caption)
+        now_row.addLayout(count_box)
+        now_layout.addLayout(now_row)
+        self._home_open_btn = QPushButton(" Open Death Counter")
+        self._home_open_btn.setObjectName("AccentButton")
+        self._home_open_btn.setMinimumHeight(42)
+        self._home_open_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        icons.set_icon(self._home_open_btn, "skull", icons.ACCENT, size=17)
+        self._home_open_btn.clicked.connect(self._open_counter_or_add_game)
+        now_layout.addSpacing(6)
+        now_layout.addWidget(self._home_open_btn)
+        layout.addWidget(now)
+
+        self._home_today = StatTile("Today")
+        self._home_session = StatTile("This session")
+        self._home_total = StatTile("All-time")
+        self._home_bosses = StatTile("Bosses beaten")
+        tiles = ResponsiveGrid(
+            [self._home_today, self._home_session, self._home_total, self._home_bosses],
+            stretch=(1, 1, 1, 1), columns=2,
+        )
+        self._responsive.append(tiles)
+        layout.addWidget(tiles)
+
+        week, week_layout = card(margins=16)
+        week_layout.setSpacing(4)
+        week_top = QHBoxLayout()
+        week_top.addWidget(section_title("This week"))
+        week_top.addStretch()
+        self._week_delta = QLabel()
+        self._week_delta.setObjectName("DeltaChip")
+        week_top.addWidget(self._week_delta)
+        week_layout.addLayout(week_top)
+        self._week_total = QLabel()
+        self._week_total.setObjectName("InsightValue")
+        week_layout.addWidget(self._week_total)
+        self._week_chart = WeekChart()
+        week_layout.addWidget(self._week_chart, 1)
+
+        bosses, bosses_layout = card(margins=16)
+        bosses_layout.addWidget(section_title("Boss progress"))
+        boss_body = QHBoxLayout()
+        boss_body.setSpacing(18)
+        self._boss_ring = ProgressRing()
+        self._toughest = BossRanking()
+        boss_body.addWidget(self._boss_ring, 0, Qt.AlignmentFlag.AlignVCenter)
+        boss_body.addWidget(self._toughest, 1)
+        bosses_layout.addLayout(boss_body, 1)
+        insights = ResponsiveGrid([week, bosses], stretch=(3, 2), spacing=16)
+        self._responsive.append(insights)
+        layout.addWidget(insights)
+        layout.addStretch()
+        return page
+
+    def _open_counter_or_add_game(self) -> None:
+        if self._game_combo.count():
+            self._show_page(_PAGE_COUNTER)
+        else:
+            self.maybe_show_welcome(force=True)
+
+    # Death Counter ----------------------------------------------------
+    def _build_counter_page(self) -> QWidget:
+        page, layout = self._page_layout()
+        layout.addWidget(
+            page_header(
+                "Death Counter",
+                "Every death, per session and per boss. The hotkeys work while you play.",
+            )
+        )
         self._game_combo = QComboBox()
         self._game_combo.setPlaceholderText("Add a game: pick its .exe")
         self._game_combo.currentIndexChanged.connect(self._on_game_changed)
@@ -731,12 +911,16 @@ class MainWindow(QMainWindow):
         boss_layout.addWidget(self._boss_combo, 1)
         for button in (self._prev_boss_btn, self._next_boss_btn, self._defeated_btn):
             boss_layout.addWidget(button)
-        selectors = QHBoxLayout()
-        selectors.setSpacing(14)
-        selectors.addWidget(field("Game", self._game_combo), 2)
-        selectors.addWidget(field("Boss", boss_row), 3)
-        selectors.addWidget(manage_button, 0, Qt.AlignmentFlag.AlignBottom)
-        layout.addLayout(selectors)
+        game_field = field("Game", self._game_combo)
+        boss_field = field("Boss", boss_row)
+        selectors = ResponsiveGrid(
+            [game_field, boss_field, manage_button],
+            stretch=(2, 3, 0),
+            spacing=14,
+            align={manage_button: Qt.AlignmentFlag.AlignBottom},
+        )
+        self._responsive.append(selectors)
+        layout.addWidget(selectors)
 
         hero = HeroCard(watermark="")
         hero_row = QHBoxLayout(hero)
@@ -786,10 +970,9 @@ class MainWindow(QMainWindow):
         hero_layout.addLayout(tiles)
         layout.addWidget(hero)
 
-        # Keys come from _update_hotkey_labels().
+        # Keys come from _update_hotkey_labels(); so do the tooltips.
         self._plus_btn = ActionButton("+1 Death", "skull", icons.ACCENT)
         self._plus_btn.setObjectName("AccentButton")
-        self._plus_btn.setMinimumHeight(58)
         self._plus_btn.clicked.connect(self._on_increment)
         self._minus_btn = ActionButton("−1 Death", "")
         self._minus_btn.clicked.connect(self._on_decrement)
@@ -798,44 +981,17 @@ class MainWindow(QMainWindow):
         self._sessions_btn = ActionButton("Sessions", "history")
         self._sessions_btn.setToolTip("Continue a past session of this game")
         self._sessions_btn.clicked.connect(self._continue_past_session)
-        for button in (self._minus_btn, self._undo_btn, self._sessions_btn):
-            button.setMinimumHeight(58)
-        layout.addLayout(
-            row(
-                self._plus_btn, self._minus_btn, self._undo_btn, self._sessions_btn,
-                stretch=(2, 1, 1, 1),
-            )
+        for button in (self._plus_btn, self._minus_btn, self._undo_btn, self._sessions_btn):
+            button.setFixedHeight(58)  # one height for the whole row
+        # Narrow: +1 on its own row, the two corrections (−1, Undo) side by side.
+        actions = ResponsiveGrid(
+            [self._plus_btn, self._minus_btn, self._undo_btn, self._sessions_btn],
+            stretch=(2, 1, 1, 1),
+            columns=2,
+            full_width=(self._plus_btn, self._sessions_btn),
         )
-
-        week, week_layout = card(margins=16)
-        week_layout.setSpacing(4)
-        week_top = QHBoxLayout()
-        week_top.addWidget(section_title("This week"))
-        week_top.addStretch()
-        self._week_delta = QLabel()
-        self._week_delta.setObjectName("DeltaChip")
-        week_top.addWidget(self._week_delta)
-        week_layout.addLayout(week_top)
-        self._week_total = QLabel()
-        self._week_total.setObjectName("InsightValue")
-        week_layout.addWidget(self._week_total)
-        self._week_chart = WeekChart()
-        week_layout.addWidget(self._week_chart, 1)
-
-        bosses, bosses_layout = card(margins=16)
-        bosses_layout.addWidget(section_title("Boss progress"))
-        boss_body = QHBoxLayout()
-        boss_body.setSpacing(18)
-        self._boss_ring = ProgressRing()
-        self._toughest = BossRanking()
-        boss_body.addWidget(self._boss_ring, 0, Qt.AlignmentFlag.AlignVCenter)
-        boss_body.addWidget(self._toughest, 1)
-        bosses_layout.addLayout(boss_body, 1)
-        insights = QHBoxLayout()
-        insights.setSpacing(16)
-        insights.addWidget(week, 3)
-        insights.addWidget(bosses, 2)
-        layout.addLayout(insights)
+        self._responsive.append(actions)
+        layout.addWidget(actions)
 
         status, status_layout = card(margins=14)
         self._detect_status_label = StatusPill("Auto-detect off")
@@ -1396,11 +1552,70 @@ class MainWindow(QMainWindow):
 
     # Page switching and refresh --------------------------------------
     def _show_page(self, index: int) -> None:
+        current = self._pages.currentIndex()
+        if current == _PAGE_SETTINGS and index != current and not self._leave_settings():
+            self._nav_buttons[current].setChecked(True)
+            return
         self._pages.setCurrentIndex(index)
         self._nav_buttons[index].setChecked(True)
-        self._page_badge.setText(_PAGES[index][0])
+        self._page_badge.setText(_PAGE_NAMES[index])
+
+    def _leave_settings(self) -> bool:
+        """Unsaved settings: save them, drop them, or stay (False)."""
+        settings = self._settings
+        if settings is None:
+            return True
+        settings.stop_recording()
+        if not settings.has_changes():
+            return True
+        box = QMessageBox(self)
+        box.setWindowTitle("Unsaved Settings")
+        box.setIcon(QMessageBox.Icon.Question)
+        box.setText("Save your changes to Settings?")
+        save = box.addButton("Save", QMessageBox.ButtonRole.AcceptRole)
+        save.setObjectName("AccentButton")
+        discard = box.addButton("Discard", QMessageBox.ButtonRole.DestructiveRole)
+        box.addButton(QMessageBox.StandardButton.Cancel)
+        box.setDefaultButton(save)
+        box.exec()
+        if box.clickedButton() is save:
+            return settings._apply()
+        if box.clickedButton() is discard:
+            settings.reload()
+            return True
+        return False
+
+    def _ensure_settings(self) -> SettingsWindow:
+        if self._settings is None:
+            self._settings = SettingsWindow(
+                self._database,
+                gamepad=self._gamepad_manager,
+                hotkeys=self._hotkey_manager,
+                parent=self._settings_host,
+                embedded=True,
+            )
+            self._settings.settings_changed.connect(self._on_settings_changed)
+            self._settings.preview_changed.connect(self._preview_appearance)
+            self._settings_host.layout().addWidget(self._settings)
+        return self._settings
+
+    def eventFilter(self, watched, event) -> bool:  # noqa: N802
+        if watched is self._pages and event.type() == QEvent.Type.Resize:
+            self._fit_to_width(event.size().width())
+        return super().eventFilter(watched, event)
+
+    def _fit_to_width(self, width: int) -> None:
+        """Rearrange rows so every page fits the window instead of being cut off."""
+        compact = width < _COMPACT_BELOW
+        for grid in self._responsive:
+            grid.set_compact(compact)
+        self._skull_badge.setVisible(width >= 600)
 
     def _on_page_changed(self, index: int) -> None:
+        if index == _PAGE_SETTINGS:
+            settings = self._ensure_settings()
+            if not settings.has_changes():
+                settings.reload()  # e.g. changed from the overlay's menu meanwhile
         if index == _PAGE_TIMER:
             self._refresh_timer_page()
         else:
@@ -1629,8 +1844,12 @@ class MainWindow(QMainWindow):
 
         for button, action, text in (
             (self._plus_btn, "increment", "+1 Death"),
-            (self._minus_btn, "decrement", "-1 Death"),
-            (self._undo_btn, "undo", "Undo the last change"),
+            (self._minus_btn, "decrement",
+             "−1 Death: take one death off, e.g. one counted by mistake.\n"
+             "It goes in the death log as a −1 (Undo can take it back)."),
+            (self._undo_btn, "undo",
+             "Undo: take back the last +1 or −1, as if it never happened.\n"
+             "Nothing goes in the log."),
         ):
             button.set_key(key(action))
             button.setToolTip(tooltip(action, text))
@@ -2278,7 +2497,7 @@ class MainWindow(QMainWindow):
     def _on_guide_action(self, action: str) -> None:
         """A guide button: do it here, where the real flows live."""
         pages = {
-            ACTION_HOME: _PAGE_HOME,
+            ACTION_COUNTER: _PAGE_COUNTER,
             ACTION_DETECTION: _PAGE_DETECTION,
             ACTION_CONSOLE: _PAGE_CONSOLE,
             ACTION_TIMER: _PAGE_TIMER,
@@ -2380,6 +2599,7 @@ class MainWindow(QMainWindow):
         else:
             line = f"{today_deaths} deaths today. Persistence is a skill too."
         self._greeting_line.setText(line)
+        self._refresh_now_playing(today_deaths)
 
         days = [today - timedelta(days=offset) for offset in range(6, -1, -1)]
         week = [(day.strftime("%a"), per_day.get(day.isoformat(), 0), day == today) for day in days]
@@ -2411,8 +2631,34 @@ class MainWindow(QMainWindow):
             totals,
             "No bosses yet: add them with Games & Bosses to track every fight."
             if not bosses
-            else "No boss deaths yet. Pick the boss you're fighting above.",
+            else "No boss deaths yet. Pick the boss you're fighting on the Death Counter page.",
         )
+
+    def _refresh_now_playing(self, today_deaths: int) -> None:
+        game_id = self._counter_manager.current_game_id
+        has_game = game_id is not None
+        self._home_open_btn.setText(" Open Death Counter" if has_game else " Add Your First Game")
+        if not has_game:
+            self._home_game.setText("No game yet")
+            self._home_boss.setText("Add a game to start counting.")
+            self._home_count.setText("–")
+            self._home_count_caption.setText("")
+            for tile in (self._home_today, self._home_session, self._home_total, self._home_bosses):
+                tile.set_value("–")
+            return
+        snapshot = self._counter_manager.get_snapshot()
+        self._home_game.setText(self._game_combo.currentText())
+        self._home_boss.setText(
+            f"Fighting {snapshot.boss_name}" if snapshot.boss_name else "No boss selected"
+        )
+        self._home_count.setText(self._counter_label.text())
+        self._home_count_caption.setText(self._counter_caption.text())
+        self._home_today.set_value(str(max(today_deaths, 0)))
+        self._home_session.set_value(str(snapshot.session_deaths))
+        self._home_total.set_value(str(snapshot.total_deaths))
+        bosses = self._database.get_bosses(game_id)
+        beaten = sum(1 for boss in bosses if boss["defeated"])
+        self._home_bosses.set_value(f"{beaten}/{len(bosses)}" if bosses else "–")
 
     def _add_template_game(self, name: str) -> None:
         template = get_template(name)
@@ -2538,6 +2784,12 @@ class MainWindow(QMainWindow):
         self._session_manager = SessionManager(self._database)
         self._counter_manager = CounterManager(self._database, self._session_manager)
         self._statistics_service = StatisticsService(self._database)
+        if self._settings is not None:  # it holds the old profile's database
+            self._settings.setParent(None)
+            self._settings.deleteLater()
+            self._settings = None
+            if self._pages.currentIndex() == _PAGE_SETTINGS:
+                self._ensure_settings()
 
         self._update_window_title()
         self._rebuild_profile_menu()
@@ -3072,17 +3324,14 @@ class MainWindow(QMainWindow):
         dialog.exec()
 
     def _open_settings_window(self, tab: int = 0) -> None:
-        dialog = SettingsWindow(
-            self._database,
-            gamepad=self._gamepad_manager,
-            hotkeys=self._hotkey_manager,
-            parent=self,
-            tab=tab,
-        )
-        dialog.settings_changed.connect(self._on_settings_changed)
-        dialog.preview_changed.connect(self._preview_appearance)
-        if dialog.exec() != SettingsWindow.DialogCode.Accepted and dialog.previewed:
-            self._preview_appearance({})  # cancelled: back to what's saved
+        """The Settings page, at ``tab`` (e.g. from the overlay's menu)."""
+        self._show_page(_PAGE_SETTINGS)
+        if self._pages.currentIndex() == _PAGE_SETTINGS:
+            self._ensure_settings().set_tab(tab)
+        if not self.isVisible() or self.isMinimized():
+            self.showNormal()
+        self.raise_()
+        self.activateWindow()
 
     def _open_overlay_settings(self) -> None:
         self._open_settings_window(tab=SettingsWindow.TAB_OVERLAY)
@@ -3632,6 +3881,7 @@ class MainWindow(QMainWindow):
         self._phone_remote.stop()
         self._autosave_timer.stop()
         self._progress_timer.stop()
+        self._home_refresh.stop()  # it reads the database being closed
         self._recovery_timer.stop()
         self._game_launch_timer.stop()  # it reads the database being closed
         self._page_timer.stop()

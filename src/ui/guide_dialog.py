@@ -46,7 +46,7 @@ STEPS: tuple[tuple[str, str], ...] = (
 # Actions the guide asks the main window for.
 ACTION_ADD_EXE = "add_exe"
 ACTION_TEMPLATE = "template:"  # + the boss list's name
-ACTION_HOME = "home"
+ACTION_COUNTER = "counter"
 ACTION_BOSSES = "bosses"
 ACTION_DETECTION = "detection"
 ACTION_OVERLAY = "overlay"
@@ -233,7 +233,7 @@ class GuideDialog(QDialog):
             "game": "Pick the game's .exe so deaths can be detected and the app follows "
             "you into the game. Or start from a ready-made boss list.",
             "death": f"Die in game, then press <b>{keys.get('increment') or 'your +1 key'}</b>: "
-            "it works in fullscreen. Or click +1 Death on Home.",
+            "it works in fullscreen. Or click +1 Death on the Death Counter page.",
             "bosses": "Pick the boss you're fighting so deaths count against it. "
             "◀ ▶ switch bosses, the trophy marks one beaten.",
             "detect": "Die once, then press "
@@ -262,7 +262,7 @@ class GuideDialog(QDialog):
         game.addWidget(self._template_combo, 1)
         game.addWidget(template)
         self._steps["death"].actions.addWidget(
-            self._button("Go to Home", "house", ACTION_HOME)
+            self._button("Go to Death Counter", "skull", ACTION_COUNTER)
         )
         self._steps["bosses"].actions.addWidget(
             self._button("Games && Bosses", "library", ACTION_BOSSES)
