@@ -75,7 +75,7 @@ No Python or anything else needed. Windows 10 or 11, macOS 11 or newer, or a 64-
 - **No death screen? Use the health bar.** Mark your health bar once at full health, and a death counts when it empties.
 - **Or the game's log file.** For games that log deaths, such as Minecraft, it counts every new line that matches your text. This mode doesn't capture the screen at all.
 - **Missed a death?** Add another death screen in two clicks. Any saved one counts.
-- **Switches to the right game** when you launch it. A new session starts after a break of 6 hours or more; a restart, crash or update in between continues the same session.
+- **Switches to the right game** when you launch it. A new session starts after a break of 16 hours or more; a restart, crash or update in between continues the same session, and the **Sessions** button next to Undo brings back any earlier one.
 - **Screen capture only:** no memory reading and no injection, so it's safe with anti-cheat.
 
 ### 🎮 Controls, your way
@@ -89,6 +89,7 @@ No Python or anything else needed. Windows 10 or 11, macOS 11 or newer, or a 64-
 - **Real time and game time.** Game time leaves out loads and pauses. Choose which one the timer shows; the other appears underneath.
 - **Pauses itself:** the whole timer pauses if the game closes or crashes. Game time also stops while the game is frozen, on black loading screens, and on pause, loading or cutscene screens you mark.
 - **Never lose a run:** the run in progress is auto-saved every 10 seconds. After a crash, the next start offers to resume it or save it as an attempt.
+- **Continue a reset run:** pick it in **Run History** and click **Continue This Run**. It comes back paused where it stopped, with its splits and deaths.
 - **Run history and personal records** (**Timer → Run History & Records**): every attempt with its real time, game time and deaths; your PB, fewest-death run and best segments; and death records such as the fewest deaths to beat a boss.
 - **Precision from seconds to milliseconds** (Settings → Speedrun).
 - **Counts deaths per run**, including auto-detected ones, so you also see how many deaths your PB run had.
@@ -111,7 +112,8 @@ Every 10 deaths your skull earns something new: horns, a nose ring, blades, a cr
 - **Multi-monitor:** move the overlay to any display. Windows come back on-screen if a monitor is unplugged.
 
 ### 📊 Tracking & stats
-- **The big number shows the game's all-time deaths** by default. Click the caption under it (or right-click the overlay) to show this session's or this boss's deaths instead; Home, the overlay and mini mode follow.
+- **The big number shows the game's all-time deaths** by default. Click the caption under it (or right-click the overlay) to show this session's, this boss's or **this speedrun run's** deaths instead; Home, the overlay and mini mode follow.
+- **Continue a past session:** the **Sessions** button next to Undo lists every session of the game (when, how long, how many deaths). Pick one and keep counting in it.
 - Session, boss and all-time counts, all at once, and they're independent: **Reset Session** starts a fresh session without touching the all-time total, and **Reset Total** zeroes the total without touching the session. Counts never go below zero.
 - Switch bosses with the ◀ ▶ buttons or `Ctrl+F9` / `Ctrl+F10` from in-game. Defeated bosses are skipped.
 - **Boss kills are detected too.** After your first boss of a game, use **Capture Screen** (Detection page) to teach it that game's victory banner (e.g. *GREAT ENEMY FELLED*). Every later kill of the selected boss then marks it **Defeated ✓**, keeps your "deaths until victory", selects the next boss, and can split the speedrun timer. There's also a **Boss Defeated** key (`Ctrl+F11`) for doing it by hand.
@@ -237,7 +239,11 @@ False positives happen with unsigned apps. DUDC uses the system's own hotkey API
 - **Installer:** `%APPDATA%\UniversalDeathCounter\saves\`
 - **Portable:** the `saves` folder next to the exe.
 
-**⋮ (top right) → Export Backup** saves everything to one JSON file.
+**Save and load your progress:**
+- **⋮ (top right) → Save Progress… (Ctrl+S)** saves everything to one file, including the session and speedrun run in progress. Copy it anywhere: another PC, a reinstall, a backup drive.
+- **⋮ → Load Save…** brings it back and carries on with that session and run (the run comes back paused). Replace swaps your data for the save's (yours is saved first); Add puts its games next to yours. Older backups load too.
+- **Auto-save:** every 5 minutes and when you close the app, to `Saved Progress` in the data folder above.
+- **Closing asks first**, and your progress is already saved by the time it asks. Turn the question off in Settings → General.
 
 ## Build from source
 

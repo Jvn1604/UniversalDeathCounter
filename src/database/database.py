@@ -78,6 +78,11 @@ class Database:
         self._seed_default_settings()
         logger.info("Database initialized at %s", self._db_path)
 
+    @property
+    def path(self) -> Path:
+        """The database file (saves go next to it)."""
+        return self._db_path
+
     # ----------------------------------------------------------------
     # Schema management
     # ----------------------------------------------------------------
@@ -171,6 +176,8 @@ class Database:
                 split_names TEXT NOT NULL,
                 split_times TEXT NOT NULL,
                 game_times TEXT NOT NULL DEFAULT '[]',
+                real_ms INTEGER,
+                game_ms INTEGER,
                 FOREIGN KEY (game_id) REFERENCES games (id) ON DELETE CASCADE
             )
             """,
@@ -243,6 +250,12 @@ class Database:
                     "ALTER TABLE speedrun_runs ADD COLUMN game_times TEXT NOT NULL DEFAULT '[]'"
                 )
                 logger.info("Migrated schema: added game_times column to speedrun_runs")
+            cursor.execute("PRAGMA table_info(speedrun_runs)")
+            columns = {row["name"] for row in cursor.fetchall()}
+            for column in ("real_ms", "game_ms"):  # where a continued run picks up
+                if column not in columns:
+                    cursor.execute(f"ALTER TABLE speedrun_runs ADD COLUMN {column} INTEGER")
+                    logger.info("Migrated schema: added %s column to speedrun_runs", column)
 
     def _seed_default_settings(self) -> None:
         """Insert default settings for any keys not already present."""
@@ -465,8 +478,9 @@ class Database:
             cursor.execute(
                 """
                 INSERT INTO speedrun_runs (game_id, started_at, ended_at, finished, deaths,
-                                           split_names, split_times, game_times)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                                           split_names, split_times, game_times,
+                                           real_ms, game_ms)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     game_id,
@@ -477,6 +491,8 @@ class Database:
                     json.dumps(run.split_names),
                     json.dumps(run.split_times),
                     json.dumps(run.game_times),
+                    run.real_ms,
+                    run.game_ms,
                 ),
             )
             run.run_id = cursor.lastrowid
@@ -499,6 +515,8 @@ class Database:
                 ended_at=row["ended_at"],
                 game_times=json.loads(row["game_times"] or "[]"),
                 run_id=row["id"],
+                real_ms=row["real_ms"],
+                game_ms=row["game_ms"],
             )
             for row in rows
         ]
@@ -1054,7 +1072,7 @@ class Database:
             "speedrun_runs": runs,
         }
 
-    def import_data(self, data: dict[str, Any], mode: str = "merge") -> None:
+    def import_data(self, data: dict[str, Any], mode: str = "merge") -> dict[str, dict[int, int]]:
         """
         Import games/bosses/sessions/death events from an export dict.
 
@@ -1063,6 +1081,10 @@ class Database:
             mode: ``"merge"`` adds imported games alongside existing ones
                 (renaming on name collision). ``"replace"`` wipes all
                 existing game data first.
+
+        Returns:
+            ``{"games": {old_id: new_id}, "sessions": {...}, "bosses": {...}}``,
+            so a save's game and session in progress can be found again.
 
         Raises:
             ValueError: If ``data`` is missing required keys.
@@ -1142,6 +1164,7 @@ class Database:
         logger.info(
             "Imported %d game(s) in '%s' mode", len(data["games"]), mode
         )
+        return {"games": game_id_map, "sessions": session_id_map, "bosses": boss_id_map}
 
     def _import_extras(self, data: dict[str, Any], game_id_map: dict[int, int]) -> None:
         """Format-2 parts of a backup: detection setup, screens, splits and runs."""
@@ -1186,8 +1209,8 @@ class Database:
                 if game_id is not None:
                     cursor.execute(
                         "INSERT INTO speedrun_runs (game_id, started_at, ended_at, finished, "
-                        "deaths, split_names, split_times, game_times) "
-                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                        "deaths, split_names, split_times, game_times, real_ms, game_ms) "
+                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                         (
                             game_id,
                             row["started_at"],
@@ -1197,6 +1220,8 @@ class Database:
                             row["split_names"],
                             row["split_times"],
                             row.get("game_times") or "[]",
+                            row.get("real_ms"),
+                            row.get("game_ms"),
                         ),
                     )
 

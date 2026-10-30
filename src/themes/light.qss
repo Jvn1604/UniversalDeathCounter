@@ -234,7 +234,7 @@ QPushButton#CounterCaption {
     border: 1px solid transparent;
     border-radius: 8px;
     padding: 4px 10px;
-    min-height: 0;
+    min-height: 16px; /* text + arrow; 0 would let the layout clip the text */
 }
 
 QPushButton#CounterCaption:hover {

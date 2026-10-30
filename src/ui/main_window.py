@@ -32,9 +32,11 @@ from PySide6.QtGui import (
     QPaintEvent,
     QPixmap,
     QScreen,
+    QShortcut,
 )
 from PySide6.QtWidgets import (
     QButtonGroup,
+    QCheckBox,
     QComboBox,
     QFileDialog,
     QFrame,
@@ -66,6 +68,7 @@ from src.core.speedrun import (
     GOLD,
     IDLE,
     RUNNING,
+    RunRecord,
     SpeedrunController,
     SpeedrunTimer,
     format_time,
@@ -132,6 +135,7 @@ from src.ui.guide_dialog import (
 )
 from src.ui.mini_window import MiniWindow
 from src.ui.obs_guide_window import ObsGuideWindow
+from src.ui.session_history_window import SessionHistoryWindow
 from src.ui.settings_window import SettingsWindow
 from src.ui.statistics_window import StatisticsWindow
 from src.ui.theme_picker import ThemeDownload
@@ -153,6 +157,7 @@ from src.ui.widgets import (
     row,
     section_title,
 )
+from src.utils import save_files
 from src.utils.backgrounds import cover, load_background
 from src.utils.constants import (
     APP_BRAND,
@@ -177,6 +182,7 @@ from src.utils.constants import (
     SETTING_BOSS_AUTO_SPLIT,
     SETTING_BOSS_DETECTION,
     SETTING_CHECK_UPDATES,
+    SETTING_CONFIRM_CLOSE,
     SETTING_DEATHS_TXT_ENABLED,
     SETTING_DEATHS_TXT_PATH,
     SETTING_DEATHS_TXT_TEMPLATE,
@@ -248,6 +254,7 @@ _ADD_GAME_SENTINEL = "__add_game_from_exe__"
 _ADD_GAME_LABEL = "+ Add game from .exe…"
 _GAME_LAUNCH_POLL_MS = 3000
 _AUTOSAVE_MS = 10_000  # a run in progress is saved this often (crash recovery)
+_PROGRESS_SAVE_MS = 5 * 60_000  # the auto-save file (save_files) is rewritten this often
 _UPDATE_RECHECK_MS = 6 * 60 * 60 * 1000  # while open, look for a new version this often
 # What makes the speedrun timer's game time stop: (reason shown, setting).
 _GAME_TIME_PAUSES = {
@@ -318,6 +325,7 @@ _COUNTER_CAPTIONS = {
     "session": "DEATHS THIS SESSION",
     "boss": "DEATHS ON THIS BOSS",
     "total": "ALL-TIME DEATHS",
+    "run": "DEATHS THIS RUN",
 }
 
 
@@ -415,6 +423,12 @@ class MainWindow(QMainWindow):
         self._autosave_timer.setInterval(_AUTOSAVE_MS)
         self._autosave_timer.timeout.connect(self._autosave)
         self._autosave_timer.start()
+        self._last_progress_save = ""  # skip rewriting an unchanged auto-save
+        self._progress_timer = QTimer(self)
+        self._progress_timer.setInterval(_PROGRESS_SAVE_MS)
+        self._progress_timer.timeout.connect(self._write_progress_autosave)
+        self._progress_timer.start()
+        QShortcut(QKeySequence.StandardKey.Save, self, self._save_progress)
         # Once the window is up; a QTimer (not singleShot) so closing can cancel it.
         self._recovery_timer = QTimer(self)
         self._recovery_timer.setSingleShot(True)
@@ -443,8 +457,10 @@ class MainWindow(QMainWindow):
         self._profile_menu = QMenu(self)
         self._rebuild_profile_menu()
         menu = self._more_menu = QMenu(self)
-        self._menu_action(menu, "save", "Export Backup…", self._export_backup)
-        self._menu_action(menu, "upload", "Import Backup…", self._import_backup)
+        save = self._menu_action(menu, "save", "Save Progress…", self._save_progress)
+        save.setShortcut(QKeySequence.StandardKey.Save)  # shown; the QShortcut fires it
+        save.setShortcutVisibleInContextMenu(True)
+        self._menu_action(menu, "upload", "Load Save…", self._load_save)
         menu.addSeparator()
         self._menu_action(menu, "info", "About", self._open_about_window)
         menu.addSeparator()
@@ -779,9 +795,17 @@ class MainWindow(QMainWindow):
         self._minus_btn.clicked.connect(self._on_decrement)
         self._undo_btn = ActionButton("Undo", "undo-2")
         self._undo_btn.clicked.connect(self._on_undo)
-        for button in (self._minus_btn, self._undo_btn):
+        self._sessions_btn = ActionButton("Sessions", "history")
+        self._sessions_btn.setToolTip("Continue a past session of this game")
+        self._sessions_btn.clicked.connect(self._continue_past_session)
+        for button in (self._minus_btn, self._undo_btn, self._sessions_btn):
             button.setMinimumHeight(58)
-        layout.addLayout(row(self._plus_btn, self._minus_btn, self._undo_btn, stretch=(2, 1, 1)))
+        layout.addLayout(
+            row(
+                self._plus_btn, self._minus_btn, self._undo_btn, self._sessions_btn,
+                stretch=(2, 1, 1, 1),
+            )
+        )
 
         week, week_layout = card(margins=16)
         week_layout.setSpacing(4)
@@ -2198,7 +2222,7 @@ class MainWindow(QMainWindow):
             except OSError as exc:
                 QMessageBox.warning(self, "Update Failed", f"Couldn't start the installer: {exc}")
                 return
-            self._quit_app()  # the installer replaces the files and reopens the app
+            self._quit_app(confirm=False)  # the installer replaces the files and reopens the app
 
         download.failed.connect(failed)
         download.succeeded.connect(succeeded)
@@ -2503,6 +2527,7 @@ class MainWindow(QMainWindow):
         if name == self._profile_manager.active_profile:
             return
         # Persist current state, tear down, and rebuild on the new database.
+        self._write_progress_autosave()
         self._end_speedrun()
         self._database.set_setting(SETTING_OVERLAY_GEOMETRY, self._overlay.geometry_string())
         self._session_manager.end_current_session()
@@ -2750,6 +2775,7 @@ class MainWindow(QMainWindow):
             ("total", "All-time deaths in this game"),
             ("session", "Deaths this session"),
             ("boss", "Deaths on this boss"),
+            ("run", "Deaths this speedrun run"),
         ):
             action = menu.addAction(text)
             action.setCheckable(True)
@@ -2763,15 +2789,42 @@ class MainWindow(QMainWindow):
         caption = self._counter_caption
         menu.exec(caption.mapToGlobal(caption.rect().bottomLeft()))
 
+    def _continue_past_session(self) -> None:
+        """Pick an earlier session of this game and keep counting in it."""
+        game_id = self._counter_manager.current_game_id
+        if game_id is None:
+            return
+        sessions = self._session_manager
+        dialog = SessionHistoryWindow(
+            self._database, game_id, parent=self, can_continue=True,
+            current_session_id=sessions.current_session_id,
+        )
+        dialog.exec()
+        if dialog.continue_session_id is None:
+            return
+        sessions.continue_session(game_id, dialog.continue_session_id)
+        self._refresh_counters()
+        deaths = sessions.get_session_deaths()
+        self._notify(f"Continuing that session: {deaths} death{'' if deaths == 1 else 's'} so far.")
+
     def _refresh_counters(self) -> None:
         self._apply_snapshot(self._counter_manager.get_snapshot())
 
+    def _run_deaths(self) -> int:
+        """Deaths in the speedrun in progress (0 when no run is going)."""
+        controller = self._speedrun
+        if controller is None or controller.game_id != self._counter_manager.current_game_id:
+            return 0
+        return controller.timer.deaths if controller.timer.state != IDLE else 0
+
     def _apply_snapshot(self, snapshot: CounterSnapshot) -> None:
+        snapshot.run_deaths = self._run_deaths()
         source = self._database.get_setting(SETTING_OVERLAY_COUNTER_SOURCE, DEFAULT_COUNTER_SOURCE)
         big_numbers = {
             "session": snapshot.session_deaths,
             "boss": snapshot.boss_deaths,
             "total": snapshot.total_deaths,
+            "run": snapshot.run_deaths,
         }
         self._counter_label.setText(str(big_numbers.get(source, snapshot.session_deaths)))
         self._skull_badge.set_count(big_numbers.get(source, snapshot.session_deaths))
@@ -2818,33 +2871,142 @@ class MainWindow(QMainWindow):
     # ----------------------------------------------------------------
     # File menu actions
     # ----------------------------------------------------------------
-    def _export_backup(self) -> None:
+    def _save_data(self) -> dict:
+        """Everything (a full backup) plus the game, session and run in progress."""
+        data = self._database.export_data()
+        game_id = self._counter_manager.current_game_id
+        game = self._database.get_game(game_id) if game_id is not None else None
+        if game is not None:
+            controller = self._speedrun
+            run = (
+                controller.timer.snapshot()
+                if controller is not None
+                and controller.game_id == game_id
+                and controller.timer.state not in (IDLE, FINISHED)
+                else None
+            )
+            data[save_files.RESUME_KEY] = {
+                "game_id": game_id,
+                "game_name": game["name"],
+                "session_id": self._session_manager.current_session_id,
+                "session_deaths": self._session_manager.get_session_deaths(),
+                "run": run,
+                "saved_at": datetime.now().isoformat(timespec="seconds"),
+            }
+        return data
+
+    def _write_progress_autosave(self) -> Path | None:
+        """Rewrite the auto-save (unless nothing changed); returns its path."""
+        if self._closed or not self._database.get_games():
+            return None
+        path = save_files.autosave_path(self._database.path)
+        data = self._save_data()
+        resume = data.get(save_files.RESUME_KEY)
+        stamp = json.dumps({**data, save_files.RESUME_KEY: {**resume, "saved_at": ""}}
+                           if resume else data, sort_keys=True)
+        if stamp == self._last_progress_save and path.exists():
+            return path
+        try:
+            save_files.write_save(path, data)
+        except OSError as exc:
+            logger.warning("Auto-save failed: %s", exc)
+            return None
+        self._last_progress_save = stamp
+        return path
+
+    def _save_progress(self) -> None:
+        """Save Progress (Ctrl+S): a save file to load later and carry on."""
+        folder = save_files.saves_folder(self._database.path)
+        folder.mkdir(parents=True, exist_ok=True)
         path, _ = QFileDialog.getSaveFileName(
-            self, "Export Backup", "death_counter_backup.json", "JSON Files (*.json)"
+            self, "Save Progress", str(folder / save_files.manual_save_name()),
+            "DUDC Saves (*.json)",
         )
         if not path:
             return
         try:
-            data = self._database.export_data()
-            with open(path, "w", encoding="utf-8") as file:
-                json.dump(data, file, indent=2)
-            QMessageBox.information(self, "Export Complete", f"Backup saved to:\n{path}")
+            save_files.write_save(Path(path), self._save_data())
         except OSError as exc:
-            QMessageBox.warning(self, "Export Failed", str(exc))
+            QMessageBox.warning(self, "Save Failed", str(exc))
+            return
+        self._write_progress_autosave()
+        QMessageBox.information(
+            self, "Progress Saved",
+            f"Saved to:\n{path}\n\nLoad Save… brings back this session and run.",
+        )
 
-    def _import_backup(self) -> None:
-        path, _ = QFileDialog.getOpenFileName(self, "Import Backup", "", "JSON Files (*.json)")
+    def _load_save(self) -> None:
+        """Load a save (or an older backup) and resume its session and run."""
+        folder = save_files.saves_folder(self._database.path)
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Load Save", str(folder if folder.exists() else ""),
+            "DUDC Saves (*.json)",
+        )
         if not path:
             return
         try:
-            with open(path, encoding="utf-8") as file:
-                data = json.load(file)
-            self._database.import_data(data, mode="merge")
-        except (OSError, ValueError, json.JSONDecodeError) as exc:
-            QMessageBox.warning(self, "Import Failed", str(exc))
+            data = save_files.read_save(Path(path))
+        except (OSError, ValueError) as exc:
+            QMessageBox.warning(self, "Load Failed", str(exc))
             return
-        self._reload_games()
-        QMessageBox.information(self, "Import Complete", "Backup imported successfully.")
+        box = QMessageBox(self)
+        box.setWindowTitle("Load Save")
+        box.setIcon(QMessageBox.Icon.Question)
+        box.setText(f"{save_files.describe(data)}\n\nHow should it be loaded?")
+        box.setInformativeText(
+            "Replace: your games and deaths become the ones in the save (yours are "
+            "saved first, in the Saved Progress folder). Add: its games are added next "
+            "to yours. Settings stay as they are either way."
+        )
+        replace = box.addButton("Replace My Data", QMessageBox.ButtonRole.AcceptRole)
+        replace.setObjectName("AccentButton")
+        add = box.addButton("Add Alongside", QMessageBox.ButtonRole.ActionRole)
+        box.addButton(QMessageBox.StandardButton.Cancel)
+        box.setDefaultButton(replace)
+        box.exec()
+        if box.clickedButton() not in (replace, add):
+            return
+        mode = "replace" if box.clickedButton() is replace else "merge"
+        self._apply_save(data, mode)
+
+    def _apply_save(self, data: dict, mode: str) -> None:
+        if mode == "replace" and self._database.get_games():
+            before = save_files.saves_folder(self._database.path) / (
+                f"before loading {datetime.now():%Y-%m-%d %H%M%S}.json"
+            )
+            try:
+                save_files.write_save(before, self._save_data())
+            except OSError as exc:
+                QMessageBox.warning(self, "Load Failed", f"Couldn't save your data first: {exc}")
+                return
+        # Whatever is going on now belongs to the data being replaced or set aside.
+        self._end_speedrun()
+        self._session_manager.end_current_session()
+        try:
+            ids = self._database.import_data(data, mode=mode)
+        except (ValueError, KeyError, TypeError, sqlite3.Error) as exc:
+            QMessageBox.warning(self, "Load Failed", str(exc))
+            self._reload_games()
+            return
+        resume = data.get(save_files.RESUME_KEY) or {}
+        game_id = ids["games"].get(resume.get("game_id"))
+        self._reload_games(select_game_id=game_id)
+        if game_id is None:
+            self._notify("Save loaded.")
+            return
+        session_id = ids["sessions"].get(resume.get("session_id"))
+        if session_id is not None:
+            self._session_manager.continue_session(game_id, session_id)
+            self._refresh_counters()
+        run = resume.get("run")
+        if run:
+            try:
+                self._resume_recovered_run(game_id, SpeedrunTimer.restore(run))
+                self._autosave()
+            except (ValueError, KeyError, TypeError):
+                logger.warning("The save's speedrun run couldn't be restored")
+        self._write_progress_autosave()
+        self._notify(f"Save loaded: carrying on with {resume.get('game_name', 'the game')}.")
 
     def _export_csv(self) -> None:
         path, _ = QFileDialog.getSaveFileName(
@@ -2866,7 +3028,7 @@ class MainWindow(QMainWindow):
             "Clear All Data",
             "This will permanently delete every game, boss, session, and death event\n"
             "in the CURRENT profile.\n\n"
-            "This cannot be undone. Consider exporting a backup first.\n\n"
+            "This cannot be undone. Consider Save Progress (Ctrl+S) first.\n\n"
             "Are you absolutely sure?",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
@@ -3002,8 +3164,8 @@ class MainWindow(QMainWindow):
         choices(
             "Big Number Shows",
             SETTING_OVERLAY_COUNTER_SOURCE,
-            (("session", "This Session", True), ("boss", "This Boss", True),
-             ("total", "All-Time", True)),
+            (("total", "All-Time", True), ("session", "This Session", True),
+             ("boss", "This Boss", True), ("run", "This Speedrun Run", True)),
             settings.get(SETTING_OVERLAY_COUNTER_SOURCE, DEFAULT_COUNTER_SOURCE),
         )
         has_image = bool(settings.get(SETTING_OVERLAY_BG_IMAGE, ""))
@@ -3287,6 +3449,7 @@ class MainWindow(QMainWindow):
         self._timer_window.refresh()
         self._refresh_timer_page()
         self._sync_run_hotkeys()
+        self._refresh_counters()  # "Deaths this run" starts or ends with the run
 
     def _on_timer_window_action(self, action: str) -> None:
         if action == "edit_splits":
@@ -3308,8 +3471,29 @@ class MainWindow(QMainWindow):
         if self._speedrun is None or self._speedrun.game_id is None:
             QMessageBox.information(self, "Select a Game", "Select a game first.")
             return
-        RunHistoryDialog(self._database, self._speedrun, parent=self).exec()
+        dialog = RunHistoryDialog(self._database, self._speedrun, parent=self)
+        dialog.exec()
+        if dialog.continue_run is not None:
+            self._continue_saved_run(self._speedrun.game_id, dialog.continue_run)
+            return
         self._timer_window.set_controller(self._speedrun)  # history may have changed
+
+    def _continue_saved_run(self, game_id: int, run: RunRecord) -> None:
+        """Carry on a reset attempt: paused at its time, with its splits and deaths."""
+        if self._speedrun is not None and self._speedrun.running:
+            return
+        timer = SpeedrunTimer.restore(run.resume_data())
+        if run.run_id is not None:
+            # It's an attempt in progress again; it's saved anew when it ends.
+            self._database.delete_speedrun_run(run.run_id)
+        self._resume_recovered_run(game_id, timer)
+        self._autosave()
+        self._refresh_timer_page()
+        self._refresh_counters()
+        pause_key = self._hotkey_bindings().get("timer_pause_key", "").upper() or "Pause"
+        self._notify(
+            f"Run continued at {format_time(timer.elapsed_ms())}: press {pause_key} to go on."
+        )
 
     def _open_splits_dialog(self) -> None:
         game_id = self._counter_manager.current_game_id
@@ -3330,9 +3514,41 @@ class MainWindow(QMainWindow):
     # ----------------------------------------------------------------
     # Lifecycle
     # ----------------------------------------------------------------
-    def _quit_app(self) -> None:
+    def _quit_app(self, confirm: bool = True) -> None:
         self._quitting = True
+        self._skip_close_question = not confirm
         self.close()
+
+    def _confirm_close(self) -> bool:
+        """
+        "Close the app?" The progress is auto-saved as the question comes up,
+        so it's safe whatever happens next.
+        """
+        if getattr(self, "_skip_close_question", False):
+            return True
+        if self._database.get_setting(SETTING_CONFIRM_CLOSE, "true") != "true":
+            return True
+        saved = self._write_progress_autosave()
+        box = QMessageBox(self)
+        box.setWindowTitle(f"Close {APP_SHORT_NAME}?")
+        box.setIcon(QMessageBox.Icon.Question)
+        box.setText(f"Close {APP_SHORT_NAME}?")
+        box.setInformativeText(
+            "Your session and speedrun run are saved. Load Save… brings them back "
+            "any time." if saved else "Your deaths are saved."
+        )
+        never = QCheckBox("Don't ask again")
+        box.setCheckBox(never)
+        close = box.addButton("Close", QMessageBox.ButtonRole.AcceptRole)
+        close.setObjectName("AccentButton")
+        box.addButton(QMessageBox.StandardButton.Cancel)
+        box.setDefaultButton(close)
+        box.exec()
+        if box.clickedButton() is not close:
+            return False
+        if never.isChecked():
+            self._database.set_setting(SETTING_CONFIRM_CLOSE, "false")
+        return True
 
     # ----------------------------------------------------------------
     # Multiple displays
@@ -3399,6 +3615,11 @@ class MainWindow(QMainWindow):
             )
             return
 
+        if not self._confirm_close():
+            event.ignore()
+            self._quitting = False
+            return
+        self._write_progress_autosave()  # covers quitting without the question too
         self._end_speedrun()
         self._database.set_setting(SETTING_OVERLAY_GEOMETRY, self._overlay.geometry_string())
         self._database.set_setting(SETTING_MINI_GEOMETRY, self._mini.geometry_string())
@@ -3410,6 +3631,7 @@ class MainWindow(QMainWindow):
         self._gamepad_manager.stop()
         self._phone_remote.stop()
         self._autosave_timer.stop()
+        self._progress_timer.stop()
         self._recovery_timer.stop()
         self._game_launch_timer.stop()  # it reads the database being closed
         self._page_timer.stop()

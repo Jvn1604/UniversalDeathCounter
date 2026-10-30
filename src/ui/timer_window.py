@@ -35,6 +35,7 @@ from src.core.speedrun import (
     BEHIND,
     GOLD,
     RUNNING,
+    RunRecord,
     SpeedrunController,
     TimerView,
     format_time,
@@ -414,10 +415,20 @@ class RunHistoryDialog(QDialog):
         self._delete_button.clicked.connect(self._delete_selected)
         close = QPushButton("Close")
         close.clicked.connect(self.accept)
+        self._continue_button = QPushButton("Continue This Run")
+        self._continue_button.setObjectName("AccentButton")
+        self._continue_button.setToolTip(
+            "Bring a reset run back, paused where it stopped, with its splits and deaths."
+        )
+        self._continue_button.clicked.connect(self._continue_selected)
         buttons.addWidget(self._delete_button)
         buttons.addStretch()
         buttons.addWidget(close)
+        buttons.addWidget(self._continue_button)
         layout.addLayout(buttons)
+        # The run the player chose to carry on (the main window resumes it).
+        self.continue_run: RunRecord | None = None
+        self._table.itemSelectionChanged.connect(self._update_continue_button)
         self._populate()
 
     def _populate(self) -> None:
@@ -465,8 +476,8 @@ class RunHistoryDialog(QDialog):
                 str(number),
                 _local_time(run.started_at),
                 ("🏆 PB  " if is_pb else "") + result,
-                format_time(_last(run.split_times), digits),
-                format_time(_last(run.times("game")), digits),
+                format_time(_ended_at(run.real_ms, run.split_times, run.finished), digits),
+                format_time(_ended_at(run.game_ms, run.times("game"), run.finished), digits),
                 str(run.deaths),
             ]
             for column, text in enumerate(cells):
@@ -474,6 +485,33 @@ class RunHistoryDialog(QDialog):
                 item.setData(Qt.ItemDataRole.UserRole, run.run_id)
                 self._table.setItem(row, column, item)
         self._delete_button.setEnabled(bool(runs) and not controller.running)
+        self._update_continue_button()
+
+    def _selected_run(self) -> RunRecord | None:
+        row = self._table.currentRow()
+        item = self._table.item(row, 0) if row >= 0 else None
+        run_id = item.data(Qt.ItemDataRole.UserRole) if item is not None else None
+        return next((run for run in self._controller.runs if run.run_id == run_id), None)
+
+    def _update_continue_button(self) -> None:
+        run = self._selected_run()
+        can = run is not None and not run.finished and not self._controller.running
+        self._continue_button.setEnabled(can)
+        if self._controller.running:
+            self._continue_button.setToolTip("Finish or reset the current run first.")
+        elif run is not None and run.finished:
+            self._continue_button.setToolTip("Finished runs can't be continued.")
+        else:
+            self._continue_button.setToolTip(
+                "Bring a reset run back, paused where it stopped, with its splits and deaths."
+            )
+
+    def _continue_selected(self) -> None:
+        run = self._selected_run()
+        if run is None or run.finished or self._controller.running:
+            return
+        self.continue_run = run
+        self.accept()
 
     def _death_records(self, game_id: int) -> list[str]:
         """Death-counter records: easiest boss victory and the roughest session."""
@@ -522,3 +560,10 @@ class RunHistoryDialog(QDialog):
 
 def _last(times: list[int | None]) -> int | None:
     return next((t for t in reversed(times) if t is not None), None)
+
+
+def _ended_at(clock_ms: int | None, times: list[int | None], finished: bool) -> int | None:
+    """A reset run's time when it stopped (older runs only know their last split)."""
+    if finished or clock_ms is None:
+        return _last(times)
+    return clock_ms
