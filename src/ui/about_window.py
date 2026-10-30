@@ -1,4 +1,4 @@
-"""About dialog: logo, version, licence, and who made it."""
+"""About dialog: logo, version, what it runs on, licence, and who made it."""
 
 from __future__ import annotations
 
@@ -6,6 +6,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import QDialog, QLabel, QPushButton, QVBoxLayout
 
+from src.ui import dashboard
 from src.ui.widgets import CreditCard
 from src.utils.constants import (
     ACCENT_COLOR,
@@ -18,6 +19,15 @@ from src.utils.constants import (
     GITHUB_REPO,
     ICONS_DIR,
 )
+from src.utils.platform_info import IS_LINUX, IS_MAC
+
+
+def _this_system() -> str:
+    if IS_MAC:
+        return "macOS"
+    if IS_LINUX:
+        return "Linux"
+    return "Windows"
 
 
 class AboutWindow(QDialog):
@@ -26,7 +36,7 @@ class AboutWindow(QDialog):
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
         self.setWindowTitle(f"About {APP_NAME}")
-        self.setFixedSize(400, 520)
+        self.setFixedSize(420, 580)
         self._build_ui()
 
     def _build_ui(self) -> None:
@@ -47,29 +57,41 @@ class AboutWindow(QDialog):
         subtitle.setAlignment(Qt.AlignmentFlag.AlignCenter)
         subtitle.setStyleSheet("color: #a855f7; font-weight: 700;")
 
-        version = QLabel(f"Version {APP_VERSION}")
+        def link(url: str, text: str) -> str:  # in the theme's accent, readable on any theme
+            return f'<a href="{url}" style="color: {dashboard.color("accent")};">{text}</a>'
+
+        releases = f"https://github.com/{GITHUB_REPO}/releases/tag/v{APP_VERSION}"
+        version = QLabel(f"Version {APP_VERSION}  ·  {link(releases, 'What&#39;s new')}")
+        version.setOpenExternalLinks(True)
         version.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        version.setStyleSheet("color: #999999;")
+        version.setObjectName("Muted")
 
         description = QLabel(
-            "A free, open-source death counter for Soulslike games,\n"
-            "challenge runs, speedruns, and any PC game.\n\n"
+            "A free, open-source death counter for Soulslike games, challenge runs "
+            "and speedruns, on PC or console. It counts deaths automatically and "
+            "grows a skull that evolves as you die.\n\n"
             "Built for streamers, speedrunners, and masochists."
         )
         description.setAlignment(Qt.AlignmentFlag.AlignCenter)
         description.setWordWrap(True)
         description.setObjectName("Muted")
 
+        platforms = QLabel(f"Windows  ·  macOS  ·  Linux      (you're on {_this_system()})")
+        platforms.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        platforms.setObjectName("Muted")
+        platforms.setStyleSheet("font-size: 11px;")
+
         license_label = QLabel("Licensed under the MIT License")
         license_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         license_label.setStyleSheet(f"color: {ACCENT_COLOR};")
 
         github_label = QLabel(
-            f'<a href="https://github.com/{GITHUB_REPO}" style="color: #999999;">'
-            f"github.com/{GITHUB_REPO}</a>"
+            f"{link(f'https://github.com/{GITHUB_REPO}', f'github.com/{GITHUB_REPO}')}"
+            f"  ·  Icons by {link('https://lucide.dev', 'Lucide')} (ISC)"
         )
         github_label.setOpenExternalLinks(True)
         github_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        github_label.setObjectName("Muted")
         github_label.setStyleSheet("font-size: 11px;")
 
         credit = CreditCard(
@@ -85,6 +107,8 @@ class AboutWindow(QDialog):
         layout.addWidget(subtitle)
         layout.addWidget(version)
         layout.addWidget(description)
+        layout.addSpacing(4)
+        layout.addWidget(platforms)
         layout.addStretch()
         layout.addWidget(credit)
         layout.addSpacing(6)

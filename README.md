@@ -3,12 +3,13 @@
 </p>
 
 <p align="center">
-  <b>A free, lightweight death counter for Soulslike games and any PC game: it counts your deaths <i>automatically</i>, and it's built for streaming.</b>
+  <b>A free, lightweight death counter for Soulslike games and any other game: it counts your deaths <i>automatically</i>, grows a skull that evolves as you die, and it's built for streaming. Windows, Mac and Linux, and console games too.</b>
 </p>
 
 <p align="center">
   <a href="https://github.com/Jvn1604/UniversalDeathCounter/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/Jvn1604/UniversalDeathCounter?color=ff4d4d&label=download"></a>
-  <a href="https://github.com/Jvn1604/UniversalDeathCounter/actions/workflows/build-windows.yml"><img alt="Build" src="https://img.shields.io/github/actions/workflow/status/Jvn1604/UniversalDeathCounter/build-windows.yml?branch=main"></a>
+  <a href="https://github.com/Jvn1604/UniversalDeathCounter/actions/workflows/build-windows.yml"><img alt="Windows build" src="https://img.shields.io/github/actions/workflow/status/Jvn1604/UniversalDeathCounter/build-windows.yml?branch=main&label=windows"></a>
+  <a href="https://github.com/Jvn1604/UniversalDeathCounter/actions/workflows/build-mac-linux.yml"><img alt="Mac and Linux build" src="https://img.shields.io/github/actions/workflow/status/Jvn1604/UniversalDeathCounter/build-mac-linux.yml?branch=main&label=mac%20%2B%20linux"></a>
   <img alt="Platform" src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-b56cff">
   <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-43b581"></a>
 </p>
@@ -51,7 +52,7 @@ No Python or anything else needed. Windows 10 or 11, macOS 11 or newer, or a 64-
 ## Screenshots
 
 <p align="center">
-  <img src="docs/screenshots/main-window.png" alt="Main window: the death counter dashboard" width="760">
+  <img src="docs/screenshots/main-window.png" alt="Home: the counter with its evolving skull, this week's deaths and boss progress" width="760">
 </p>
 <p align="center">
   <img src="docs/screenshots/dashboard-stats.png" alt="Stats page" width="420">
@@ -68,7 +69,7 @@ No Python or anything else needed. Windows 10 or 11, macOS 11 or newer, or a 64-
 ## Features
 
 ### 💀 Automatic death detection
-- **Add a game straight from its `.exe`.** The app watches that game's window and counts a death whenever the death screen appears.
+- **Add a game straight from its `.exe`** (or its `.app` on a Mac; Proton and Wine games on Linux work too). The app watches that game's window and counts a death whenever the death screen appears.
 - **Works with any game.** Teach it the death screen once, either by pressing `F8` on the death screen or afterwards with **📷 Capture Screen…**, which lets you pick the frame from the last few seconds.
 - **Zero setup for Souls games.** The built-in preset recognizes Elden Ring, Dark Souls I–III and Sekiro.
 - **No death screen? Use the health bar.** Mark your health bar once at full health, and a death counts when it empties.
@@ -78,8 +79,8 @@ No Python or anything else needed. Windows 10 or 11, macOS 11 or newer, or a 64-
 - **Screen capture only:** no memory reading and no injection, so it's safe with anti-cheat.
 
 ### 🎮 Controls, your way
-- Global hotkeys work while the game is focused (defaults below).
-- **Xbox, PlayStation (DualShock 4 / DualSense) and most other controllers.** Bind a button combo such as *View/Share + D-pad Up*. One binding works on both kinds of pad.
+- Global hotkeys work while the game is focused (defaults below), on Windows, Mac and Linux.
+- **Xbox, PlayStation (DualShock 4 / DualSense), Steam Deck and most other controllers** on Windows and Linux. Bind a button combo such as *View/Share + D-pad Up*. One binding works on both kinds of pad.
 - **Keybind editor with live conflict detection.** It flags duplicates, keys that would block typing, keys another program already took, and overlapping combos.
 
 ### ⏱ Speedrun timer
@@ -94,8 +95,15 @@ No Python or anything else needed. Windows 10 or 11, macOS 11 or newer, or a 64-
 - **LiveSplit-style controls:** start/split, pause, undo, skip and reset, from hotkeys, a controller combo, or a right-click on the timer.
 - **Its own OBS-ready window** (**Timer → Timer Window**, with an ON/OFF tag), styled like the overlay. It only redraws while a run is going.
 
+### 💀 A skull that evolves as you die
+Every 10 deaths your skull earns something new: horns, a nose ring, blades, a crown, a third eye, burning eyes, flames and an aura. Past 100 it changes colour, up to a golden **God of Death** at 1000. It sits next to the counter on Home (with how many deaths until the next one) and on the stream overlay.
+
+<p align="center">
+  <img src="docs/screenshots/skull-tiers.png" alt="The 16 skull tiers, from Fresh Spawn at 0 deaths to God of Death at 1000" width="760">
+</p>
+
 ### 📺 Made for streaming
-- **The overlay reads `DEATH - 12`** next to a **skull that evolves every 10 deaths**: horns at 10, a nose ring at 20, blades, a crown, a third eye, burning eyes, flames and an aura, then new colours at 150, 200, 300, 500 and a golden God of Death at 1000. Turn the skull off from the overlay's right-click menu or its settings.
+- **The overlay reads `DEATH - 12`** with your skull beside it and its name underneath (`THIS SESSION · BRUISED`). Turn the skull off from the overlay's right-click menu or its settings.
 - **OBS-ready overlay, styled your way:** a card in any color, your own picture as the background, or green-screen mode for OBS's Chroma Key. Choose the font, number and text colors, size, corner roundness, opacity, a shadow that keeps text readable, and which lines show.
 - **`deaths.txt`** for OBS Text sources, with your own template, e.g. `{game} - {boss}: {deaths}`.
 - **OBS Setup** (sidebar) walks you through both methods, with one-click setup buttons.
@@ -129,19 +137,19 @@ The **Console** page (sidebar) makes DUDC work when the game runs on a console:
 - **Right-click the Game or Boss box** to rename it or mark the boss defeated, without opening Games & Bosses.
 - **Tray menu** has +1, Undo, Boss Defeated, pause detection, start/split the timer, the timer window, mini mode and the overlay.
 - **One place for everything:** pages and tools in the sidebar, profiles and backups at the top right. No duplicated menus.
-- **One-click updates:** the card at the bottom of the sidebar shows whether you are up to date (checked at startup, every 6 hours, or with its refresh button). When a new version is out, click **Update**: the installed app downloads it, updates itself and reopens. (Portable copies open the download page.)
+- **One-click updates:** the card at the bottom of the sidebar shows whether you are up to date (checked at startup, every 6 hours, or with its refresh button). When a new version is out, click **Update**: the installed app downloads it, updates itself and reopens. (Portable copies, Mac and Linux open the download page.)
 - Deleting a game tells you exactly what goes with it (deaths, bosses, sessions, runs).
 
 ### 🪶 Lightweight
-- The whole app is ~100 MB installed and adds **no** background services.
+- A 29 MB installer (about 100 MB installed), and **no** background services.
 - Detection checks the game window 5 times a second and stops when the game isn't running.
 - Controller polling only runs while a pad is connected.
 - Your data is a local SQLite file, and nothing is uploaded. The only network requests are an optional update check against GitHub Releases and, if you pick Glass or Clay, that theme's download.
 
 ## Quick start
 
-1. Install and open **DUDC**.
-2. In the **Game** dropdown, choose **+ Add game from .exe…** and pick your game's `.exe` (for example `eldenring.exe`).
+1. Install and open **DUDC**. The **Quick Start** checklist opens and ticks itself off as you go.
+2. In the **Game** dropdown, choose **+ Add game from .exe…** and pick your game's `.exe` (for example `eldenring.exe`). On a Mac, pick the game's app; on Linux, the `.exe` in its Proton folder or the game's program.
 3. Launch the game in **borderless or windowed** mode.
 4. Die. 💀
    - **Souls games** are counted automatically.
@@ -208,17 +216,19 @@ To keep the count accurate:
 
 **A hotkey doesn't work / "Hotkey unavailable"**
 Another program has already registered that key. On many PCs plain `F12` is taken. Pick another key in **Settings → Controls**; the editor warns you as you type.
+- **Mac:** F-keys need **fn** unless you turn on standard function keys (System Settings → Keyboard).
+- **Linux:** a pure Wayland session doesn't allow global keys; see the Mac and Linux notes under Download.
 
 **Deaths aren't detected**
 1. Check the status line under the game selector. It should say *"Watching <game>.exe for deaths"*.
-2. If it says the capture is **black**, switch the game to borderless or windowed mode.
+2. If it says the capture is **black**, switch the game to borderless or windowed mode. On a Mac, allow Screen Recording for the app; on a Wayland desktop, read the game from OBS instead.
 3. If it's watching but misses deaths, use **📷 Capture Screen…** right after a death to add that screen.
 
 **The overlay shows a green box in OBS**
 Add a **Chroma Key** filter to the source (Key Color Type: Green). See **OBS Setup** in the sidebar.
 
 **My antivirus complains**
-False positives happen with unsigned apps. DUDC uses Windows' own hotkey API (no keyboard hook) and ships as a normal folder build to keep this to a minimum. You can check every build's source and logs under [Actions](https://github.com/Jvn1604/UniversalDeathCounter/actions).
+False positives happen with unsigned apps. DUDC uses the system's own hotkey API (no keyboard hook) and ships as a normal folder build to keep this to a minimum. You can check every build's source and logs under [Actions](https://github.com/Jvn1604/UniversalDeathCounter/actions).
 
 **Where is my data?**
 - **Mac:** `~/Library/Application Support/UniversalDeathCounter/saves/`
@@ -230,7 +240,7 @@ False positives happen with unsigned apps. DUDC uses Windows' own hotkey API (no
 
 ## Build from source
 
-Requires Python 3.12+ on Windows, macOS or Linux (on Linux, the commands below use `venv/bin/` instead of `.\venv\Scripts\`).
+Requires Python 3.12+ on Windows, macOS or Linux. The table uses Windows paths; on Mac and Linux use `venv/bin/` instead of `.\venv\Scripts\`.
 
 ```powershell
 git clone https://github.com/Jvn1604/UniversalDeathCounter.git
@@ -240,6 +250,14 @@ python -m venv venv
 .\venv\Scripts\python -m src.app
 ```
 
+On a Mac or Linux:
+
+```bash
+python3 -m venv venv
+venv/bin/pip install -r requirements.txt
+venv/bin/python -m src.app
+```
+
 | Task | Command |
 |---|---|
 | Run tests | `.\venv\Scripts\python -m pytest` |
@@ -247,12 +265,12 @@ python -m venv venv
 | Build the app folder | `.\venv\Scripts\pyinstaller packaging\UniversalDeathCounter.spec` → `dist\UniversalDeathCounter\` |
 | Build the installer | `iscc packaging\installer.iss` ([Inno Setup 6](https://jrsoftware.org/isinfo.php)) |
 | Build the Mac app / Linux AppImage | the same `pyinstaller` command on that OS (`dist/UniversalDeathCounter.app`), then `packaging/make_appimage.sh <version>` on Linux |
-| Regenerate icons / screenshots | `python packaging\make_icons.py` / `python packaging\make_screenshots.py` |
+| Regenerate icons / screenshots (incl. the skull tiers) | `python packaging\make_icons.py` / `python packaging\make_screenshots.py` |
 
 **Releasing:**
 1. Bump `APP_VERSION` in `src/utils/constants.py`.
 2. Merge to `main`.
-3. Push a matching tag such as `v2.0.0`.
+3. Push a matching tag such as `v2.11.0`.
 
 GitHub Actions then tests on all three systems, builds the installer, portable zip, Mac .dmg and Linux AppImage, and publishes the release. If the repository secrets are set, it also code-signs them; see [docs/code-signing.md](docs/code-signing.md).
 
@@ -264,15 +282,15 @@ src/
 ├── app.py            # Entry point
 ├── core/             # Counter, session and statistics logic
 ├── database/         # SQLite layer (the only module with SQL)
-├── detection/        # Window capture, death-screen matchers, watcher thread
+├── detection/        # Window lookup per OS, capture, death-screen matchers, OBS client
 ├── hotkeys/          # Global hotkeys (Windows, macOS, X11), controllers, conflicts
 ├── overlay/          # OBS overlay window
-├── ui/               # Main window and dialogs
+├── ui/               # Main window, Home dashboard, skulls, Quick Start guide, dialogs
 ├── themes/           # Built-in stylesheets (Phantom Dark, Daylight) + theme catalog
-└── utils/            # Constants, logging, profiles, startup, screens, exporters
-packaging/            # PyInstaller spec, Inno Setup script, signing, icon/screenshot tools
+└── utils/            # Constants, platform info, profiles, startup, phone remote, updater
+packaging/            # PyInstaller spec, Inno Setup script, AppImage script, signing, icon/screenshot tools
 themes/               # Downloadable themes (Glass, Clay), fetched by the app on request
-tests/                # pytest suite (130+ tests)
+tests/                # pytest suite (320+ tests, run on Windows, macOS and Linux)
 ```
 
 Design notes:
@@ -287,10 +305,14 @@ Design notes:
 - [x] Automatic death detection with per-game calibration and a Souls preset
 - [x] Xbox and PlayStation controller bindings, plus a keybind editor with conflict detection
 - [x] Multi-monitor support, and an OBS setup guide
+- [x] Speedrun timer with splits, PB comparison, run history and crash recovery
+- [x] Console players: phone remote, window capture and OBS capture-card reading
+- [x] Evolving skull, Home dashboard and Quick Start guide
+- [x] macOS and Linux (including Steam Deck desktop mode)
+- [ ] Controller combos on macOS
 - [ ] More presets (Hollow Knight / Silksong, Lies of P, Cuphead) and shareable preset files
 - [ ] Live detection score and sensitivity slider
 - [ ] Fullscreen capture via Windows Graphics Capture
-- [ ] Play time per session and personal-best attempts
 
 Ideas and bug reports are welcome in [Issues](https://github.com/Jvn1604/UniversalDeathCounter/issues).
 
