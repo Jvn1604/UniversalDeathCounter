@@ -197,7 +197,7 @@ def main() -> int:
     guide.close()
 
     _save_skull_tiers("skull-tiers.png")
-    window._quit_app()
+    window._quit_app(confirm=False)
     app.processEvents()
     return 0
 

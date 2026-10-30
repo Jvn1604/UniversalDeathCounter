@@ -239,7 +239,11 @@ False positives happen with unsigned apps. DUDC uses the system's own hotkey API
 - **Installer:** `%APPDATA%\UniversalDeathCounter\saves\`
 - **Portable:** the `saves` folder next to the exe.
 
-**⋮ (top right) → Export Backup** saves everything to one JSON file.
+**Save and load your progress:**
+- **⋮ (top right) → Save Progress… (Ctrl+S)** saves everything to one file, including the session and speedrun run in progress. Copy it anywhere: another PC, a reinstall, a backup drive.
+- **⋮ → Load Save…** brings it back and carries on with that session and run (the run comes back paused). Replace swaps your data for the save's (yours is saved first); Add puts its games next to yours. Older backups load too.
+- **Auto-save:** every 5 minutes and when you close the app, to `Saved Progress` in the data folder above.
+- **Closing asks first**, and your progress is already saved by the time it asks. Turn the question off in Settings → General.
 
 ## Build from source
 

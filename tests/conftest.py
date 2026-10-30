@@ -27,6 +27,19 @@ from PySide6.QtWidgets import QMessageBox  # noqa: E402
 
 
 @pytest.fixture(autouse=True)
+def _no_close_question(request, monkeypatch):
+    """
+    Closing asks "Close the app?"; tests close windows without a click.
+    A test module that sets ``REAL_CLOSE_QUESTION = True`` gets the question.
+    """
+    import src.ui.main_window as main_window
+
+    if getattr(request.module, "REAL_CLOSE_QUESTION", False):
+        return
+    monkeypatch.setattr(main_window.MainWindow, "_confirm_close", lambda self: True)
+
+
+@pytest.fixture(autouse=True)
 def _no_hotkey_warning_box(monkeypatch):
     """
     Another program (often an installed copy of this app) may hold the default

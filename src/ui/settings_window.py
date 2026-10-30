@@ -56,6 +56,7 @@ from src.utils.constants import (
     SETTING_BOSS_AUTO_SPLIT,
     SETTING_BOSS_DETECTION,
     SETTING_CHECK_UPDATES,
+    SETTING_CONFIRM_CLOSE,
     SETTING_DEATHS_TXT_ENABLED,
     SETTING_DEATHS_TXT_PATH,
     SETTING_DEATHS_TXT_TEMPLATE,
@@ -359,6 +360,8 @@ class SettingsWindow(QDialog):
         general_form = QFormLayout(general_group)
         self._minimize_tray_check = QCheckBox("Minimize to system tray on close")
         general_form.addRow(self._minimize_tray_check)
+        self._confirm_close_check = QCheckBox("Ask before closing (your progress is saved first)")
+        general_form.addRow(self._confirm_close_check)
         self._start_with_windows_check = QCheckBox(login_item_label())
         if not startup.startup_supported():
             self._start_with_windows_check.setEnabled(False)
@@ -916,6 +919,9 @@ class SettingsWindow(QDialog):
         self._outline_check.setChecked(
             settings.get(SETTING_OVERLAY_TEXT_OUTLINE, "false") == "true"
         )
+        self._confirm_close_check.setChecked(
+            settings.get(SETTING_CONFIRM_CLOSE, "true") == "true"
+        )
         self._minimize_tray_check.setChecked(
             settings.get(SETTING_MINIMIZE_TO_TRAY, "false") == "true"
         )
@@ -988,6 +994,9 @@ class SettingsWindow(QDialog):
         db.set_setting(
             SETTING_MINIMIZE_TO_TRAY,
             "true" if self._minimize_tray_check.isChecked() else "false",
+        )
+        db.set_setting(
+            SETTING_CONFIRM_CLOSE, "true" if self._confirm_close_check.isChecked() else "false"
         )
         if startup.startup_supported():
             try:

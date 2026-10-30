@@ -208,7 +208,7 @@ class BossWindow(QDialog):
             self,
             "Delete Game",
             f"Delete '{item.text()}'?\n\n{self._what_goes(game_id)}\n\n"
-            "This can't be undone. Export a backup first (⋮ at the top → Export Backup) "
+            "This can't be undone. Save your progress first (⋮ at the top → Save Progress) "
             "if you might want them back.",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,

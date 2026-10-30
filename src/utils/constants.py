@@ -166,6 +166,7 @@ SETTING_DEATHS_TXT_TEMPLATE: str = "deaths_txt_template"
 
 # --- v1.5 quality of life ---
 SETTING_MINIMIZE_TO_TRAY: str = "minimize_to_tray"
+SETTING_CONFIRM_CLOSE: str = "confirm_close"
 SETTING_CHECK_UPDATES: str = "check_updates"
 
 # --- auto death detection ---
@@ -283,6 +284,7 @@ DEFAULT_SETTINGS: dict[str, str] = {
     SETTING_DEATHS_TXT_PATH: "",  # empty = SAVES_DIR/deaths.txt
     SETTING_DEATHS_TXT_TEMPLATE: "{game} - {boss}: {deaths}",
     SETTING_MINIMIZE_TO_TRAY: "false",
+    SETTING_CONFIRM_CLOSE: "true",
     SETTING_CHECK_UPDATES: "true",
     SETTING_HOTKEY_CALIBRATE: DEFAULT_HOTKEY_CALIBRATE,
     SETTING_HOTKEY_PAUSE_DETECTION: DEFAULT_HOTKEY_PAUSE_DETECTION,
