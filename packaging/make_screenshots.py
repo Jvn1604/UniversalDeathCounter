@@ -27,7 +27,8 @@ constants.DATABASE_PATH = _tmp / "death_counter.db"
 constants.LOG_DIR = _tmp / "logs"
 constants.LOG_FILE = _tmp / "logs" / "app.log"
 
-from PySide6.QtGui import QColor, QLinearGradient, QPainter, QPixmap  # noqa: E402
+from PySide6.QtCore import QRect, Qt  # noqa: E402
+from PySide6.QtGui import QColor, QFont, QLinearGradient, QPainter, QPixmap  # noqa: E402
 from PySide6.QtWidgets import QApplication, QTabWidget  # noqa: E402
 
 import src.utils.profiles as profiles  # noqa: E402
@@ -40,6 +41,7 @@ from src.ui import main_window as mw  # noqa: E402
 from src.ui.auto_detect_window import AutoDetectWindow  # noqa: E402
 from src.ui.obs_guide_window import ObsGuideWindow  # noqa: E402
 from src.ui.settings_window import SettingsWindow  # noqa: E402
+from src.ui.skulls import TIERS, skull_pixmap  # noqa: E402
 from src.ui.statistics_window import StatisticsWindow  # noqa: E402
 
 DEMO_BOSSES = [  # (boss, deaths, defeated)
@@ -49,6 +51,10 @@ DEMO_BOSSES = [  # (boss, deaths, defeated)
     ("Starscourge Radahn", 22, True),
     ("Malenia, Blade of Miquella", 57, False),
 ]
+
+
+# Enough deaths this session for an evolved skull (Demon: horns, blades, crown).
+SESSION_DEATHS = 52
 
 
 def _seed(db) -> tuple[int, int]:
@@ -70,6 +76,7 @@ def _seed(db) -> tuple[int, int]:
     db.set_setting("last_boss_id", malenia)
     db.set_setting("pad_increment", "back+dpad_up")
     db.set_setting("pad_undo", "back+dpad_down")
+    db.set_setting("quick_start_hidden", "true")  # a set-up player's Home
     return game, malenia
 
 
@@ -103,6 +110,30 @@ def _save_on_backdrop(widget, name: str) -> None:
     print("saved", name)
 
 
+def _save_skull_tiers(name: str) -> None:
+    """Every skull tier in a grid, with the death count where it appears."""
+    size, cell_w, cell_h, columns = 96, 132, 150, 8
+    rows = (len(TIERS) + columns - 1) // columns
+    canvas = QPixmap(columns * cell_w + 24, rows * cell_h + 24)
+    canvas.fill(QColor("#0b0c10"))
+    painter = QPainter(canvas)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+    for index, tier in enumerate(TIERS):
+        x = 12 + (index % columns) * cell_w
+        y = 12 + (index // columns) * cell_h
+        painter.drawPixmap(x + (cell_w - size) // 2, y + 4, skull_pixmap(tier.deaths, size))
+        label = QRect(x, y + size + 8, cell_w, 40)
+        painter.setPen(QColor("#ff3d55"))
+        painter.setFont(QFont("Segoe UI", 10, QFont.Weight.Bold))
+        painter.drawText(label, Qt.AlignmentFlag.AlignHCenter, str(tier.deaths))
+        painter.setPen(QColor("#c9ccd6"))
+        painter.setFont(QFont("Segoe UI", 9))
+        painter.drawText(label.adjusted(0, 18, 0, 0), Qt.AlignmentFlag.AlignHCenter, tier.name)
+    painter.end()
+    canvas.save(str(OUT / name))
+    print("saved", name)
+
+
 def main() -> int:
     app = QApplication(sys.argv)
     OUT.mkdir(parents=True, exist_ok=True)
@@ -112,11 +143,11 @@ def main() -> int:
     game, _ = _seed(db)
     window._reload_games()
     window._session_manager.start_new_session(game)
-    for _ in range(3):
+    for _ in range(SESSION_DEATHS):
         window._on_increment()
     window._detect_status_label.setText("Watching eldenring.exe for deaths")
     window._detect_last_label.setText("Death auto-counted at 21:04:12 (F11 to undo)")
-    window.resize(1000, 680)
+    window.resize(1000, 900)  # tall enough for the week chart and boss progress
     window.show()
     _save(window, "main-window.png")
     window._show_page(2)  # Stats
@@ -165,6 +196,7 @@ def main() -> int:
     _save(guide, "obs-guide.png")
     guide.close()
 
+    _save_skull_tiers("skull-tiers.png")
     window._quit_app()
     app.processEvents()
     return 0
