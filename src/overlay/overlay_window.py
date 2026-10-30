@@ -31,6 +31,7 @@ from src.overlay.capture_window import (
 )
 from src.ui.skulls import TIERS, skull_pixmap, tier_index
 from src.utils.constants import (
+    DEFAULT_COUNTER_SOURCE,
     SETTING_OVERLAY_COUNTER_SOURCE,
     SETTING_OVERLAY_FONT_SIZE,
     SETTING_OVERLAY_SHOW_BOSS,
@@ -165,7 +166,7 @@ class OverlayWindow(CaptureWindow):
         """
         self.apply_style_settings(settings)
         self._font_size = int(settings.get(SETTING_OVERLAY_FONT_SIZE, "24"))
-        self._counter_source = settings.get(SETTING_OVERLAY_COUNTER_SOURCE, "session")
+        self._counter_source = settings.get(SETTING_OVERLAY_COUNTER_SOURCE, DEFAULT_COUNTER_SOURCE)
         self._show_game = settings.get(SETTING_OVERLAY_SHOW_GAME, "true") == "true"
         self._show_boss = settings.get(SETTING_OVERLAY_SHOW_BOSS, "true") == "true"
         self._show_stats = settings.get(SETTING_OVERLAY_SHOW_STATS, "true") == "true"

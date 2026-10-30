@@ -652,6 +652,36 @@ class Database:
             )
         logger.info("Ended session id=%s", session_id)
 
+    def latest_session_activity(self, game_id: int) -> tuple[int, str] | None:
+        """
+        A game's newest session and when it was last used (ISO time), or None.
+
+        "Last used" is the latest of its start, end and last death, so a
+        session a crash never ended still has a sensible time.
+        """
+        with self._cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT s.id,
+                       MAX(s.started_at, COALESCE(s.ended_at, ''),
+                           COALESCE((SELECT MAX(timestamp) FROM death_events
+                                     WHERE session_id = s.id), '')) AS last_used
+                FROM sessions s
+                WHERE s.game_id = ?
+                ORDER BY s.id DESC
+                LIMIT 1
+                """,
+                (game_id,),
+            )
+            row = cursor.fetchone()
+        return (int(row["id"]), str(row["last_used"])) if row is not None else None
+
+    def reopen_session(self, session_id: int) -> None:
+        """Continue an ended session (clears ``ended_at``)."""
+        with self._cursor() as cursor:
+            cursor.execute("UPDATE sessions SET ended_at = NULL WHERE id = ?", (session_id,))
+        logger.info("Reopened session id=%s", session_id)
+
     def get_session_death_count(self, session_id: int) -> int:
         """Return the net death count (sum of deltas) for one session."""
         with self._cursor() as cursor:

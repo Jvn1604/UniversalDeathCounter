@@ -16,6 +16,7 @@ from PySide6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWi
 from src.core.counter_manager import CounterSnapshot
 from src.overlay.capture_window import CaptureWindow
 from src.ui import icons
+from src.utils.constants import DEFAULT_COUNTER_SOURCE
 
 MINI_WINDOW_TITLE = "DUDC Mini"
 _CAPTIONS = {"session": "THIS SESSION", "boss": "THIS BOSS", "total": "ALL-TIME"}
@@ -77,7 +78,7 @@ class MiniWindow(CaptureWindow):
     def apply_display_settings(self, settings: dict[str, str]) -> None:
         """Use the overlay's Appearance settings (background, font, colors)."""
         self.apply_style_settings(settings)
-        self._counter_source = settings.get("overlay_counter_source", "session")
+        self._counter_source = settings.get("overlay_counter_source", DEFAULT_COUNTER_SOURCE)
         self._restyle()
 
     def _restyle(self) -> None:

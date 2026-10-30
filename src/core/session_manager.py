@@ -1,18 +1,23 @@
 """
 Session lifecycle management.
 
-A "session" represents one play run for a game (e.g. from launching the
-app/selecting a game, until switching games or closing the app). The
-:class:`SessionManager` owns the currently-active session id and exposes
-helpers to start, end, and reset it.
+A "session" is one sitting with a game. Closing the app or the game ends
+it, but coming back within :data:`RESUME_WITHIN` (an update, a crash, a
+quick restart, a break) continues it, so the session count doesn't drop
+to 0 mid-play. After a longer break a fresh session starts. **Reset
+Session** always starts a fresh one.
 """
 
 from __future__ import annotations
+
+from datetime import UTC, datetime, timedelta
 
 from src.database.database import Database
 from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
+
+RESUME_WITHIN = timedelta(hours=6)
 
 
 class SessionManager:
@@ -53,6 +58,28 @@ class SessionManager:
         logger.info("New session started: id=%s game_id=%s", self._current_session_id, game_id)
         return self._current_session_id
 
+    def continue_or_start(self, game_id: int, now: datetime | None = None) -> int:
+        """
+        The active session for ``game_id``: the current one, the game's last
+        one if it was used less than :data:`RESUME_WITHIN` ago, or a new one.
+        """
+        if self._current_session_id is not None and self._current_game_id == game_id:
+            return self._current_session_id
+        self.end_current_session()
+        latest = self._database.latest_session_activity(game_id)
+        if latest is not None:
+            session_id, last_used = latest
+            try:
+                gap = (now or datetime.now(UTC)) - datetime.fromisoformat(last_used)
+            except ValueError:
+                gap = RESUME_WITHIN
+            if gap < RESUME_WITHIN:
+                self._database.reopen_session(session_id)
+                self._current_session_id, self._current_game_id = session_id, game_id
+                logger.info("Continued session id=%s game_id=%s", session_id, game_id)
+                return session_id
+        return self.start_new_session(game_id)
+
     def end_current_session(self) -> None:
         """End the currently active session, if one exists."""
         if self._current_session_id is not None:
@@ -78,11 +105,9 @@ class SessionManager:
 
     def ensure_session(self, game_id: int) -> int:
         """
-        Return the active session id for ``game_id``, starting one if needed.
+        Return the active session id for ``game_id``, continuing or starting one.
 
-        This avoids creating a brand-new session every time the user simply
-        re-selects the same game (e.g. switching boss dropdowns).
+        Re-selecting the same game (e.g. switching boss dropdowns) keeps the
+        session; see :meth:`continue_or_start`.
         """
-        if self._current_session_id is None or self._current_game_id != game_id:
-            return self.start_new_session(game_id)
-        return self._current_session_id
+        return self.continue_or_start(game_id)
