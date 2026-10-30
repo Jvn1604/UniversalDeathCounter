@@ -123,7 +123,7 @@ Every 10 deaths your skull earns something new: horns, a nose ring, blades, a cr
 - Notes on individual deaths, session history, and graphs: per boss, over time, and per session.
 - Ready-made boss lists for Elden Ring, Dark Souls III, Sekiro, Bloodborne, Hollow Knight and Cuphead.
 - **Multiple profiles** (switch from the box at the top), JSON backup and restore, and CSV export.
-- **Make the main window yours** in **Settings → Appearance**: any installed font (each shown in its own style), text and death-number colors, and a background image with adjustable dimming. **Changes preview live** as you edit, on the main window and the overlay; Discard Changes puts everything back.
+- **Make the main window yours** in **Settings → Appearance**: any installed font (each shown in its own style), text and death-number colors, a background image with adjustable dimming, and **game artwork**: a faded banner of the selected game behind the counter cards (off by default; found on Steam, or right-click the game → *Choose Artwork…*). **Changes preview live** as you edit, on the main window and the overlay; Discard Changes puts everything back.
 
 ### 🎮 PlayStation & Xbox
 The **Console** page (sidebar) makes DUDC work when the game runs on a console:
@@ -133,7 +133,7 @@ The **Console** page (sidebar) makes DUDC work when the game runs on a console:
 
 ### 🎨 Themes
 - **Phantom Dark** and **Daylight** are built in.
-- **Glass** (frosted panels over a violet glow) and **Clay** (soft, puffy pastel buttons) are **downloaded only when you pick them** in Settings → Appearance (about 20 KB each, from this repository) and can be **uninstalled** again, so the install stays small.
+- **Glass** (frosted dark panels over a lime and teal glow) and **Clay** (soft, puffy white shapes over pastel blobs on lavender) are **downloaded only when you pick them** in Settings → Appearance (about 24 KB each, from this repository) and can be **uninstalled** again, so the install stays small. They're built from the built-in themes (`packaging/make_themes.py`), so every screen looks right in them.
 - Every button has a clear icon ([Lucide](https://lucide.dev), ISC licence).
 
 ### ✨ Comfort
@@ -153,7 +153,7 @@ The **Console** page (sidebar) makes DUDC work when the game runs on a console:
 - A 29 MB installer (about 100 MB installed), and **no** background services.
 - Detection checks the game window 5 times a second and stops when the game isn't running.
 - Controller polling only runs while a pad is connected.
-- Your data is a local SQLite file, and nothing is uploaded. The only network requests are an optional update check against GitHub Releases and, if you pick Glass or Clay, that theme's download.
+- Your data is a local SQLite file, and nothing is uploaded. The only network requests are an optional update check against GitHub Releases, if you pick Glass or Clay that theme's download, and, if you turn on game artwork, one look-up on Steam per game (its Steam folder or its name; the picture is then kept).
 
 ## Quick start
 

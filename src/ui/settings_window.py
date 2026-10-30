@@ -60,6 +60,7 @@ from src.utils.constants import (
     SETTING_DEATHS_TXT_ENABLED,
     SETTING_DEATHS_TXT_PATH,
     SETTING_DEATHS_TXT_TEMPLATE,
+    SETTING_GAME_ARTWORK,
     SETTING_MINIMIZE_TO_TRAY,
     SETTING_OVERLAY_ALIGN,
     SETTING_OVERLAY_ALWAYS_ON_TOP,
@@ -537,6 +538,12 @@ class SettingsWindow(QDialog):
         window_form.addRow("Big number shows", self._counter_source_combo)
         self._ui_bg_image = _ImageChoice("Main Window Background")
         window_form.addRow("Background image", self._ui_bg_image)
+        self._artwork_check = QCheckBox("Game artwork behind the counter cards")
+        self._artwork_check.setToolTip(
+            "A faded banner of the selected game. Found on Steam (only the game's name "
+            "or Steam folder is used), or your own: right-click the game → Choose Artwork."
+        )
+        window_form.addRow(self._artwork_check)
         dim_row = QWidget()
         dim_layout = QHBoxLayout(dim_row)
         dim_layout.setContentsMargins(0, 0, 0, 0)
@@ -707,6 +714,7 @@ class SettingsWindow(QDialog):
         ):
             choice.changed.connect(self._schedule_preview)
         self._ui_bg_dim.valueChanged.connect(self._schedule_preview)
+        self._artwork_check.toggled.connect(self._schedule_preview)
         self._opacity_spin.valueChanged.connect(self._schedule_preview)
         self._radius_spin.valueChanged.connect(self._schedule_preview)
         self._font_size_spin.valueChanged.connect(self._schedule_preview)
@@ -748,6 +756,7 @@ class SettingsWindow(QDialog):
             SETTING_UI_FONT: self._ui_font_combo.currentData() or "",
             SETTING_UI_BG_IMAGE: self._ui_bg_image.path(),
             SETTING_UI_BG_DIM: str(self._ui_bg_dim.value()),
+            SETTING_GAME_ARTWORK: "true" if self._artwork_check.isChecked() else "false",
             SETTING_OVERLAY_CARD_COLOR: self._card_color.color(),
             SETTING_OVERLAY_BG_IMAGE: self._overlay_image.path(),
             SETTING_OVERLAY_CORNER_RADIUS: str(self._radius_spin.value()),
@@ -1021,6 +1030,7 @@ class SettingsWindow(QDialog):
         _select_data(self._ui_font_combo, settings.get(SETTING_UI_FONT, ""))
         self._ui_bg_image.set_path(settings.get(SETTING_UI_BG_IMAGE, ""))
         self._ui_bg_dim.setValue(int(settings.get(SETTING_UI_BG_DIM, "60") or 60))
+        self._artwork_check.setChecked(settings.get(SETTING_GAME_ARTWORK, "false") == "true")
         self._card_color.set_color(settings.get(SETTING_OVERLAY_CARD_COLOR, ""))
         self._overlay_image.set_path(settings.get(SETTING_OVERLAY_BG_IMAGE, ""))
         self._radius_spin.setValue(int(settings.get(SETTING_OVERLAY_CORNER_RADIUS, "12") or 12))

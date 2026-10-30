@@ -19,7 +19,17 @@ from datetime import date, datetime, timedelta
 from html import escape
 from pathlib import Path
 
-from PySide6.QtCore import QByteArray, QEvent, QObject, QPoint, Qt, QTimer, QUrl, Signal
+from PySide6.QtCore import (
+    QByteArray,
+    QEvent,
+    QObject,
+    QPoint,
+    QPointF,
+    Qt,
+    QTimer,
+    QUrl,
+    Signal,
+)
 from PySide6.QtGui import (
     QAction,
     QActionGroup,
@@ -31,6 +41,7 @@ from PySide6.QtGui import (
     QPainter,
     QPaintEvent,
     QPixmap,
+    QRadialGradient,
     QScreen,
     QShortcut,
 )
@@ -158,7 +169,7 @@ from src.ui.widgets import (
     row,
     section_title,
 )
-from src.utils import save_files
+from src.utils import artwork, save_files
 from src.utils.backgrounds import cover, load_background
 from src.utils.constants import (
     APP_BRAND,
@@ -189,6 +200,7 @@ from src.utils.constants import (
     SETTING_DEATHS_TXT_PATH,
     SETTING_DEATHS_TXT_TEMPLATE,
     SETTING_DETECTION_COOLDOWN,
+    SETTING_GAME_ARTWORK,
     SETTING_HOTKEY_CALIBRATE,
     SETTING_HOTKEY_UNDO,
     SETTING_LAST_BOSS_ID,
@@ -346,29 +358,71 @@ _COUNTER_CAPTIONS = {
 
 
 class _BackgroundHost(QWidget):
-    """Central widget that paints an optional background image under everything."""
+    """
+    Central widget that paints what's behind the see-through panels: the
+    player's background image, or the theme's soft colored glow (Glass, Clay).
+    """
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._image: QPixmap | None = None
-        self._scaled: QPixmap | None = None  # cache: rescaled only on resize
+        self._scaled: QPixmap | None = None  # cache: redrawn only on resize or change
         self._dim = QColor(0, 0, 0, 0)
+        self._base = QColor(0, 0, 0)
+        self._backdrop: tuple = ()
 
-    def set_background(self, image: QPixmap | None, dim_color: QColor) -> None:
-        """Show ``image`` (None for none) under a ``dim_color`` layer that keeps text readable."""
+    def set_background(
+        self,
+        image: QPixmap | None,
+        dim_color: QColor,
+        base: str = "#000000",
+        backdrop: tuple = (),
+    ) -> None:
+        """
+        ``image`` (None for none) under a ``dim_color`` layer that keeps text
+        readable; without an image, the theme's ``backdrop`` glow on ``base``.
+        """
         self._image, self._scaled, self._dim = image, None, dim_color
+        self._base, self._backdrop = QColor(base), backdrop if image is None else ()
         self.update()
 
     def has_image(self) -> bool:
         return self._image is not None
 
+    def _render_backdrop(self) -> QPixmap:
+        pixmap = QPixmap(self.size())
+        pixmap.fill(self._base)
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setPen(Qt.PenStyle.NoPen)
+        span = max(self.width(), self.height())
+        for x, y, radius, color, alpha in self._backdrop:
+            center = QPointF(x * self.width(), y * self.height())
+            gradient = QRadialGradient(center, radius * span)
+            glow = QColor(color)
+            glow.setAlpha(alpha)
+            gradient.setColorAt(0.0, glow)
+            glow.setAlpha(alpha * 3 // 5)  # a wide, soft falloff, like a blur
+            gradient.setColorAt(0.5, glow)
+            glow.setAlpha(0)
+            gradient.setColorAt(1.0, glow)
+            painter.setBrush(gradient)
+            painter.drawEllipse(center, radius * span, radius * span)
+        painter.end()
+        return pixmap
+
     def paintEvent(self, event: QPaintEvent) -> None:  # noqa: N802
-        if self._image is not None:
+        if self._image is not None or self._backdrop:
             if self._scaled is None or self._scaled.size() != self.size():
-                self._scaled = cover(self._image, self.size())
+                self._scaled = (
+                    cover(self._image, self.size())
+                    if self._image is not None
+                    else self._render_backdrop()
+                )
             painter = QPainter(self)
             painter.drawPixmap(0, 0, self._scaled)
-            painter.fillRect(self.rect(), self._dim)
+            if self._image is not None:
+                painter.fillRect(self.rect(), self._dim)
             painter.end()
         super().paintEvent(event)
 
@@ -423,6 +477,10 @@ class MainWindow(QMainWindow):
         self._home_refresh.timeout.connect(self._refresh_home)
         self._overlay.visibility_changed.connect(self._on_overlay_visibility)
 
+        self._artwork: dict[int, QPixmap] = {}  # loaded banners, per game
+        self._artwork_wanted = False  # the player asked: say so if none is found
+        self._artwork_fetcher = artwork.ArtworkFetcher(self)
+        self._artwork_fetcher.finished.connect(self._on_artwork_found)
         self._update_window_title()
         self._build_menu()
         self._build_ui()
@@ -772,7 +830,9 @@ class MainWindow(QMainWindow):
         layout.addWidget(self._start_banner)
 
         # Now playing: the selected game at a glance, one click from counting.
-        now, now_layout = card("HeroCard", margins=20)
+        now = self._now_card = HeroCard(watermark="")
+        now_layout = QVBoxLayout(now)
+        now_layout.setContentsMargins(20, 20, 20, 20)
         now_row = QHBoxLayout()
         now_row.setSpacing(16)
         now_texts = QVBoxLayout()
@@ -924,7 +984,7 @@ class MainWindow(QMainWindow):
         self._responsive.append(selectors)
         layout.addWidget(selectors)
 
-        hero = HeroCard(watermark="")
+        hero = self._hero_card = HeroCard(watermark="")
         hero_row = QHBoxLayout(hero)
         hero_row.setContentsMargins(24, 18, 22, 18)
         hero_row.setSpacing(24)
@@ -2328,9 +2388,10 @@ class MainWindow(QMainWindow):
             dim.setAlphaF(min(max(int(settings.get(SETTING_UI_BG_DIM, "60")), 0), 90) / 100)
         except ValueError:
             dim.setAlphaF(0.6)
-        self._background.set_background(image, dim)
+        self._background.set_background(image, dim, info.base, info.backdrop)
         icons.set_colors(
             {
+                icons.ACCENT: info.on_accent,
                 icons.NORMAL: info.icon,
                 icons.NAV: info.icon_muted,
                 "nav_active": info.text if info.light else "#ffffff",
@@ -2349,9 +2410,10 @@ class MainWindow(QMainWindow):
             text_color=settings.get(SETTING_UI_TEXT_COLOR, ""),
             counter_color=settings.get(SETTING_UI_COUNTER_COLOR, ""),
             font_family=settings.get(SETTING_UI_FONT, ""),
-            see_through=image is not None,
+            see_through=image is not None or bool(info.backdrop),
         )
         self._refresh_theme_icons(settings.get(SETTING_UI_COUNTER_COLOR, "") or info.accent)
+        self._refresh_artwork(settings)
         self._overlay.apply_display_settings(settings)
         self._timer_window.apply_display_settings(settings)
         self._mini.apply_display_settings(settings)
@@ -2743,7 +2805,102 @@ class MainWindow(QMainWindow):
         menu = QMenu(self)
         menu.addAction("Rename Game…", self._rename_current_game)
         menu.addAction("Games && Bosses…", self._open_boss_window)
+        menu.addSeparator()
+        menu.addAction("Choose Artwork…", self._choose_artwork)
+        menu.addAction("Find Artwork on Steam", self._find_artwork_on_steam)
+        menu.addAction("Remove Artwork", self._remove_artwork)
         menu.exec(self._game_combo.mapToGlobal(position))
+
+    # Game artwork -------------------------------------------------------
+    def _artwork_folder(self) -> Path:
+        return self._database.path.parent / "artwork"
+
+    def _refresh_artwork(self, settings: dict[str, str] | None = None) -> None:
+        """The selected game's banner on Home and the Death Counter page (if turned on)."""
+        settings = settings or self._database.get_all_settings()
+        game_id = self._counter_manager.current_game_id
+        pixmap = None
+        if settings.get(SETTING_GAME_ARTWORK, "false") == "true" and game_id is not None:
+            pixmap = self._artwork.get(game_id)
+            if pixmap is None:
+                own = settings.get(f"artwork_path_{game_id}", "")
+                path = Path(own) if own else artwork.cached_path(game_id, self._artwork_folder())
+                if path.is_file():
+                    loaded = QPixmap(str(path))
+                    pixmap = None if loaded.isNull() else loaded
+                    if pixmap is not None:
+                        self._artwork[game_id] = pixmap
+                elif not own and settings.get(f"artwork_missing_{game_id}") != "true":
+                    row = self._database.get_game_detection(game_id)
+                    self._artwork_fetcher.fetch(
+                        game_id,
+                        self._game_combo.currentText(),
+                        row["exe_path"] if row is not None else None,
+                        self._artwork_folder(),
+                    )
+        for card_ in (self._now_card, self._hero_card):
+            card_.set_artwork(pixmap)
+
+    def _on_artwork_found(self, game_id: int, path: str) -> None:
+        if not path:
+            self._database.set_setting(f"artwork_missing_{game_id}", "true")
+            if game_id == self._counter_manager.current_game_id and self._artwork_wanted:
+                self._notify("No artwork found on Steam. Right-click the game → Choose Artwork…")
+            self._artwork_wanted = False
+            return
+        self._artwork_wanted = False
+        self._artwork.pop(game_id, None)
+        if game_id == self._counter_manager.current_game_id:
+            self._refresh_artwork()
+
+    def _turn_artwork_on(self) -> None:
+        if self._database.get_setting(SETTING_GAME_ARTWORK, "false") != "true":
+            self._database.set_setting(SETTING_GAME_ARTWORK, "true")
+            self._notify("Game artwork turned on (Settings → Appearance to turn it off).")
+
+    def _choose_artwork(self) -> None:
+        game_id = self._counter_manager.current_game_id
+        if game_id is None:
+            return
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Choose Artwork", "", "Images (*.png *.jpg *.jpeg *.webp *.bmp)"
+        )
+        if not path or QPixmap(path).isNull():
+            return
+        folder = self._artwork_folder()
+        folder.mkdir(parents=True, exist_ok=True)
+        own = folder / f"{game_id}-own{Path(path).suffix.lower()}"
+        try:
+            own.write_bytes(Path(path).read_bytes())  # a copy: the original may move
+        except OSError as exc:
+            QMessageBox.warning(self, "Choose Artwork", str(exc))
+            return
+        self._database.set_setting(f"artwork_path_{game_id}", str(own))
+        self._artwork.pop(game_id, None)
+        self._turn_artwork_on()
+        self._refresh_artwork()
+
+    def _find_artwork_on_steam(self) -> None:
+        game_id = self._counter_manager.current_game_id
+        if game_id is None:
+            return
+        self._database.set_setting(f"artwork_path_{game_id}", "")
+        self._database.set_setting(f"artwork_missing_{game_id}", "")
+        artwork.cached_path(game_id, self._artwork_folder()).unlink(missing_ok=True)
+        self._artwork.pop(game_id, None)
+        self._artwork_wanted = True
+        self._turn_artwork_on()
+        self._refresh_artwork()
+
+    def _remove_artwork(self) -> None:
+        game_id = self._counter_manager.current_game_id
+        if game_id is None:
+            return
+        self._database.set_setting(f"artwork_path_{game_id}", "")
+        self._database.set_setting(f"artwork_missing_{game_id}", "true")  # don't fetch it again
+        artwork.cached_path(game_id, self._artwork_folder()).unlink(missing_ok=True)
+        self._artwork.pop(game_id, None)
+        self._refresh_artwork()
 
     def _boss_context_menu(self, position) -> None:
         boss_id = self._counter_manager.current_boss_id
@@ -2816,6 +2973,7 @@ class MainWindow(QMainWindow):
         self._session_manager = SessionManager(self._database)
         self._counter_manager = CounterManager(self._database, self._session_manager)
         self._statistics_service = StatisticsService(self._database)
+        self._artwork.clear()
         if self._settings is not None:  # it holds the old profile's database
             self._settings.setParent(None)
             self._settings.deleteLater()
@@ -2966,6 +3124,7 @@ class MainWindow(QMainWindow):
         self._detect_last_label.setText("")
         self._configure_detection()
         self._load_speedrun()
+        self._refresh_artwork()
 
     def _on_boss_changed(self, index: int) -> None:
         boss_id = self._boss_combo.itemData(index)
