@@ -622,7 +622,11 @@ class AutoDetectWindow(QDialog):
             self._cooldown_spin: mode in screen_modes,
         }
         on_display = self._source_combo.currentData() == "display"
-        visible[self._source_combo] = mode in screen_modes
+        if on_display and mode == DETECTION_MODE_OFF:
+            # Choosing a display means "detect from the screen": turn it on.
+            self._mode_combo.setCurrentIndex(self._mode_combo.findData(DETECTION_MODE_TEMPLATE))
+            return  # the mode change calls this again
+        visible[self._source_combo] = mode != DETECTION_MODE_LOG
         visible[self._display_combo] = mode in screen_modes and on_display
         visible[self._display_hint] = mode in screen_modes and on_display
         for widget, show in visible.items():

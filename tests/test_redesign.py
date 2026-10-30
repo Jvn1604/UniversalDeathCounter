@@ -108,7 +108,9 @@ def test_downloadable_theme_files_are_valid() -> None:
 def test_one_home_per_function(window) -> None:
     assert window.menuBar().actions() == []  # the old menu bar duplicated everything
     more = [a.text() for a in window._more_menu.actions() if a.text()]
-    assert more == ["Save Progress…", "Load Save…", "About", "Clear All Data…", "Quit"]
+    assert more == [
+        "Save Progress…", "Load Save…", "Error Log…", "About", "Clear All Data…", "Quit"
+    ]
     assert window._credit._url == "https://www.youtube.com/@ImDePhantom"
 
 
