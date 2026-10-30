@@ -133,7 +133,7 @@ The **Console** page (sidebar) makes DUDC work when the game runs on a console:
 
 ### 🎨 Themes
 - **Phantom Dark** and **Daylight** are built in.
-- **Glass** (frosted dark panels over a lime and teal glow) and **Clay** (soft, puffy white shapes over pastel blobs on lavender) are **downloaded only when you pick them** in Settings → Appearance (about 24 KB each, from this repository) and can be **uninstalled** again, so the install stays small. They're built from the built-in themes (`packaging/make_themes.py`), so every screen looks right in them.
+- **Glass** (frosted dark panels over a lime and teal glow) and **Clay** (soft, puffy white shapes over pastel blobs on lavender) are **downloaded only when you pick them** in Settings → Appearance (about 22 KB each, from this repository) and can be **uninstalled** again, so the install stays small. They're built from the built-in themes (`packaging/make_themes.py`), so every screen looks right in them.
 - Every button has a clear icon ([Lucide](https://lucide.dev), ISC licence).
 
 ### ✨ Comfort

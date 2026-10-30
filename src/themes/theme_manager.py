@@ -74,7 +74,7 @@ THEMES: dict[str, ThemeInfo] = {
         "glass", "Glass", "Frosted dark panels over a lime and teal glow.",
         base="#0d0f12", text="#f2f4f3", surface="#1c1f24", accent="#c8f169",
         icon="#e3e8e6", icon_muted="#a6adab", danger="#ff7b86",
-        builtin=False, size_kb=24, on_accent="#10140c",
+        builtin=False, size_kb=22, on_accent="#10140c",
         backdrop=(
             (0.22, 0.88, 0.55, "#a3e635", 165),
             (0.88, 0.28, 0.50, "#2dd4bf", 135),
@@ -86,7 +86,7 @@ THEMES: dict[str, ThemeInfo] = {
         "clay", "Clay", "Soft, puffy white shapes on lavender. Made to be pressed.",
         base="#efecfa", text="#1e2145", surface="#ffffff", accent="#6c5ce7",
         icon="#4e4b73", icon_muted="#7d7a9e", danger="#d93a4a", light=True,
-        builtin=False, size_kb=24,
+        builtin=False, size_kb=22,
         backdrop=(
             (0.15, 0.12, 0.42, "#b9a6ff", 230),
             (0.95, 0.30, 0.36, "#9ff0c8", 220),
