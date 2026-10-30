@@ -88,6 +88,11 @@ def test_settings_is_a_page_that_asks_before_dropping_changes(window, monkeypatc
     assert window._pages.currentIndex() == _PAGE_HOME
     assert window._database.get_setting("confirm_close") == "false"
 
+    window._database.set_setting("confirm_close", "true")  # changed elsewhere meanwhile
+    window._show_page(_PAGE_SETTINGS)
+    assert settings._confirm_close_check.isChecked()  # the page shows it
+    window._show_page(_PAGE_HOME)
+    window._database.set_setting("confirm_close", "false")
     window._show_page(_PAGE_SETTINGS)
     settings._confirm_close_check.setChecked(True)
     settings.reject()  # Discard Changes: back to what's saved, page stays

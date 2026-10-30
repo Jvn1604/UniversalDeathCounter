@@ -391,6 +391,11 @@ class SettingsWindow(QDialog):
             self.previewed = False
         self._baseline = self._state()
 
+    def reload_if_changed(self) -> None:
+        """Reload only when a setting changed elsewhere (reloading every visit is slow)."""
+        if self._database.get_all_settings() != self._loaded_settings or self.previewed:
+            self.reload()
+
     def set_tab(self, tab: int) -> None:
         self._tabs.setCurrentIndex(tab)
 
@@ -1022,6 +1027,7 @@ class SettingsWindow(QDialog):
     # Data binding
     # ----------------------------------------------------------------
     def _load_current_values(self) -> None:
+        self._loaded_settings = self._database.get_all_settings()
         settings = self._database.get_all_settings()
 
         self._gallery.set_theme(settings.get(SETTING_THEME, "dark"))

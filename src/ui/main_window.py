@@ -1677,7 +1677,7 @@ class MainWindow(QMainWindow):
         if index == _PAGE_SETTINGS:
             settings = self._ensure_settings()
             if not settings.has_changes():
-                settings.reload()  # e.g. changed from the overlay's menu meanwhile
+                settings.reload_if_changed()  # e.g. changed from the overlay's menu meanwhile
         if index == _PAGE_TIMER:
             self._refresh_timer_page()
         else:
@@ -2268,7 +2268,8 @@ class MainWindow(QMainWindow):
         if row is None or row["mode"] == DETECTION_MODE_OFF:
             self._database.set_game_detection(game_id, exe_path, DETECTION_MODE_TEMPLATE)
         self._configure_detection()
-        if not exe_path:
+        # Watching a display or an OBS source needs no .exe: don't ask for one.
+        if not exe_path and not self._screen_display(game_id) and not self._obs_source(game_id):
             QMessageBox.information(
                 self, "Select the Game", "Death screen saved. Now pick the game's .exe."
             )

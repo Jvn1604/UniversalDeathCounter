@@ -190,6 +190,18 @@ def test_main_window_watches_the_chosen_display(tmp_path, monkeypatch) -> None:
         assert configs[-1] is not None and configs[-1].screen_display == 2
         window._show_page(mw._PAGE_DETECTION)
         assert "Display 2 (no .exe)" in window._detect_page_info.text()
+
+        # Capturing the death screen (F8) mustn't then ask for the .exe.
+        from src.detection.matchers import DeathTemplate
+
+        asked: list = []
+        monkeypatch.setattr(mw.QMessageBox, "information", lambda *a, **k: asked.append(a))
+        monkeypatch.setattr(window, "_open_auto_detect_window", lambda: asked.append("setup"))
+        frame = np.zeros((90, 160, 3), dtype=np.uint8)
+        frame[40:60, 50:110] = 220
+        window._save_death_template(game, DeathTemplate.from_frame(frame, REGION))
+        assert asked == []
+        assert len(db.get_death_templates(game)) == 1
     finally:
         window._quit_app()
         app.processEvents()
