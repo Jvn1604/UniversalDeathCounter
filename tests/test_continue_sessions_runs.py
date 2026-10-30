@@ -73,7 +73,7 @@ def test_continue_a_past_session_from_home(window, monkeypatch) -> None:
         return 1
 
     monkeypatch.setattr(history.SessionHistoryWindow, "exec", pick_old)
-    window._continue_past_session()
+    window._sessions_btn.click()  # the Sessions button next to Undo
 
     assert window._session_manager.current_session_id == old_session
     snapshot = window._counter_manager.get_snapshot()
@@ -83,6 +83,14 @@ def test_continue_a_past_session_from_home(window, monkeypatch) -> None:
     window._on_increment()  # new deaths go into the continued session
     assert window._database.get_session_death_count(old_session) == 5
     assert game == window._counter_manager.current_game_id
+
+
+def test_the_caption_under_the_big_number_isnt_clipped(window) -> None:
+    window.resize(1100, 900)
+    window.show()
+    caption = window._counter_caption
+    assert caption.height() >= caption.fontMetrics().height() + 8
+    window.hide()
 
 
 def test_the_current_session_cant_be_continued_or_deleted(window) -> None:

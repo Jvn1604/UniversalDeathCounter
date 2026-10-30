@@ -782,9 +782,17 @@ class MainWindow(QMainWindow):
         self._minus_btn.clicked.connect(self._on_decrement)
         self._undo_btn = ActionButton("Undo", "undo-2")
         self._undo_btn.clicked.connect(self._on_undo)
-        for button in (self._minus_btn, self._undo_btn):
+        self._sessions_btn = ActionButton("Sessions", "history")
+        self._sessions_btn.setToolTip("Continue a past session of this game")
+        self._sessions_btn.clicked.connect(self._continue_past_session)
+        for button in (self._minus_btn, self._undo_btn, self._sessions_btn):
             button.setMinimumHeight(58)
-        layout.addLayout(row(self._plus_btn, self._minus_btn, self._undo_btn, stretch=(2, 1, 1)))
+        layout.addLayout(
+            row(
+                self._plus_btn, self._minus_btn, self._undo_btn, self._sessions_btn,
+                stretch=(2, 1, 1, 1),
+            )
+        )
 
         week, week_layout = card(margins=16)
         week_layout.setSpacing(4)
@@ -2764,10 +2772,6 @@ class MainWindow(QMainWindow):
                     SETTING_OVERLAY_COUNTER_SOURCE, v
                 )
             )
-        menu.addSeparator()
-        past = menu.addAction("Continue a past session…")
-        past.setEnabled(self._counter_manager.current_game_id is not None)
-        past.triggered.connect(self._continue_past_session)
         caption = self._counter_caption
         menu.exec(caption.mapToGlobal(caption.rect().bottomLeft()))
 
