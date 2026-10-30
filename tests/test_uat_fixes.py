@@ -55,7 +55,10 @@ def test_crash_snapshot_survives_the_next_startup(tmp_path, monkeypatch) -> None
     mw = _patch_profiles(tmp_path, monkeypatch)
     app = QApplication.instance() or QApplication([])
     shown: list[str] = []
-    monkeypatch.setattr(QMessageBox, "exec", lambda box: (shown.append(box.windowTitle()), 0)[1])
+    # macOS doesn't show message box titles (windowTitle() is ""), so read the text too.
+    monkeypatch.setattr(
+        QMessageBox, "exec", lambda box: (shown.append(box.windowTitle() or box.text()), 0)[1]
+    )
 
     first = mw.MainWindow()
     game_id = first._database.create_game("Elden Ring")
@@ -75,7 +78,7 @@ def test_crash_snapshot_survives_the_next_startup(tmp_path, monkeypatch) -> None
         for _ in range(5):
             app.processEvents()
             time.sleep(0.02)
-        assert "Recover Run" in shown
+        assert any(t == "Recover Run" or "run was still going" in t for t in shown)
     finally:
         second._quit_app()
         app.processEvents()

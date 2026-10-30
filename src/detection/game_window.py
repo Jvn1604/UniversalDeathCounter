@@ -2,10 +2,18 @@
 Locating a running game and capturing its window.
 
 The player picks the game's .exe once; from then on we find its process
-with ``psutil``, find that process's main window through the Win32 API
-(via ``ctypes``, no extra dependency), and grab the window's client area
-with ``mss``. This is plain screen capture: no memory reading and no
+with ``psutil``, find that process's main window through the OS (via
+``ctypes``, no extra dependency), and grab the window's client area with
+``mss``. This is plain screen capture: no memory reading and no
 injection, so it is safe to use alongside anti-cheat.
+
+* Windows: the Win32 API.
+* macOS: Quartz (:mod:`src.detection.mac_windows`); the app needs Screen
+  Recording permission. The game can be a ``.app`` or (CrossOver) an .exe.
+* Linux: X11 (:mod:`src.detection.x11_windows`). Proton and Wine games are
+  X11 windows; their process is matched by the .exe's name, since the
+  running program is Wine itself. A Wayland desktop doesn't let apps
+  capture other windows, so there OBS is the way (see :func:`capture_hint`).
 
 Exclusive-fullscreen games may capture as solid black; borderless or
 windowed mode always works.
@@ -14,18 +22,19 @@ windowed mode always works.
 from __future__ import annotations
 
 import os
+import plistlib
 import struct
-import sys
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 
 import numpy as np
 
 from src.utils.logger import get_logger
+from src.utils.platform_info import IS_LINUX, IS_MAC, IS_WINDOWS, is_wayland
 
 logger = get_logger(__name__)
 
-DETECTION_SUPPORTED: bool = sys.platform == "win32"
+DETECTION_SUPPORTED: bool = IS_WINDOWS or IS_MAC or IS_LINUX
 
 try:
     import mss
@@ -35,12 +44,16 @@ try:
 except ImportError:  # pragma: no cover - environment dependent
     _DEPENDENCIES_AVAILABLE = False
 
-if DETECTION_SUPPORTED:
+if IS_WINDOWS:
     import ctypes
     from ctypes import wintypes
 
     _user32 = ctypes.windll.user32
     _EnumWindowsProc = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+elif IS_MAC:
+    from src.detection import mac_windows as _native
+elif IS_LINUX:
+    from src.detection import x11_windows as _native
 
 Rect = tuple[int, int, int, int]  # left, top, width, height in screen pixels
 
@@ -56,7 +69,12 @@ class WindowInfo:
 
     @property
     def label(self) -> str:
-        return f"{self.title}  —  {Path(self.exe_path).name}  ({self.width}×{self.height})"
+        return f"{self.title}  —  {file_name(self.exe_path)}  ({self.width}×{self.height})"
+
+
+def file_name(path: str) -> str:
+    """The file name of a path from this OS or a Windows one (as Wine reports them)."""
+    return PureWindowsPath(path).name
 
 
 def open_screen_capture() -> mss.base.MSSBase:
@@ -68,6 +86,90 @@ def open_screen_capture() -> mss.base.MSSBase:
 def detection_available() -> bool:
     """True if this platform and environment can run auto-detection."""
     return DETECTION_SUPPORTED and _DEPENDENCIES_AVAILABLE
+
+
+def capture_hint() -> str:
+    """Why the game's window can't be watched here (and what to do), or ""."""
+    if IS_LINUX and is_wayland() and not os.environ.get("DISPLAY"):
+        return (
+            "This Wayland desktop doesn't let apps see other windows. Count deaths with "
+            "the buttons, phone remote or controller, or read the game from OBS "
+            "(Console page)."
+        )
+    if IS_LINUX and is_wayland():
+        return (
+            "On a Wayland desktop only Proton, Wine and other X11 games can be watched. "
+            "If the capture stays black, read the game from OBS instead (Console page)."
+        )
+    if IS_MAC and not _native.capture_allowed():
+        return (
+            "macOS needs Screen Recording permission for auto-detect: System Settings → "
+            "Privacy & Security → Screen Recording, then turn this app on and reopen it."
+        )
+    return ""
+
+
+def request_capture_permission() -> None:
+    """macOS: show the Screen Recording prompt if the player hasn't answered it yet."""
+    if IS_MAC and not _native.capture_allowed():
+        _native.request_capture()
+
+
+def _bundle_info(path: str) -> dict:
+    try:
+        with open(os.path.join(path, "Contents", "Info.plist"), "rb") as file:
+            return plistlib.load(file)
+    except (OSError, plistlib.InvalidFileException):
+        return {}
+
+
+def _bundle_executable(path: str) -> str:
+    """A macOS ``.app`` -> the program inside it; anything else unchanged."""
+    if not path.endswith(".app") or not os.path.isdir(path):
+        return path
+    executable = _bundle_info(path).get("CFBundleExecutable") or Path(path).stem
+    return os.path.join(path, "Contents", "MacOS", executable)
+
+
+def _bundle_name(path: str) -> str | None:
+    if not path.endswith(".app"):
+        return None
+    info = _bundle_info(path)
+    return info.get("CFBundleDisplayName") or info.get("CFBundleName")
+
+
+def _wine_program(process) -> str | None:
+    """
+    The .exe a Wine/Proton process runs (Linux and macOS), from its command line.
+
+    Linux cuts process names to 15 characters and reports Wine as the
+    executable, so ``darksoulsiii.exe`` shows as ``darksoulsiii.ex``.
+    """
+    try:
+        cmdline = process.cmdline()
+    except (psutil.AccessDenied, psutil.NoSuchProcess, psutil.ZombieProcess):
+        return None
+    if cmdline and cmdline[0].lower().endswith(".exe"):
+        return file_name(cmdline[0]).lower()
+    return None
+
+
+def _name_matches(process, name: str, exe_name: str) -> bool:
+    """Whether a process called ``name`` (lower case) is ``exe_name``."""
+    if name == exe_name:
+        return True
+    if IS_WINDOWS or not exe_name.endswith(".exe"):
+        return False
+    if len(name) >= 15 and exe_name.startswith(name):
+        return _wine_program(process) == exe_name
+    return False
+
+
+def _path_matches(running_exe: str | None, exe_path: str) -> bool:
+    """Same program file; under Wine the running file is Wine itself, so any counts."""
+    if running_exe is None or _same_path(running_exe, exe_path):
+        return True
+    return not IS_WINDOWS and file_name(running_exe).lower() != file_name(exe_path).lower()
 
 
 def _same_path(a: str, b: str) -> bool:
@@ -83,14 +185,14 @@ def find_process_ids(exe_path: str) -> list[int]:
     """
     if not _DEPENDENCIES_AVAILABLE:
         return []
-    exe_name = Path(exe_path).name.lower()
+    exe_path = _bundle_executable(exe_path)
+    exe_name = file_name(exe_path).lower()
     pids: list[int] = []
     for process in psutil.process_iter(["pid", "name", "exe"]):
         info = process.info
-        if (info.get("name") or "").lower() != exe_name:
+        if not _name_matches(process, (info.get("name") or "").lower(), exe_name):
             continue
-        running_exe = info.get("exe")
-        if running_exe is None or _same_path(running_exe, exe_path):
+        if _path_matches(info.get("exe"), exe_path):
             pids.append(int(info["pid"]))
     return pids
 
@@ -107,10 +209,15 @@ def running_exe_paths(exe_paths: list[str]) -> set[str]:
         return set()
     by_name: dict[str, list[str]] = {}
     for path in exe_paths:
-        by_name.setdefault(Path(path).name.lower(), []).append(path)
+        by_name.setdefault(file_name(_bundle_executable(path)).lower(), []).append(path)
     running: set[str] = set()
     for process in psutil.process_iter(["name"]):
-        candidates = by_name.get((process.info.get("name") or "").lower())
+        name = (process.info.get("name") or "").lower()
+        candidates = by_name.get(name)
+        if not candidates and not IS_WINDOWS and len(name) >= 15:
+            # A Wine game whose name Linux cut short: look at its command line.
+            if any(exe.startswith(name) for exe in by_name):
+                candidates = by_name.get(_wine_program(process) or "")
         if not candidates:
             continue
         try:
@@ -118,7 +225,7 @@ def running_exe_paths(exe_paths: list[str]) -> set[str]:
         except (psutil.AccessDenied, psutil.NoSuchProcess):
             running_exe = None
         for path in candidates:
-            if running_exe is None or _same_path(running_exe, path):
+            if _path_matches(running_exe, _bundle_executable(path)):
                 running.add(path)
     return running
 
@@ -130,15 +237,16 @@ def exe_display_name(exe_path: str) -> str:
     Uses the exe's embedded ProductName / FileDescription (e.g.
     ``eldenring.exe`` → "ELDEN RING"), falling back to a tidied file name.
     """
-    name = _version_info_name(exe_path) if DETECTION_SUPPORTED else None
+    name = _version_info_name(exe_path) if IS_WINDOWS else _bundle_name(exe_path)
     if not name:
-        stem = Path(exe_path).stem
+        stem = PureWindowsPath(exe_path).stem
         for suffix in ("-Win64-Shipping", "-Win32-Shipping", "_x64", "64"):
             stem = stem.removesuffix(suffix)
         name = stem.replace("_", " ").replace("-", " ").strip()
         if name.islower():
             name = name.title()
-    return " ".join(name.replace("™", "").replace("®", "").split()) or Path(exe_path).stem
+    cleaned = " ".join(name.replace("™", "").replace("®", "").split())
+    return cleaned or PureWindowsPath(exe_path).stem
 
 
 def _version_info_name(exe_path: str) -> str | None:
@@ -165,6 +273,8 @@ def _version_info_name(exe_path: str) -> str | None:
 
 
 def window_title(hwnd: int) -> str:
+    if not IS_WINDOWS:
+        return _native.title(hwnd)
     length = _user32.GetWindowTextLengthW(hwnd)
     if length <= 0:
         return ""
@@ -185,6 +295,16 @@ def find_main_window(pids: list[int], title: str = "") -> int | None:
     wanted = set(pids)
     wanted_title = title.casefold()
     best: tuple[int, int] | None = None  # (area, hwnd)
+    if not IS_WINDOWS:
+        for window in _native.windows():
+            if window.pid not in wanted or window.rect is None:
+                continue
+            if wanted_title and wanted_title not in window.title.casefold():
+                continue
+            area = window.rect[2] * window.rect[3]
+            if best is None or area > best[0]:
+                best = (area, window.handle)
+        return best[1] if best is not None else None
 
     def _visit(hwnd: int, _lparam: int) -> bool:
         nonlocal best
@@ -235,6 +355,21 @@ def list_windows() -> list[WindowInfo]:
         return []
     own_pid = os.getpid()
     found: dict[tuple[str, str], WindowInfo] = {}
+    if not IS_WINDOWS:
+        for window in _native.windows():
+            title = window.title.strip()
+            if not title or window.pid in (0, own_pid) or window.rect is None:
+                continue
+            if window.rect[2] < 200 or window.rect[3] < 150:
+                continue
+            exe_path = _program_path(window.pid)
+            if exe_path is None:
+                continue
+            info = WindowInfo(title, exe_path, window.rect[2], window.rect[3])
+            key = (title, exe_path)
+            if key not in found or info.width * info.height > found[key].width * found[key].height:
+                found[key] = info
+        return sorted(found.values(), key=lambda w: -(w.width * w.height))
 
     def _visit(hwnd: int, _lparam: int) -> bool:
         if not _user32.IsWindowVisible(hwnd) or _user32.IsIconic(hwnd):
@@ -263,22 +398,38 @@ def list_windows() -> list[WindowInfo]:
     return sorted(found.values(), key=lambda w: -(w.width * w.height))
 
 
+def _program_path(pid: int) -> str | None:
+    """A process's program; for Wine, the .exe it runs rather than Wine."""
+    try:
+        process = psutil.Process(pid)
+        exe_path = process.exe()
+        cmdline = process.cmdline()
+    except (psutil.AccessDenied, psutil.NoSuchProcess, psutil.ZombieProcess):
+        return None
+    if cmdline and cmdline[0].lower().endswith(".exe") and not exe_path.lower().endswith(".exe"):
+        return cmdline[0]
+    return exe_path or None
+
+
 def is_not_responding(hwnd: int) -> bool:
     """Windows' own "Not Responding" test (no input handled for ~5 s)."""
-    return DETECTION_SUPPORTED and bool(_user32.IsHungAppWindow(hwnd))
+    return IS_WINDOWS and bool(_user32.IsHungAppWindow(hwnd))
 
 
 def is_foreground(hwnd: int) -> bool:
     """Whether ``hwnd`` is the window the player is using right now."""
-    if not DETECTION_SUPPORTED:
-        return True
+    if not IS_WINDOWS:
+        front = _native.foreground() if DETECTION_SUPPORTED else None
+        return front is None or front == hwnd  # unknown: assume the player is playing
     _user32.GetForegroundWindow.restype = wintypes.HWND  # full-width handle
     return _user32.GetForegroundWindow() == hwnd
 
 
 def window_client_rect(hwnd: int) -> Rect | None:
     """Screen rectangle of a window's client area, or None if gone/minimized."""
-    if not DETECTION_SUPPORTED or not _user32.IsWindow(hwnd) or _user32.IsIconic(hwnd):
+    if not IS_WINDOWS:
+        return _native.rect(hwnd) if DETECTION_SUPPORTED else None
+    if not _user32.IsWindow(hwnd) or _user32.IsIconic(hwnd):
         return None
     rect = wintypes.RECT()
     if not _user32.GetClientRect(hwnd, ctypes.byref(rect)):
@@ -335,7 +486,21 @@ def grab_rect(sct: mss.base.MSSBase, rect: Rect) -> np.ndarray:
     """
     left, top, width, height = desktop_clip(sct, rect)
     shot = sct.grab({"left": left, "top": top, "width": width, "height": height})
-    return np.asarray(shot)[..., 2::-1]
+    return _rgb(shot, width, height)
+
+
+def _rgb(shot, width: int, height: int) -> np.ndarray:
+    """
+    RGB view of a BGRA capture, ``height`` x ``width``.
+
+    On a Retina Mac the capture has 2 pixels per point; every other one is
+    kept, so frames are in points everywhere (and templates keep matching).
+    """
+    pixels = np.asarray(shot)
+    rows, columns = pixels.shape[:2]
+    if rows != height or columns != width:
+        pixels = pixels[:: max(1, rows // height), :: max(1, columns // width)][:height, :width]
+    return pixels[..., 2::-1]
 
 
 def grab_into(
@@ -353,7 +518,7 @@ def grab_into(
     left, top, right, bottom = box
     area = {"left": origin[0] + left, "top": origin[1] + top}
     shot = sct.grab({**area, "width": right - left, "height": bottom - top})
-    canvas[top:bottom, left:right] = np.asarray(shot)[..., 2::-1]
+    canvas[top:bottom, left:right] = _rgb(shot, right - left, bottom - top)
 
 
 def capture_game_frame(exe_path: str | None, title: str = "") -> np.ndarray | None:
@@ -371,9 +536,16 @@ def capture_game_frame(exe_path: str | None, title: str = "") -> np.ndarray | No
             rect = window_client_rect(hwnd) if hwnd is not None else None
             if rect is not None:
                 return np.ascontiguousarray(grab_rect(sct, rect))
-        cursor = wintypes.POINT()
-        _user32.GetCursorPos(ctypes.byref(cursor))
-        monitor = monitor_at(sct.monitors[1:], cursor.x, cursor.y)
+        x, y = _cursor_position()
+        monitor = monitor_at(sct.monitors[1:], x, y)
         return np.ascontiguousarray(
             grab_rect(sct, (monitor["left"], monitor["top"], monitor["width"], monitor["height"]))
         )
+
+
+def _cursor_position() -> tuple[int, int]:
+    if not IS_WINDOWS:
+        return _native.cursor() or (0, 0)
+    cursor = wintypes.POINT()
+    _user32.GetCursorPos(ctypes.byref(cursor))
+    return cursor.x, cursor.y

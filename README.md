@@ -9,7 +9,7 @@
 <p align="center">
   <a href="https://github.com/Jvn1604/UniversalDeathCounter/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/Jvn1604/UniversalDeathCounter?color=ff4d4d&label=download"></a>
   <a href="https://github.com/Jvn1604/UniversalDeathCounter/actions/workflows/build-windows.yml"><img alt="Build" src="https://img.shields.io/github/actions/workflow/status/Jvn1604/UniversalDeathCounter/build-windows.yml?branch=main"></a>
-  <img alt="Platform" src="https://img.shields.io/badge/platform-Windows%2010%20%7C%2011-b56cff">
+  <img alt="Platform" src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-b56cff">
   <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-43b581"></a>
 </p>
 
@@ -23,10 +23,30 @@
 |---|---|
 | `UniversalDeathCounterSetup.exe` | **Installer (recommended).** Start Menu and desktop shortcuts, plus an uninstaller. |
 | `UniversalDeathCounter-<version>-portable.zip` | **Portable.** Unzip anywhere and run `UniversalDeathCounter.exe`. Data is stored next to it. |
+| `UniversalDeathCounter-<version>-macOS.dmg` | **Mac** (Apple Silicon, macOS 11+). Drag the app into Applications. |
+| `UniversalDeathCounter-<version>-x86_64.AppImage` | **Linux** (and Steam Deck desktop mode). Make it executable (`chmod +x`), then run it. |
 
 > **"Windows protected your PC"?** The app isn't code-signed yet, so Windows SmartScreen warns about unknown publishers. Click **More info → Run anyway**. The full source is here and every release is built by GitHub Actions from this repository.
 
-No Python or anything else needed. Windows 10 or 11.
+No Python or anything else needed. Windows 10 or 11, macOS 11 or newer, or a 64-bit Linux desktop.
+
+<details>
+<summary><b>Mac and Linux notes</b></summary>
+
+**Mac**
+- The app isn't notarized by Apple yet. The first time, **right-click the app → Open → Open**.
+- For auto-detect, allow **Screen Recording** when macOS asks (or later in System Settings → Privacy & Security → Screen Recording), then reopen the app.
+- Hotkeys need no permission. F-keys control brightness and volume unless you hold **fn**, or turn on *Use F1, F2, etc. keys as standard function keys* in System Settings → Keyboard. In the app, Ctrl means ⌘.
+- Controller combos aren't available on Mac yet; use the keys or the phone remote.
+
+**Linux / Steam Deck**
+- Works on X11 desktops, and on Wayland through XWayland: Proton and Wine games are X11 windows, so hotkeys and auto-detect work while they have focus.
+- Pick the game's `.exe` inside the Proton prefix or `steamapps/common`, as on Windows; the app finds it even though it runs inside Wine.
+- On a pure Wayland session (no XWayland) apps can't see other windows or hear keys, so use a controller combo, the phone remote, or read the game from OBS (Console page).
+- Controllers are read from `/dev/input/js*`: Xbox, PlayStation, Steam Deck and most others work.
+- Steam Deck Game Mode doesn't show other apps on top of the game; use Desktop Mode or the phone remote.
+
+</details>
 
 ## Screenshots
 
@@ -201,6 +221,8 @@ Add a **Chroma Key** filter to the source (Key Color Type: Green). See **OBS Set
 False positives happen with unsigned apps. DUDC uses Windows' own hotkey API (no keyboard hook) and ships as a normal folder build to keep this to a minimum. You can check every build's source and logs under [Actions](https://github.com/Jvn1604/UniversalDeathCounter/actions).
 
 **Where is my data?**
+- **Mac:** `~/Library/Application Support/UniversalDeathCounter/saves/`
+- **Linux:** `~/.local/share/UniversalDeathCounter/saves/`
 - **Installer:** `%APPDATA%\UniversalDeathCounter\saves\`
 - **Portable:** the `saves` folder next to the exe.
 
@@ -208,7 +230,7 @@ False positives happen with unsigned apps. DUDC uses Windows' own hotkey API (no
 
 ## Build from source
 
-Requires Windows and Python 3.12+.
+Requires Python 3.12+ on Windows, macOS or Linux (on Linux, the commands below use `venv/bin/` instead of `.\venv\Scripts\`).
 
 ```powershell
 git clone https://github.com/Jvn1604/UniversalDeathCounter.git
@@ -224,6 +246,7 @@ python -m venv venv
 | Lint and conflict-marker checks | `.\venv\Scripts\pre-commit run --all-files` (or `pre-commit install` once to run them on every commit) |
 | Build the app folder | `.\venv\Scripts\pyinstaller packaging\UniversalDeathCounter.spec` → `dist\UniversalDeathCounter\` |
 | Build the installer | `iscc packaging\installer.iss` ([Inno Setup 6](https://jrsoftware.org/isinfo.php)) |
+| Build the Mac app / Linux AppImage | the same `pyinstaller` command on that OS (`dist/UniversalDeathCounter.app`), then `packaging/make_appimage.sh <version>` on Linux |
 | Regenerate icons / screenshots | `python packaging\make_icons.py` / `python packaging\make_screenshots.py` |
 
 **Releasing:**
@@ -231,7 +254,7 @@ python -m venv venv
 2. Merge to `main`.
 3. Push a matching tag such as `v2.0.0`.
 
-GitHub Actions then tests, builds the installer and portable zip, and publishes the release. If the repository secrets are set, it also code-signs them; see [docs/code-signing.md](docs/code-signing.md).
+GitHub Actions then tests on all three systems, builds the installer, portable zip, Mac .dmg and Linux AppImage, and publishes the release. If the repository secrets are set, it also code-signs them; see [docs/code-signing.md](docs/code-signing.md).
 
 <details>
 <summary><b>Project structure</b></summary>
@@ -242,7 +265,7 @@ src/
 ├── core/             # Counter, session and statistics logic
 ├── database/         # SQLite layer (the only module with SQL)
 ├── detection/        # Window capture, death-screen matchers, watcher thread
-├── hotkeys/          # Windows hotkeys, controllers, conflict detection
+├── hotkeys/          # Global hotkeys (Windows, macOS, X11), controllers, conflicts
 ├── overlay/          # OBS overlay window
 ├── ui/               # Main window and dialogs
 ├── themes/           # Built-in stylesheets (Phantom Dark, Daylight) + theme catalog
@@ -255,7 +278,7 @@ tests/                # pytest suite (130+ tests)
 Design notes:
 - **Event-sourced counting:** every +1 and -1 is a row with a signed `delta`, so undo, history and graphs come for free.
 - **Detection only reads the screen** through pure-numpy matchers, so it's unit tested without a game.
-- **No heavy dependencies:** PySide6, numpy, mss and psutil. Windows APIs (hotkeys, controllers, window lookup) are called directly through `ctypes`.
+- **No heavy dependencies:** PySide6, numpy, mss and psutil. The OS APIs (hotkeys, controllers, window lookup: Win32, Carbon/Quartz on macOS, X11 and the kernel's joystick devices on Linux) are called directly through `ctypes`.
 
 </details>
 

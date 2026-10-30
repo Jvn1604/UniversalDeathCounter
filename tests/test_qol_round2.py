@@ -53,13 +53,18 @@ def test_timer_keys_besides_split_only_register_during_a_run(window) -> None:
 
 # ---------------------------------------------------------------- 4. keys on the Timer page
 def test_timer_page_buttons_show_their_keys(window) -> None:
+    from PySide6.QtGui import QKeySequence
+
+    def shown(key: str) -> str:  # "Num+1" here, Mac-style ("⌘F11") on a Mac
+        return QKeySequence(key).toString(QKeySequence.SequenceFormat.NativeText)
+
     buttons = window._timer_buttons
     assert buttons["split"].text() == "Start / Split"
-    assert buttons["split"].key_text() == "Num+1"
-    assert buttons["pause"].key_text() == "Num+5"
+    assert buttons["split"].key_text() == shown("num+1")
+    assert buttons["pause"].key_text() == shown("num+5")
     assert window._plus_btn.key_text() == "F9"
     assert "while a run is going" in buttons["reset"].toolTip()
-    assert "Ctrl+F11" in window._defeated_btn.toolTip()
+    assert shown("ctrl+f11") in window._defeated_btn.toolTip()
 
 
 # ---------------------------------------------------------------- 3. first-run guide

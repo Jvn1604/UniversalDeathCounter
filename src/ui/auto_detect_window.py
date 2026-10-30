@@ -39,7 +39,7 @@ from PySide6.QtWidgets import (
 )
 
 from src.database.database import SCREEN_DEATH, SCREEN_PAUSE, SCREEN_VICTORY, Database
-from src.detection.game_window import detection_available
+from src.detection.game_window import capture_hint, detection_available
 from src.detection.log_watcher import compile_death_pattern, scan_log
 from src.detection.matchers import SOULS_PRESET_EXES, DeathTemplate, HealthBar, Region
 from src.utils.constants import (
@@ -54,6 +54,7 @@ from src.utils.constants import (
     SETTING_HOTKEY_INCREMENT,
 )
 from src.utils.logger import get_logger
+from src.utils.platform_info import program_file_filter
 
 logger = get_logger(__name__)
 
@@ -427,10 +428,13 @@ class AutoDetectWindow(QDialog):
     def _build_ui(self) -> None:
         layout = QVBoxLayout(self)
 
-        if not detection_available():
-            warning = QLabel(
-                "Screen-based detection needs Windows, so only log-file detection works here."
-            )
+        hint = (
+            capture_hint() if detection_available()
+            else "Screen detection can't run here, so only log-file detection works."
+        )
+        if hint:
+            warning = QLabel(hint)
+            warning.setWordWrap(True)
             warning.setStyleSheet("color: #ff4d4d; font-weight: 600;")
             layout.addWidget(warning)
 
@@ -728,7 +732,7 @@ class AutoDetectWindow(QDialog):
 
     def _browse_exe(self) -> None:
         path, _ = QFileDialog.getOpenFileName(
-            self, "Select Game Executable", self._exe_edit.text(), "Programs (*.exe)"
+            self, "Select the Game", self._exe_edit.text(), program_file_filter()
         )
         if not path:
             return

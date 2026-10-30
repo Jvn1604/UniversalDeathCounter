@@ -8,6 +8,7 @@ Run with:
 from __future__ import annotations
 
 import faulthandler
+import os
 import sys
 from types import TracebackType
 
@@ -19,6 +20,7 @@ from src.ui.main_window import MainWindow
 from src.utils import single_instance
 from src.utils.constants import APP_NAME, APP_ORG, ICONS_DIR, LOG_DIR
 from src.utils.logger import get_logger
+from src.utils.platform_info import has_x11_display
 from src.utils.startup import refresh_registration
 
 logger = get_logger(__name__)
@@ -49,9 +51,23 @@ def _install_crash_logging() -> None:
         logger.warning("Could not open crash.log; hard crashes won't be recorded")
 
 
+def _prefer_x11() -> None:
+    """
+    Linux: run through X11 (XWayland on Wayland desktops) when it's there.
+
+    Wayland doesn't let an app keep its overlay on top, place its windows or
+    use global hotkeys; under X11 all of that works, and games running
+    through Proton are X11 windows too. Falls back to Wayland if X11 can't
+    load, and a QT_QPA_PLATFORM the player set themselves always wins.
+    """
+    if has_x11_display() and "QT_QPA_PLATFORM" not in os.environ:
+        os.environ["QT_QPA_PLATFORM"] = "xcb;wayland"
+
+
 def main() -> int:
     """Launch the DePhantom Universal Death Counter application."""
     _install_crash_logging()
+    _prefer_x11()
     app = QApplication(sys.argv)
     app.setApplicationName(APP_NAME)
     app.setOrganizationName(APP_ORG)
@@ -67,7 +83,7 @@ def main() -> int:
                 None,
                 APP_NAME,
                 f"{APP_NAME} is already running. Open it from its icon in the "
-                "system tray.",
+                "system tray (the menu bar on a Mac).",
             )
         return 0
 
@@ -82,6 +98,7 @@ def main() -> int:
         )
         return 1
 
+    single_instance.listen_for_others(window.bring_to_front)
     refresh_registration()
     window.show()
     QTimer.singleShot(400, window.maybe_show_welcome)  # first run: the guide
