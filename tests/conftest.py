@@ -54,3 +54,21 @@ def _no_hotkey_warning_box(monkeypatch):
         return real_warning(parent, title, *args, **kwargs)
 
     monkeypatch.setattr(QMessageBox, "warning", warning)
+
+
+def pytest_sessionfinish(session, exitstatus):
+    """
+    Delete every window the tests left open while Python is still running.
+    Left to interpreter shutdown, Qt and Python free them in a random order,
+    which now and then crashed the run after all tests had passed.
+    """
+    import gc
+
+    from PySide6.QtCore import QCoreApplication, QEvent
+
+    for widget in QApplication.topLevelWidgets():
+        widget.hide()
+        widget.deleteLater()
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+    QApplication.processEvents()
+    gc.collect()
