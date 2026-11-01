@@ -78,7 +78,7 @@ def test_transparent_background_and_text_options(overlay) -> None:
         "overlay_align": "center",
         "overlay_counter_source": "total",
     })
-    assert overlay._death_label.text() == "12"  # no text before the number
+    assert overlay.count_text() == "12"  # no text before the number
     assert overlay._caption_label.isHidden()
     image = QImage(overlay.size(), QImage.Format.Format_ARGB32)
     image.fill(0)
@@ -86,7 +86,7 @@ def test_transparent_background_and_text_options(overlay) -> None:
     corner = image.pixelColor(2, 2)
     assert corner.alpha() <= 2  # no card: (almost) fully see-through, still clickable
     overlay.apply_display_settings({"overlay_count_label": "TRIES"})
-    assert overlay._death_label.text().startswith("TRIES - ")
+    assert overlay.count_text().startswith("TRIES - ")
 
 
 # ---------------------------------------------------------------- whole-display detection

@@ -20,8 +20,10 @@ from html import escape
 from pathlib import Path
 
 from PySide6.QtCore import (
+    QBuffer,
     QByteArray,
     QEvent,
+    QIODevice,
     QObject,
     QPoint,
     QPointF,
@@ -153,6 +155,7 @@ from src.ui.obs_guide_window import ObsGuideWindow
 from src.ui.report_window import ErrorLogWindow, ProblemCounter, ReportBugDialog
 from src.ui.session_history_window import SessionHistoryWindow
 from src.ui.settings_window import SettingsWindow
+from src.ui.skulls import skull_pixmap, tier_index
 from src.ui.statistics_window import StatisticsWindow
 from src.ui.theme_picker import ThemeDownload
 from src.ui.timer_window import RunHistoryDialog, SplitsDialog, TimerWindow
@@ -165,10 +168,12 @@ from src.ui.widgets import (
     ResponsiveGrid,
     StatTile,
     StatusPill,
+    Toast,
     UpdateCard,
     card,
     field,
     glow,
+    guard_wheel,
     nav_button,
     page_header,
     row,
@@ -182,6 +187,7 @@ from src.utils.constants import (
     APP_SHORT_NAME,
     APP_SUBTITLE,
     APP_VERSION,
+    BUG_SHEET_URL,
     CONTROL_ACTIONS,
     CREATOR_CHANNEL_URL,
     CREATOR_NAME,
@@ -210,6 +216,7 @@ from src.utils.constants import (
     SETTING_HOTKEY_UNDO,
     SETTING_LAST_BOSS_ID,
     SETTING_LAST_GAME_ID,
+    SETTING_LAST_PAGE,
     SETTING_MAIN_WINDOW_GEOMETRY,
     SETTING_MINI_GEOMETRY,
     SETTING_MINIMIZE_TO_TRAY,
@@ -226,10 +233,12 @@ from src.utils.constants import (
     SETTING_OVERLAY_GEOMETRY,
     SETTING_OVERLAY_LOCKED,
     SETTING_OVERLAY_SHOW_SKULL,
+    SETTING_OVERLAY_STATE,
     SETTING_PHONE_REMOTE,
     SETTING_PHONE_REMOTE_KEY,
     SETTING_QUICK_START_HIDDEN,
     SETTING_SIDEBAR_COLLAPSED,
+    SETTING_STREAM_OVERLAY,
     SETTING_THEME,
     SETTING_TIMER_AUTOSAVE,
     SETTING_TIMER_COMPARISON,
@@ -258,6 +267,7 @@ from src.utils.phone_remote import PhoneRemote, new_key
 from src.utils.platform_info import program_file_filter
 from src.utils.profiles import DEFAULT_PROFILE_NAME, ProfileManager
 from src.utils.screens import display_name, fit_to_screens, screen_index_at
+from src.utils.stream_overlay import StreamOverlay
 from src.utils.stream_writer import render_template, write_deaths_file
 from src.utils.update_checker import UpdateChecker
 from src.utils.updater import (
@@ -454,6 +464,12 @@ class MainWindow(QMainWindow):
         self._statistics_service = StatisticsService(self._database)
         self._overlay = OverlayWindow()
         self._overlay.menu_requested.connect(self._overlay_context_menu)
+        # "Hide From My Screen": the window is hidden but the overlay stays ON,
+        # so the stream page (OBS Browser Source) keeps showing it.
+        self._overlay_hidden_local = False
+        self._stream = StreamOverlay(self)
+        self._stream_skull_key: tuple = ()
+        self._last_snapshot: CounterSnapshot | None = None
         self._overlay.settings_requested.connect(self._open_overlay_settings)
         self._mini = MiniWindow()
         self._phone_remote = PhoneRemote(self)
@@ -494,6 +510,8 @@ class MainWindow(QMainWindow):
         self._build_menu()
         self._build_ui()
         self._problems.problem_logged.connect(self._on_problem_logged)
+        self._toast = Toast(self.centralWidget())
+        guard_wheel(self)  # scrolling a page never changes a drop-down or number box
         self._set_sidebar_collapsed(
             self._database.get_setting(SETTING_SIDEBAR_COLLAPSED, "false") == "true", save=False
         )
@@ -512,6 +530,11 @@ class MainWindow(QMainWindow):
         self._autosave_timer.timeout.connect(self._autosave)
         self._autosave_timer.start()
         self._last_progress_save = ""  # skip rewriting an unchanged auto-save
+        # A full save file shortly after any change (deaths are saved instantly anyway).
+        self._progress_soon = QTimer(self)
+        self._progress_soon.setSingleShot(True)
+        self._progress_soon.setInterval(15_000)
+        self._progress_soon.timeout.connect(self._write_progress_autosave)
         self._progress_timer = QTimer(self)
         self._progress_timer.setInterval(_PROGRESS_SAVE_MS)
         self._progress_timer.timeout.connect(self._write_progress_autosave)
@@ -526,6 +549,8 @@ class MainWindow(QMainWindow):
         self._refresh_downloaded_themes()
         if self._database.get_setting(SETTING_PHONE_REMOTE, "false") == "true":
             self._set_phone_remote(True)
+        if self._database.get_setting(SETTING_STREAM_OVERLAY, "false") == "true":
+            self._set_stream_overlay(True)
 
     def _update_window_title(self) -> None:
         profile = self._profile_manager.active_profile
@@ -551,6 +576,10 @@ class MainWindow(QMainWindow):
         self._menu_action(menu, "upload", "Load Save…", self._load_save)
         menu.addSeparator()
         self._menu_action(menu, "scroll-text", "Error Log…", self._open_error_log)
+        self._menu_action(
+            menu, "bug", "Bug Sheet (report or see known bugs)",
+            lambda: QDesktopServices.openUrl(QUrl(BUG_SHEET_URL)),
+        )
         menu.addSeparator()
         self._menu_action(menu, "info", "About", self._open_about_window)
         menu.addSeparator()
@@ -633,7 +662,11 @@ class MainWindow(QMainWindow):
         self._pages.currentChanged.connect(self._on_page_changed)
         self._page_timer = QTimer(self)  # live Timer page while it's showing
         self._page_timer.timeout.connect(self._refresh_timer_page)
-        self._show_page(_PAGE_HOME)
+        last_page = self._database.get_setting(SETTING_LAST_PAGE, "")
+        self._show_page(
+            int(last_page) if last_page.isdigit() and int(last_page) < _PAGE_SETTINGS
+            else _PAGE_HOME
+        )
 
     def _build_top_bar(self) -> QWidget:
         bar = QFrame()
@@ -661,6 +694,15 @@ class MainWindow(QMainWindow):
         self._page_badge = QLabel()
         self._page_badge.setObjectName("PageBadge")
         layout.addWidget(self._page_badge)
+        self._saved_label = QLabel()
+        self._saved_label.setObjectName("Muted")
+        self._saved_label.setToolTip(
+            "Everything saves by itself: each death the moment it happens, and a full save "
+            "file shortly after any change and when you close.\n"
+            "⋮ → Save Progress makes an extra copy wherever you like."
+        )
+        layout.addSpacing(12)
+        layout.addWidget(self._saved_label)
         layout.addStretch(1)
 
         self._profile_combo = QComboBox()
@@ -737,7 +779,7 @@ class MainWindow(QMainWindow):
             "Show or hide the overlay for OBS. Right-click the overlay for its options."
         )
         self._overlay_nav.clicked.connect(self._toggle_overlay)
-        self._overlay.visibility_changed.connect(self._overlay_nav.set_on)
+        self._overlay.visibility_changed.connect(self._on_overlay_shown)
         layout.addWidget(self._overlay_nav)
         self._nav_texts[self._overlay_nav] = "Overlay"
         for text, icon_name, handler, tip in (
@@ -1275,9 +1317,7 @@ class MainWindow(QMainWindow):
         self._watch_buttons.idClicked.connect(self._on_watch_source_changed)
         watch_layout.addLayout(watch_row)
         display_row = QHBoxLayout()
-        self._watch_display_combo = QComboBox()
-        for number, label in list_displays():
-            self._watch_display_combo.addItem(label, userData=number)
+        self._watch_display_combo = QComboBox()  # filled when the page first shows
         self._watch_display_combo.activated.connect(self._on_watch_display_picked)
         self._watch_exe_btn = QPushButton(" Change .exe…")
         self._watch_exe_btn.setObjectName("GhostButton")
@@ -1681,6 +1721,28 @@ class MainWindow(QMainWindow):
         self._nav_buttons[index].setChecked(True)
         self._page_badge.setText(_PAGE_NAMES[index])
 
+    def _on_settings_saved(self, before: dict[str, str]) -> None:
+        self._toast.show_message(
+            "Your settings are saved", "Undo", lambda: self._undo_settings(before)
+        )
+
+    def _undo_settings(self, before: dict[str, str]) -> None:
+        """Put back the settings from before the last save."""
+        db = self._database
+        now = db.get_all_settings()
+        for key, value in before.items():
+            if now.get(key) != value:
+                db.set_setting(key, value)
+        self._on_settings_changed()
+        if self._settings is not None:
+            self._settings.reload()
+        self._toast.show_message("Settings put back as they were", seconds=3, icon="undo-2")
+
+    def resizeEvent(self, event) -> None:  # noqa: N802 - keep the toast at the bottom
+        super().resizeEvent(event)
+        if self._toast.isVisible():
+            self._toast._place()
+
     def _leave_settings(self) -> bool:
         """Unsaved settings: save them, drop them, or stay (False)."""
         settings = self._settings
@@ -1717,6 +1779,7 @@ class MainWindow(QMainWindow):
             )
             self._settings.settings_changed.connect(self._on_settings_changed)
             self._settings.preview_changed.connect(self._preview_appearance)
+            self._settings.saved.connect(self._on_settings_saved)
             self._settings_host.layout().addWidget(self._settings)
         return self._settings
 
@@ -1837,6 +1900,9 @@ class MainWindow(QMainWindow):
                 "<b>+ Add game from .exe…</b> or <b>+ Add game without .exe…</b>"
             )
             return
+        if not self._watch_display_combo.count():  # listing displays takes a moment
+            for number, label in list_displays():
+                self._watch_display_combo.addItem(label, userData=number)
         display = self._screen_display(game_id)
         detection = self._database.get_game_detection(game_id)
         has_exe = detection is not None and bool(detection["exe_path"])
@@ -1880,6 +1946,7 @@ class MainWindow(QMainWindow):
     # ----------------------------------------------------------------
     def _build_tray(self) -> None:
         self._tray: QSystemTrayIcon | None = None
+        self._tray_overlay_action: QAction | None = None
         self._click_through_action: QAction | None = None
         if not QSystemTrayIcon.isSystemTrayAvailable():
             logger.info("System tray unavailable on this platform")
@@ -1913,7 +1980,7 @@ class MainWindow(QMainWindow):
         overlay_action = menu.addAction("Overlay")
         overlay_action.setCheckable(True)
         overlay_action.triggered.connect(lambda _=False: self._toggle_overlay())
-        self._overlay.visibility_changed.connect(overlay_action.setChecked)
+        self._tray_overlay_action = overlay_action
         self._add_display_menu(menu)
         # The overlay can't be right-clicked while click-through is on: turn it off here.
         self._click_through_action = menu.addAction("Overlay Click-Through")
@@ -2348,6 +2415,7 @@ class MainWindow(QMainWindow):
     def _save_death_template(self, game_id: int, template: DeathTemplate) -> None:
         """Store a new death screen and turn detection on for the game if needed."""
         self._database.add_death_template(game_id, template.region_json(), template.patch_bytes())
+        self._toast.say("Death screen saved: it counts deaths from now on", icon="camera")
         row = self._database.get_game_detection(game_id)
         exe_path = row["exe_path"] if row is not None else None
         if row is None or row["mode"] == DETECTION_MODE_OFF:
@@ -2532,6 +2600,14 @@ class MainWindow(QMainWindow):
         self._timer_window.restore_geometry_string(settings.get(SETTING_TIMER_GEOMETRY, ""))
         self._timer_window.setVisible(settings.get(SETTING_TIMER_VISIBLE, "false") == "true")
         self._overlay.restore_geometry_string(settings.get(SETTING_OVERLAY_GEOMETRY, ""))
+        # On, behind the windows, or off, as this profile left it.
+        state = settings.get(SETTING_OVERLAY_STATE, "off")
+        if state == "behind" and not self._overlay_hidden_local:
+            QTimer.singleShot(0, lambda: self._hide_overlay_from_screen(announce=False))
+        elif state == "on" and (self._overlay_hidden_local or not self._overlay.isVisible()):
+            QTimer.singleShot(0, self._restore_overlay_window)
+        elif state not in ("on", "behind") and self._overlay_active():
+            self._turn_overlay_off()
 
     def _apply_appearance(self, settings: dict[str, str]) -> None:
         """Theme, colors, fonts and backgrounds of every window (also the Settings preview)."""
@@ -2570,15 +2646,17 @@ class MainWindow(QMainWindow):
         self._refresh_theme_icons(settings.get(SETTING_UI_COUNTER_COLOR, "") or info.accent)
         self._refresh_artwork(settings)
         self._overlay.apply_display_settings(settings)
+        self._push_stream_state()
         self._timer_window.apply_display_settings(settings)
         self._mini.apply_display_settings(settings)
-        self._overlay.set_always_on_top(
-            settings.get(SETTING_OVERLAY_ALWAYS_ON_TOP, "true") == "true"
-        )
+        if not self._overlay_hidden_local:  # behind the windows: it stays as it is
+            self._overlay.set_always_on_top(
+                settings.get(SETTING_OVERLAY_ALWAYS_ON_TOP, "true") == "true"
+            )
+            self._overlay.set_click_through(
+                settings.get(SETTING_OVERLAY_CLICK_THROUGH, "false") == "true"
+            )
         self._overlay.set_locked(settings.get(SETTING_OVERLAY_LOCKED, "false") == "true")
-        self._overlay.set_click_through(
-            settings.get(SETTING_OVERLAY_CLICK_THROUGH, "false") == "true"
-        )
         if self._click_through_action is not None:
             self._click_through_action.setChecked(
                 settings.get(SETTING_OVERLAY_CLICK_THROUGH, "false") == "true"
@@ -2617,7 +2695,8 @@ class MainWindow(QMainWindow):
         if error:
             logger.info("Couldn't refresh theme '%s': %s", name, error)
         elif self._database.get_setting(SETTING_THEME, "dark") == name:
-            self._apply_saved_settings()
+            # Only the look: the windows stay where the player has them now.
+            self._apply_appearance(self._database.get_all_settings())
 
     def _maybe_check_updates(self) -> None:
         """Check now and every few hours (if enabled); the sidebar card shows the result."""
@@ -2817,14 +2896,19 @@ class MainWindow(QMainWindow):
 
     def _refresh_home(self) -> None:
         """The guide's checklist, the banner, and (while Home shows) the greeting and charts."""
-        status = self._quick_start_status()
-        if self._guide is not None:
-            self._guide.set_status(status)
-        remaining = [title for key, title in STEPS if not status[key]]
         hidden = self._database.get_setting(SETTING_QUICK_START_HIDDEN, "false") == "true"
-        if remaining and not hidden:
-            self._start_banner.set_progress(len(STEPS) - len(remaining), len(STEPS), remaining[0])
-        self._start_banner.setVisible(bool(remaining) and not hidden)
+        if self._guide is not None or not hidden:  # someone shows the checklist: check it
+            status = self._quick_start_status()
+            if self._guide is not None:
+                self._guide.set_status(status)
+            remaining = [title for key, title in STEPS if not status[key]]
+            if remaining and not hidden:
+                self._start_banner.set_progress(
+                    len(STEPS) - len(remaining), len(STEPS), remaining[0]
+                )
+            self._start_banner.setVisible(bool(remaining) and not hidden)
+        else:
+            self._start_banner.setVisible(False)
         if self._pages.currentIndex() != _PAGE_HOME:
             return
 
@@ -3044,6 +3128,7 @@ class MainWindow(QMainWindow):
         self._artwork.pop(game_id, None)
         self._turn_artwork_on()
         self._refresh_artwork()
+        self._toast.say("Artwork set", icon="image")
 
     def _find_artwork_on_steam(self) -> None:
         game_id = self._counter_manager.current_game_id
@@ -3066,6 +3151,8 @@ class MainWindow(QMainWindow):
         artwork.cached_path(game_id, self._artwork_folder()).unlink(missing_ok=True)
         self._artwork.pop(game_id, None)
         self._refresh_artwork()
+        self._toast.say("Updating the artwork…" if self._artwork_wanted else "Artwork removed",
+                        icon="image")
 
     def _boss_context_menu(self, position) -> None:
         boss_id = self._counter_manager.current_boss_id
@@ -3096,6 +3183,7 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Could Not Rename", f"{exc}\n\nIs the name already used?")
             return
         self._reload_games(select_game_id=game_id)
+        self._toast.say(f"Game renamed to {name.strip()}", icon="pencil")
 
     def _rename_current_boss(self) -> None:
         boss_id = self._counter_manager.current_boss_id
@@ -3111,6 +3199,7 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Could Not Rename", f"{exc}\n\nIs the name already used?")
             return
         self._reload_bosses(self._counter_manager.current_game_id)
+        self._toast.say(f"Boss renamed to {name.strip()}", icon="pencil")
 
     def _set_boss_defeated(self, defeated: bool) -> None:
         boss_id = self._counter_manager.current_boss_id
@@ -3119,6 +3208,8 @@ class MainWindow(QMainWindow):
         self._database.set_boss_defeated(boss_id, defeated)
         self._reload_bosses(self._counter_manager.current_game_id)
         self._configure_detection()  # victory watching follows defeated state
+        self._toast.say("Boss marked beaten" if defeated else "Boss marked not beaten",
+                        icon="trophy")
 
     # ----------------------------------------------------------------
     # Profiles
@@ -3163,6 +3254,7 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Could not create profile", str(exc))
             return
         self._rebuild_profile_menu()
+        self._toast.say(f"Profile created: {name.strip()}", icon="users")
         switch = QMessageBox.question(
             self, "Switch Profile", f"Switch to '{name.strip()}' now?"
         )
@@ -3322,7 +3414,8 @@ class MainWindow(QMainWindow):
 
     def _apply_counted(self, action: Callable[[], CounterSnapshot]) -> None:
         """Run a +1/-1/undo and pass the change on to a speedrun in progress."""
-        before = self._counter_manager.get_snapshot().session_deaths
+        # Only a speedrun needs the count from before (a full snapshot is 3 queries).
+        before = self._session_manager.get_session_deaths() if self._speedrun is not None else 0
         snapshot = action()
         if self._speedrun is not None:
             self._speedrun.add_deaths(
@@ -3342,6 +3435,7 @@ class MainWindow(QMainWindow):
         )
         if confirm == QMessageBox.StandardButton.Yes:
             self._apply_snapshot(self._counter_manager.reset_session())
+            self._toast.say("New session started at 0", icon="rotate-ccw")
 
     def _on_reset_total(self) -> None:
         confirm = QMessageBox.question(
@@ -3352,6 +3446,7 @@ class MainWindow(QMainWindow):
         )
         if confirm == QMessageBox.StandardButton.Yes:
             self._apply_snapshot(self._counter_manager.reset_total())
+            self._toast.say("All-time total set to 0", icon="trash-2")
 
     def _on_set_count(self) -> None:
         if self._counter_manager.current_game_id is None:
@@ -3379,6 +3474,7 @@ class MainWindow(QMainWindow):
             self._apply_snapshot(self._counter_manager.set_session_count(target))
         else:
             self._apply_snapshot(self._counter_manager.set_total_count(target))
+        self._toast.say(f"{which} set to {target}", icon="pencil")
 
     def _show_counter_source_menu(self) -> None:
         current = self._database.get_setting(SETTING_OVERLAY_COUNTER_SOURCE, DEFAULT_COUNTER_SOURCE)
@@ -3466,6 +3562,134 @@ class MainWindow(QMainWindow):
             detection=self._detect_status_label.text(),
         )
         self._write_deaths_txt(snapshot)
+        self._last_snapshot = snapshot
+        self._push_stream_state()
+        if hasattr(self, "_progress_soon"):
+            self._progress_soon.start()
+
+    # Stream overlay (OBS Browser Source) ----------------------------------
+    def _set_stream_overlay(self, on: bool) -> str:
+        """Serve the stream page (or stop it); returns its link ("" when off)."""
+        self._database.set_setting(SETTING_STREAM_OVERLAY, "true" if on else "false")
+        if not on:
+            self._stream.stop()
+            return ""
+        try:
+            self._stream.start()
+        except OSError as exc:
+            QMessageBox.warning(self, "Stream Overlay", f"Couldn't start it: {exc}")
+            return ""
+        self._push_stream_state()
+        return self._stream.url()
+
+    def _overlay_active(self) -> bool:
+        return self._overlay.isVisible() or self._overlay_hidden_local
+
+    def _push_stream_state(self) -> None:
+        """What the OBS page shows: the overlay window's content and look."""
+        if not self._stream.running:
+            return
+        overlay = self._overlay
+        settings = self._database.get_all_settings()
+        number = getattr(overlay, "_big_number", 0)
+        size = overlay._font_size
+        mode = settings.get(SETTING_OVERLAY_BG_MODE, "dark")
+        card = ""
+        if mode == "dark":
+            color = QColor(overlay._card_color)
+            card = f"rgba({color.red()},{color.green()},{color.blue()},{overlay._opacity:.2f})"
+        secondary = "#dddddd" if mode == "chroma" else overlay.secondary_color()
+        skull_px = round(size * overlay._skull_size / 100)
+        skull_key = (tier_index(number), overlay._text_color, skull_px)
+        skull_png = None
+        if skull_key != self._stream_skull_key:
+            self._stream_skull_key = skull_key
+            art = skull_pixmap(number, skull_px, "#ececf1", overlay._text_color, 2.0)
+            data = QByteArray()
+            buffer = QBuffer(data)
+            buffer.open(QIODevice.OpenModeFlag.WriteOnly)
+            art.toImage().save(buffer, "PNG")
+            skull_png = bytes(data)
+        self._stream.set_state(
+            {
+                "active": self._overlay_active(),
+                "number": number,
+                "count_html": overlay._count_style.html(number, size),
+                "game": overlay._game_label.text(),
+                "boss": overlay._boss_label.text(),
+                "caption": overlay._caption_label.text(),
+                "stats": overlay._stats_label.text(),
+                "show": {
+                    "game": overlay._show_game,
+                    "boss": overlay._show_boss,
+                    "caption": overlay._show_caption,
+                    "stats": overlay._show_stats,
+                    "skull": overlay._show_skull,
+                },
+                "align": overlay._align,
+                "font": overlay._font_family,
+                "bold": overlay._count_style.bold,
+                "spacing": overlay._count_style.letter_spacing,
+                "secondary": secondary,
+                "card": card,
+                "radius": overlay._corner_radius,
+                "padding": overlay._padding,
+                "shadow": overlay._text_outline,
+                "skull": f"{skull_key[0]}-{skull_px}-{overlay._text_color.lstrip('#')}",
+                "skull_px": skull_px,
+                "animate": True,
+            },
+            skull_png,
+        )
+
+    def _on_overlay_shown(self, visible: bool) -> None:
+        on = visible or self._overlay_hidden_local
+        self._overlay_nav.set_on(on)
+        if self._tray_overlay_action is not None:
+            self._tray_overlay_action.setChecked(on)
+        self._push_stream_state()
+
+    def _hide_overlay_from_screen(self, announce: bool = True) -> None:
+        """
+        Out of the player's way, still live on stream. A hidden window can't be
+        captured (OBS froze on its last frame, so the count seemed to stop), so
+        it stays open behind every other window (your game covers it) and lets
+        clicks through; OBS's Window Capture keeps capturing it, and the
+        Browser Source page shows it too.
+        """
+        if not self._overlay.isVisible():
+            self._overlay.show()
+        self._overlay_hidden_local = True
+        self._overlay.set_always_on_top(False)
+        self._overlay.set_click_through(True)
+        self._overlay.lower()
+        self._stream.url() or self._set_stream_overlay(True)
+        self._database.set_setting(SETTING_OVERLAY_STATE, "behind")
+        self._on_overlay_shown(True)
+        if announce:
+            self._toast.show_message(
+                "Overlay moved behind your windows: still live on stream", "Bring Back",
+                self._toggle_overlay, seconds=6, icon="eye-off",
+            )
+
+    def _restore_overlay_window(self) -> None:
+        """Back in front, with the player's own on-top and click-through choices."""
+        self._overlay_hidden_local = False
+        settings = self._database.get_all_settings()
+        self._overlay.set_always_on_top(
+            settings.get(SETTING_OVERLAY_ALWAYS_ON_TOP, "true") == "true"
+        )
+        self._overlay.set_click_through(
+            settings.get(SETTING_OVERLAY_CLICK_THROUGH, "false") == "true"
+        )
+        self._overlay.show()
+        self._overlay.raise_()
+
+    def _turn_overlay_off(self) -> None:
+        self._overlay_hidden_local = False
+        self._overlay.hide()
+        self._database.set_setting(SETTING_OVERLAY_STATE, "off")
+        self._on_overlay_shown(False)
 
     def _deaths_txt_path(self) -> Path:
         raw_path = self._database.get_setting(SETTING_DEATHS_TXT_PATH, "").strip()
@@ -3525,6 +3749,7 @@ class MainWindow(QMainWindow):
             logger.warning("Auto-save failed: %s", exc)
             return None
         self._last_progress_save = stamp
+        self._saved_label.setText(f"✓ Auto-saved {datetime.now():%H:%M}")
         return path
 
     def _save_progress(self) -> None:
@@ -3543,9 +3768,10 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Save Failed", str(exc))
             return
         self._write_progress_autosave()
-        QMessageBox.information(
-            self, "Progress Saved",
-            f"Saved to:\n{path}\n\nLoad Save… brings back this session and run.",
+        self._toast.show_message(
+            f"Progress saved: {Path(path).name}", "Show",
+            lambda: QDesktopServices.openUrl(QUrl.fromLocalFile(str(Path(path).parent))),
+            seconds=6, icon="save",
         )
 
     def _load_save(self) -> None:
@@ -3650,6 +3876,7 @@ class MainWindow(QMainWindow):
             return
         self._database.clear_all_data()
         self._reload_games()
+        self._toast.say("All games, bosses and deaths of this profile deleted", icon="trash-2")
 
     # ----------------------------------------------------------------
     # Window / dialog actions
@@ -3657,7 +3884,7 @@ class MainWindow(QMainWindow):
     def _open_boss_window(self) -> None:
         dialog = BossWindow(self._database, parent=self)
         dialog.exec()
-        self._reload_games()
+        self._reload_games(select_game_id=self._counter_manager.current_game_id)
 
     def _open_auto_detect_window(self) -> None:
         game_id = self._counter_manager.current_game_id
@@ -3671,7 +3898,8 @@ class MainWindow(QMainWindow):
             recent_frames=self._death_watcher.recent_frames,
             parent=self,
         )
-        dialog.exec()
+        if dialog.exec() == AutoDetectWindow.DialogCode.Accepted:
+            self._toast.say("Detection settings saved", icon="scan-eye")
         self._configure_detection()
 
     def _open_death_log(self) -> None:
@@ -3738,8 +3966,16 @@ class MainWindow(QMainWindow):
             deaths_txt_path=self._deaths_txt_path(),
             show_overlay_green=self._show_overlay_for_obs,
             enable_deaths_txt=self._enable_deaths_txt,
+            enable_stream=self._enable_stream_for_obs,
             parent=self,
         ).exec()
+
+    def _enable_stream_for_obs(self) -> str:
+        """OBS Setup's Browser Source: serve the page and make sure the overlay is ON."""
+        url = self._stream.url() or self._set_stream_overlay(True)
+        if url and not self._overlay_active():
+            self._hide_overlay_from_screen()  # ON for the stream, not in the player's way
+        return url
 
     def _show_overlay_for_obs(self) -> None:
         """Green-screen background (for OBS's Chroma Key) and make the overlay visible."""
@@ -3753,6 +3989,7 @@ class MainWindow(QMainWindow):
         """Turn on deaths.txt output and write it immediately so OBS can find it."""
         self._database.set_setting(SETTING_DEATHS_TXT_ENABLED, "true")
         self._refresh_counters()
+        self._toast.say("deaths.txt is on: it updates on every death")
 
     def _on_settings_changed(self) -> None:
         self._apply_appearance(self._database.get_all_settings())
@@ -3771,9 +4008,17 @@ class MainWindow(QMainWindow):
         self._update_hotkey_labels(bindings, pads)
 
     def _toggle_overlay(self) -> None:
-        self._overlay.toggle_visibility()
-        if self._overlay.isVisible():
-            self._overlay.keep_on_screen()
+        if self._overlay_hidden_local:  # behind other windows: bring it back in front
+            self._restore_overlay_window()
+        elif self._overlay.isVisible():
+            self._turn_overlay_off()
+            return
+        else:
+            self._overlay.show()
+            self._overlay.raise_()
+        self._overlay.keep_on_screen()
+        self._database.set_setting(SETTING_OVERLAY_STATE, "on")
+        self._on_overlay_shown(True)
 
     def _overlay_context_menu(self, position: QPoint) -> None:
         """The overlay's right-click menu: count, change its look, place it."""
@@ -3846,7 +4091,11 @@ class MainWindow(QMainWindow):
         self._add_display_menu(menu)
         menu.addSeparator()
         self._menu_action(menu, "settings", "Overlay Settings…", self._open_overlay_settings)
-        self._menu_action(menu, "eye-off", "Hide Overlay", self._toggle_overlay)
+        self._menu_action(
+            menu, "eye-off", "Hide From My Screen (stays on stream)",
+            self._hide_overlay_from_screen,
+        )
+        self._menu_action(menu, "power", "Turn Overlay Off", self._turn_overlay_off)
         menu.exec(position)
         del self._menu_icons[self._menu_icons_before:]  # this menu is gone
 
@@ -3982,6 +4231,10 @@ class MainWindow(QMainWindow):
         self._timer_window.refresh()
 
     def _notify(self, message: str, msecs: int = 5000) -> None:
+        """In the window when it's showing; otherwise as a tray message."""
+        if hasattr(self, "_toast") and self.isVisible() and not self.isMinimized():
+            self._toast.say(message, seconds=max(3, msecs // 1000), icon="info")
+            return
         if self._tray is not None:
             self._tray.showMessage(
                 APP_BRAND, message, QSystemTrayIcon.MessageIcon.Information, msecs
@@ -4259,10 +4512,15 @@ class MainWindow(QMainWindow):
             )
             return
 
+        if self._pages.currentIndex() == _PAGE_SETTINGS and not self._leave_settings():
+            event.ignore()  # Cancel on "Save your changes to Settings?"
+            self._quitting = False
+            return
         if not self._confirm_close():
             event.ignore()
             self._quitting = False
             return
+        self._database.set_setting(SETTING_LAST_PAGE, str(self._pages.currentIndex()))
         self._write_progress_autosave()  # covers quitting without the question too
         self._end_speedrun()
         self._database.set_setting(SETTING_OVERLAY_GEOMETRY, self._overlay.geometry_string())
@@ -4274,9 +4532,11 @@ class MainWindow(QMainWindow):
         self._hotkey_manager.stop()
         self._gamepad_manager.stop()
         self._phone_remote.stop()
+        self._stream.stop()
         self._autosave_timer.stop()
         self._problems.close()
         self._progress_timer.stop()
+        self._progress_soon.stop()
         self._home_refresh.stop()  # it reads the database being closed
         self._recovery_timer.stop()
         self._game_launch_timer.stop()  # it reads the database being closed

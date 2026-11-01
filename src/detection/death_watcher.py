@@ -59,6 +59,9 @@ _BLACK_SECONDS: float = 5.0
 # Between full captures only the parts the matchers read are captured; a
 # full frame still comes this often (recent frames, the black-capture hint).
 _FULL_FRAME_INTERVAL: float = 1.0
+# Once a death screen is taught, a full frame (a 1440p one costs ~40 ms) is
+# only needed for the recent frames and the black-capture hint: half as often.
+_FULL_FRAME_INTERVAL_MATCHING: float = 2.0
 
 
 # What the game is doing, reported for the speedrun timer's auto-pause.
@@ -335,7 +338,10 @@ class DeathWatcher(QObject):
                 on_screen = desktop_clip(sct, rect) == rect
                 if regions is None or not on_screen or now >= next_full:
                     frame = grab_rect(sct, rect)
-                    next_full = now + _FULL_FRAME_INTERVAL
+                    next_full = now + (
+                        _FULL_FRAME_INTERVAL if config.matcher is None
+                        else _FULL_FRAME_INTERVAL_MATCHING
+                    )
                     if now >= next_recent:
                         next_recent = now + _RECENT_FRAME_INTERVAL
                         step = max(1, math.ceil(frame.shape[1] / _RECENT_FRAME_MAX_WIDTH))

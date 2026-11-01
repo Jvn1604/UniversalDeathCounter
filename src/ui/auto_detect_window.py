@@ -42,6 +42,7 @@ from src.database.database import SCREEN_DEATH, SCREEN_PAUSE, SCREEN_VICTORY, Da
 from src.detection.game_window import capture_hint, detection_available, list_displays
 from src.detection.log_watcher import compile_death_pattern, scan_log
 from src.detection.matchers import SOULS_PRESET_EXES, DeathTemplate, HealthBar, Region
+from src.ui.widgets import guard_wheel
 from src.utils.constants import (
     DETECTION_MODE_HEALTH,
     DETECTION_MODE_LOG,
@@ -406,6 +407,7 @@ class AutoDetectWindow(QDialog):
         self.setMinimumWidth(560)
         self._build_ui()
         self._load_current_values()
+        guard_wheel(self)
 
     @staticmethod
     def _hint(text: str) -> QLabel:

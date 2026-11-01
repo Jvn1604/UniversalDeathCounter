@@ -155,6 +155,21 @@ SETTING_OVERLAY_COUNT_LABEL: str = "overlay_count_label"  # text before the numb
 SETTING_OVERLAY_ALIGN: str = "overlay_align"  # left | center | right
 SETTING_OVERLAY_BORDER: str = "overlay_border"  # thin outline around the card
 SETTING_OVERLAY_CLICK_THROUGH: str = "overlay_click_through"  # clicks go to the game
+SETTING_OVERLAY_SEPARATOR: str = "overlay_separator"  # between word and number ("" = none)
+SETTING_OVERLAY_WORD_COLOR: str = "overlay_word_color"  # "" = the number's colour
+SETTING_OVERLAY_WORD_AFTER: str = "overlay_word_after"  # "12 DEATHS" instead of "DEATH - 12"
+SETTING_OVERLAY_WORD_SIZE: str = "overlay_word_size"  # % of the number's size
+SETTING_OVERLAY_NUMBER_BOLD: str = "overlay_number_bold"
+SETTING_OVERLAY_LETTER_SPACING: str = "overlay_letter_spacing"  # px
+SETTING_OVERLAY_PADDING: str = "overlay_padding"  # px inside the card
+SETTING_OVERLAY_SKULL_SIZE: str = "overlay_skull_size"  # % of the number's size
+SETTING_OVERLAY_STATE: str = "overlay_state"  # on | off | behind (kept between starts)
+SETTING_LAST_PAGE: str = "last_page"  # the page open when the app closed
+BUG_SHEET_URL: str = (
+    "https://docs.google.com/spreadsheets/d/1pvzlu8mhHzvvKCHb-E5NDlmtqT-gW0ZHRZUMq2xmtaw/"
+    "edit?usp=sharing"
+)
+SETTING_STREAM_OVERLAY: str = "stream_overlay"  # "true" = OBS Browser Source page is served
 # Console players
 SETTING_PHONE_REMOTE: str = "phone_remote_enabled"  # "true" = serve the phone page
 SETTING_PHONE_REMOTE_KEY: str = "phone_remote_key"  # secret part of the phone link
@@ -294,6 +309,15 @@ DEFAULT_SETTINGS: dict[str, str] = {
     SETTING_OVERLAY_ALIGN: "left",
     SETTING_OVERLAY_BORDER: "true",
     SETTING_OVERLAY_CLICK_THROUGH: "false",
+    SETTING_OVERLAY_SEPARATOR: "-",
+    SETTING_OVERLAY_WORD_COLOR: "",
+    SETTING_OVERLAY_WORD_AFTER: "false",
+    SETTING_OVERLAY_WORD_SIZE: "100",
+    SETTING_OVERLAY_NUMBER_BOLD: "true",
+    SETTING_OVERLAY_LETTER_SPACING: "0",
+    SETTING_OVERLAY_PADDING: "16",
+    SETTING_OVERLAY_SKULL_SIZE: "150",
+    SETTING_STREAM_OVERLAY: "false",
     SETTING_GAME_ARTWORK: "false",
     SETTING_DEATHS_TXT_ENABLED: "false",
     SETTING_DEATHS_TXT_PATH: "",  # empty = SAVES_DIR/deaths.txt

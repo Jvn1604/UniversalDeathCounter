@@ -119,7 +119,7 @@ def test_big_number_can_count_deaths_this_run(window) -> None:
     window._on_increment()
     window._on_increment()
     assert window._counter_label.text() == "2"
-    assert window._overlay._death_label.text() == "DEATH - 2"
+    assert window._overlay.count_text() == "DEATH - 2"
     assert window._overlay._caption_label.text().startswith("THIS RUN")
     assert window._mini._count.text() == "2"
     window._action_handlers["timer_reset"]()

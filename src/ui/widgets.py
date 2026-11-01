@@ -8,7 +8,7 @@ colors and fonts apply to them automatically.
 
 from __future__ import annotations
 
-from PySide6.QtCore import QRectF, Qt, QUrl, Signal
+from PySide6.QtCore import QEvent, QObject, QRectF, Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import (
     QColor,
     QDesktopServices,
@@ -19,6 +19,10 @@ from PySide6.QtGui import (
     QPixmap,
 )
 from PySide6.QtWidgets import (
+    QAbstractScrollArea,
+    QAbstractSpinBox,
+    QApplication,
+    QComboBox,
     QFrame,
     QGraphicsDropShadowEffect,
     QGridLayout,
@@ -26,6 +30,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QPushButton,
     QSizePolicy,
+    QSlider,
     QVBoxLayout,
     QWidget,
 )
@@ -530,6 +535,121 @@ class ResponsiveGrid(QWidget):
                 row, column = row + 1, 0
         for column in range(self._columns):
             grid.setColumnStretch(column, 1)
+
+
+class _WheelGuard(QObject):
+    """
+    The mouse wheel scrolls the page, not the box under the pointer: a value
+    only changes by wheel once its box was clicked (has focus).
+    """
+
+    def eventFilter(self, watched: QObject, event: QEvent) -> bool:  # noqa: N802
+        if event.type() == QEvent.Type.Wheel and not watched.hasFocus():
+            parent = watched.parentWidget()
+            while parent is not None and not isinstance(parent, QAbstractScrollArea):
+                parent = parent.parentWidget()
+            if parent is not None:
+                QApplication.sendEvent(parent.verticalScrollBar(), event)
+            return True
+        return False
+
+
+_WHEEL_GUARD = _WheelGuard()
+
+
+def guard_wheel(root: QWidget) -> None:
+    """Stop scrolling from changing the drop-downs, number boxes and sliders under ``root``."""
+    for kind in (QComboBox, QAbstractSpinBox, QSlider):
+        for widget in root.findChildren(kind):
+            if widget.property("wheelGuard"):
+                continue
+            widget.setProperty("wheelGuard", True)
+            widget.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+            widget.installEventFilter(_WHEEL_GUARD)
+
+
+class Toast(QFrame):
+    """
+    A short message at the bottom of the window, with an optional action
+    (e.g. "Undo") that counts down and then disappears.
+    """
+
+    def __init__(self, parent: QWidget, bottom: int = 84) -> None:
+        super().__init__(parent)
+        self._bottom = bottom  # gap to the parent's bottom edge
+        self.setObjectName("Toast")
+        self.setStyleSheet(
+            "QFrame#Toast { background-color: rgba(22, 24, 30, 0.97); border-radius: 14px;"
+            " border: 1px solid rgba(255, 255, 255, 0.16); }"
+            "QFrame#Toast QLabel { color: #f2f2f5; font-size: 13px; font-weight: 600;"
+            " background: transparent; }"
+            "QFrame#Toast QPushButton { color: #ffffff; background-color: rgba(255,255,255,0.12);"
+            " border: 1px solid rgba(255,255,255,0.25); border-radius: 9px; padding: 5px 14px;"
+            " font-weight: 700; }"
+            "QFrame#Toast QPushButton:hover { background-color: rgba(255,255,255,0.22); }"
+        )
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(16, 10, 10, 10)
+        layout.setSpacing(14)
+        self._icon = QLabel()
+        self._text = QLabel()
+        self.action = QPushButton()
+        self.action.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.action.clicked.connect(self._act)
+        layout.addWidget(self._icon)
+        layout.addWidget(self._text, 1)
+        layout.addWidget(self.action)
+        self._callback = None
+        self._action_text = ""
+        self._left = 0
+        self._timer = QTimer(self)
+        self._timer.setInterval(1000)
+        self._timer.timeout.connect(self._tick)
+        self.hide()
+
+    def show_message(
+        self, text: str, action: str = "", callback=None, seconds: int = 5, icon: str = "check"
+    ) -> None:
+        self._text.setText(text)
+        self._icon.setPixmap(icons.pixmap(icon, "#3ad07a", 18))
+        self._callback, self._action_text, self._left = callback, action, seconds
+        self.action.setVisible(bool(action))
+        self._update_action()
+        self.adjustSize()
+        self._place()
+        self.show()
+        self.raise_()
+        self._timer.start()
+
+    def _update_action(self) -> None:
+        self.action.setText(f"{self._action_text} ({self._left})")
+
+    def say(self, text: str, seconds: int = 4, icon: str = "check") -> None:
+        """A message on its own (no button)."""
+        self.show_message(text, seconds=seconds, icon=icon)
+
+    def _tick(self) -> None:
+        self._left -= 1
+        if self._left <= 0:
+            self._timer.stop()
+            self.hide()
+            self._callback = None
+            return
+        self._update_action()
+
+    def _act(self) -> None:
+        callback, self._callback = self._callback, None
+        self._timer.stop()
+        self.hide()
+        if callback is not None:
+            callback()
+
+    def _place(self) -> None:
+        parent = self.parentWidget()
+        width = min(max(self.sizeHint().width(), 320), parent.width() - 40)
+        self.resize(width, self.sizeHint().height())
+        # The main window's default clears the Settings page's Save bar.
+        self.move((parent.width() - width) // 2, parent.height() - self.height() - self._bottom)
 
 
 def page_header(title: str, subtitle: str = "") -> QWidget:

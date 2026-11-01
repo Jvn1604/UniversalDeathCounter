@@ -24,6 +24,7 @@ from PySide6.QtWidgets import (
 
 from src.database.database import Database
 from src.ui.session_history_window import SessionHistoryWindow
+from src.ui.widgets import Toast
 from src.utils.game_templates import add_template_bosses, get_template, get_template_names
 from src.utils.logger import get_logger
 
@@ -50,6 +51,7 @@ class BossWindow(QDialog):
         self.setWindowTitle("Manage Games & Bosses")
         self.setMinimumSize(640, 460)
         self._build_ui()
+        self._toast = Toast(self, bottom=20)
         self._reload_games()
 
     # ----------------------------------------------------------------
@@ -166,6 +168,9 @@ class BossWindow(QDialog):
             return
         self._database.set_boss_defeated(boss_id, not bool(boss["defeated"]))
         self._reload_bosses()
+        self._toast.say(
+            f"{boss['name']} marked {'not ' if boss['defeated'] else ''}beaten"
+        )
 
     # ----------------------------------------------------------------
     # Event handlers — Games
@@ -184,6 +189,7 @@ class BossWindow(QDialog):
             QMessageBox.warning(self, "Could not create game", str(exc))
             return
         self._reload_games()
+        self._toast.say(f"Game added: {name.strip()}")
 
     def _rename_game(self) -> None:
         item = self._games_list.currentItem()
@@ -198,6 +204,7 @@ class BossWindow(QDialog):
             QMessageBox.warning(self, "Could not rename game", str(exc))
             return
         self._reload_games()
+        self._toast.say(f"Game renamed to {new_name.strip()}")
 
     def _delete_game(self) -> None:
         item = self._games_list.currentItem()
@@ -215,10 +222,12 @@ class BossWindow(QDialog):
         )
         if confirm != QMessageBox.StandardButton.Yes:
             return
+        name = item.text()
         self._database.delete_game(game_id)
         self._selected_game_id = None
         self._reload_games()
         self._reload_bosses()
+        self._toast.say(f"Game deleted: {name}", icon="trash-2")
 
     def _what_goes(self, game_id: int) -> str:
         """What deleting a game removes, in numbers (e.g. "This removes 412 deaths, …")."""
@@ -252,9 +261,7 @@ class BossWindow(QDialog):
         _game_id, added = add_template_bosses(self._database, template)
 
         self._reload_games()
-        QMessageBox.information(
-            self, "Template Added", f"Added '{game_name}' with {added} new boss(es)."
-        )
+        self._toast.say(f"Added {game_name} with {added} new boss{'' if added == 1 else 'es'}")
 
     def _open_session_history(self) -> None:
         if self._selected_game_id is None:
@@ -279,6 +286,7 @@ class BossWindow(QDialog):
             QMessageBox.warning(self, "Could not create boss", str(exc))
             return
         self._reload_bosses()
+        self._toast.say(f"Boss added: {name.strip()}")
 
     def _rename_boss(self) -> None:
         item = self._bosses_list.currentItem()
@@ -298,6 +306,7 @@ class BossWindow(QDialog):
             QMessageBox.warning(self, "Could not rename boss", str(exc))
             return
         self._reload_bosses()
+        self._toast.say(f"Boss renamed to {new_name.strip()}")
 
     def _delete_boss(self) -> None:
         item = self._bosses_list.currentItem()
@@ -311,5 +320,7 @@ class BossWindow(QDialog):
         )
         if confirm != QMessageBox.StandardButton.Yes:
             return
+        name = item.text()
         self._database.delete_boss(item.data(_USER_ROLE))
         self._reload_bosses()
+        self._toast.say(f"Boss deleted: {name}", icon="trash-2")

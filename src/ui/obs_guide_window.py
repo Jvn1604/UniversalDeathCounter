@@ -50,6 +50,7 @@ class ObsGuideWindow(QDialog):
         deaths_txt_path: Path,
         show_overlay_green: Callable[[], None],
         enable_deaths_txt: Callable[[], None],
+        enable_stream: Callable[[], str] | None = None,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
@@ -61,12 +62,39 @@ class ObsGuideWindow(QDialog):
         tabs = QTabWidget()
         layout.addWidget(tabs)
 
+        if enable_stream is not None:
+            stream_tab = QWidget()
+            stream_layout = QVBoxLayout(stream_tab)
+            stream_layout.addWidget(_page("""
+                <h3>Browser Source (best)</h3>
+                <p>OBS shows the counter straight from the app: truly transparent, no
+                   green screen, and the number pops on every death. It keeps showing
+                   on stream even when you hide the overlay from your own screen.</p>
+                <ol>
+                  <li>Click <b class="ui">Turn On &amp; Copy Link</b> below.</li>
+                  <li>In OBS, under <b class="ui">Sources</b>, click <b class="ui">+</b> →
+                      <b class="ui">Browser</b>, name it "Death Counter", and click OK.</li>
+                  <li>Paste the link into <b class="ui">URL</b>. Set
+                      <b class="ui">Width</b> 600 and <b class="ui">Height</b> 300, and
+                      click OK.</li>
+                  <li>Position and scale it in your scene.</li>
+                </ol>
+                <p class="tip">It looks like the overlay (Settings → Overlay). To keep the
+                   overlay off your own screen: right-click it →
+                   <b>Hide From My Screen</b>. Only this PC can open the link.</p>
+            """))
+            self._stream_button = QPushButton("Turn On && Copy Link")
+            self._stream_button.setObjectName("AccentButton")
+            self._stream_button.clicked.connect(lambda: self._enable_stream(enable_stream))
+            stream_layout.addWidget(self._stream_button)
+            tabs.addTab(stream_tab, "Browser Source")
+
         window_name = f"[{_process_name()}]: {OVERLAY_WINDOW_TITLE}"
         hotkey = escape(overlay_hotkey or "Overlay in the sidebar")
         overlay_tab = QWidget()
         overlay_layout = QVBoxLayout(overlay_tab)
         overlay_layout.addWidget(_page(f"""
-            <h3>Method 1: Overlay window (recommended)</h3>
+            <h3>Overlay window</h3>
             <p>Shows the styled counter card (game, boss, big number) on stream.</p>
             <ol>
               <li>Click <b class="ui">Show Overlay in Green-Screen Mode</b> below. This
@@ -108,7 +136,7 @@ class ObsGuideWindow(QDialog):
         text_tab = QWidget()
         text_layout = QVBoxLayout(text_tab)
         text_layout.addWidget(_page(f"""
-            <h3>Method 2: Text source (lightest)</h3>
+            <h3>Text source (lightest)</h3>
             <p>OBS reads the count from a small text file that the app rewrites on every
                death. No overlay window is needed, and you style the text in OBS.</p>
             <ol>
@@ -136,6 +164,12 @@ class ObsGuideWindow(QDialog):
         close_button = QPushButton("Close")
         close_button.clicked.connect(self.accept)
         layout.addWidget(close_button)
+
+    def _enable_stream(self, enable: Callable[[], str]) -> None:
+        url = enable()
+        if url:
+            QApplication.clipboard().setText(url)
+            self._stream_button.setText(f"✓ On, link copied: {url}")
 
     def _enable_text(self, enable: Callable[[], None], button: QPushButton) -> None:
         enable()

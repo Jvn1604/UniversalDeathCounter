@@ -24,6 +24,7 @@ from urllib.parse import parse_qs, urlparse
 from PySide6.QtCore import QObject, Signal
 
 from src.utils.logger import get_logger
+from src.utils.stream_overlay import ExclusiveHTTPServer
 
 logger = get_logger(__name__)
 
@@ -98,7 +99,7 @@ class PhoneRemote(QObject):
         last_error: OSError | None = None
         for candidate in range(port, port + _PORT_TRIES):
             try:
-                self._server = ThreadingHTTPServer(("0.0.0.0", candidate), handler)
+                self._server = ExclusiveHTTPServer(("0.0.0.0", candidate), handler)
                 break
             except OSError as exc:
                 last_error = exc

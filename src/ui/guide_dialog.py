@@ -238,8 +238,10 @@ LESSONS: tuple[tuple[str, str, str, tuple[str, str, str] | None], ...] = (
         "Controls warns you). Pick another key.</li>"
         "<li><b>See what went wrong</b>: ⋮ → Error Log shows the warnings and "
         "errors. The bug icon at the top turns red when an error happened.</li>"
-        "<li><b>Report it</b>: the bug icon opens a ready-made report on GitHub with "
-        "your app version and the last errors (your user name is removed).</li>"
+        "<li><b>Report it</b>: the bug icon writes a ready-made report with your app "
+        "version and the last errors (your user name is removed). Add it to the "
+        "<b>bug sheet</b> (⋮ → Bug Sheet also lists the known bugs) or open it on "
+        "GitHub.</li>"
         "</ul>",
         ("Report a Bug", "bug", "report"),
     ),
