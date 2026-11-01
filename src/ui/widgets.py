@@ -574,8 +574,9 @@ class Toast(QFrame):
     (e.g. "Undo") that counts down and then disappears.
     """
 
-    def __init__(self, parent: QWidget) -> None:
+    def __init__(self, parent: QWidget, bottom: int = 84) -> None:
         super().__init__(parent)
+        self._bottom = bottom  # gap to the parent's bottom edge
         self.setObjectName("Toast")
         self.setStyleSheet(
             "QFrame#Toast { background-color: rgba(22, 24, 30, 0.97); border-radius: 14px;"
@@ -623,6 +624,10 @@ class Toast(QFrame):
     def _update_action(self) -> None:
         self.action.setText(f"{self._action_text} ({self._left})")
 
+    def say(self, text: str, seconds: int = 4, icon: str = "check") -> None:
+        """A message on its own (no button)."""
+        self.show_message(text, seconds=seconds, icon=icon)
+
     def _tick(self) -> None:
         self._left -= 1
         if self._left <= 0:
@@ -643,8 +648,8 @@ class Toast(QFrame):
         parent = self.parentWidget()
         width = min(max(self.sizeHint().width(), 320), parent.width() - 40)
         self.resize(width, self.sizeHint().height())
-        # Above the Settings page's Save bar.
-        self.move((parent.width() - width) // 2, parent.height() - self.height() - 84)
+        # The main window's default clears the Settings page's Save bar.
+        self.move((parent.width() - width) // 2, parent.height() - self.height() - self._bottom)
 
 
 def page_header(title: str, subtitle: str = "") -> QWidget:

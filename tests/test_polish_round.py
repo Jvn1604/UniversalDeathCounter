@@ -103,28 +103,34 @@ def test_save_shows_a_toast_with_undo(window) -> None:
 
 
 # ---------------------------------------------------------------- hide from screen / stream
-def test_hide_from_my_screen_keeps_it_on_for_the_stream(window, monkeypatch) -> None:
-    import src.ui.main_window as mw
+def test_hide_from_my_screen_keeps_it_on_for_the_stream(window) -> None:
+    from PySide6.QtCore import Qt
 
-    monkeypatch.setattr(mw.QMessageBox, "information", lambda *a, **k: None)
     window._toggle_overlay()
     assert window._overlay.isVisible() and window._overlay_nav.is_on()
     window._on_increment()
     window._hide_overlay_from_screen()
-    assert not window._overlay.isVisible()
-    assert window._overlay_nav.is_on()  # still ON: it's only hidden from the screen
+    overlay = window._overlay
+    # Still open (OBS can't capture a hidden window), but behind everything and
+    # letting clicks through: out of the player's way.
+    assert overlay.isVisible()
+    assert not overlay.windowFlags() & Qt.WindowType.WindowStaysOnTopHint
+    assert overlay.windowFlags() & Qt.WindowType.WindowTransparentForInput
+    assert window._overlay_nav.is_on()
+    window._on_increment()  # the count keeps updating while it's behind
+    assert overlay.count_text() == "DEATH - 2"
     assert window._stream.running
     with urllib.request.urlopen(window._stream.url() + "state", timeout=5) as response:
         state = json.loads(response.read())
-    assert state["active"] is True and state["number"] == 1
-    assert "DEATH" in state["count_html"]
+    assert state["active"] is True and state["number"] == 2
     with urllib.request.urlopen(window._stream.url(), timeout=5) as response:
         assert b"fetch(\"/state\"" in response.read()
 
-    window._toggle_overlay()  # the overlay key / sidebar: shows it again
-    assert window._overlay.isVisible() and window._overlay_nav.is_on()
+    window._toggle_overlay()  # the overlay key / sidebar: back in front, as set up
+    assert overlay.windowFlags() & Qt.WindowType.WindowStaysOnTopHint
+    assert not overlay.windowFlags() & Qt.WindowType.WindowTransparentForInput
     window._turn_overlay_off()
-    assert not window._overlay.isVisible() and not window._overlay_nav.is_on()
+    assert not overlay.isVisible() and not window._overlay_nav.is_on()
     assert window._stream.state()["active"] is False  # off on stream too
 
 

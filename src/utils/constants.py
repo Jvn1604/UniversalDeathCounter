@@ -163,6 +163,12 @@ SETTING_OVERLAY_NUMBER_BOLD: str = "overlay_number_bold"
 SETTING_OVERLAY_LETTER_SPACING: str = "overlay_letter_spacing"  # px
 SETTING_OVERLAY_PADDING: str = "overlay_padding"  # px inside the card
 SETTING_OVERLAY_SKULL_SIZE: str = "overlay_skull_size"  # % of the number's size
+SETTING_OVERLAY_STATE: str = "overlay_state"  # on | off | behind (kept between starts)
+SETTING_LAST_PAGE: str = "last_page"  # the page open when the app closed
+BUG_SHEET_URL: str = (
+    "https://docs.google.com/spreadsheets/d/1pvzlu8mhHzvvKCHb-E5NDlmtqT-gW0ZHRZUMq2xmtaw/"
+    "edit?usp=sharing"
+)
 SETTING_STREAM_OVERLAY: str = "stream_overlay"  # "true" = OBS Browser Source page is served
 # Console players
 SETTING_PHONE_REMOTE: str = "phone_remote_enabled"  # "true" = serve the phone page

@@ -40,7 +40,7 @@ from PySide6.QtWidgets import (
 )
 
 from src.ui import icons
-from src.utils.constants import APP_VERSION, GITHUB_REPO, LOG_FILE
+from src.utils.constants import APP_VERSION, BUG_SHEET_URL, GITHUB_REPO, LOG_FILE
 
 ISSUE_URL = f"https://github.com/{GITHUB_REPO}/issues/new"
 APP_STARTED = datetime.now()  # this module loads with the main window
@@ -339,7 +339,8 @@ class ReportBugDialog(QDialog):
         intro = QLabel(
             "Say in a few words what happened and what you did just before. The app adds "
             "its version, your system and the last errors, and leaves out your Windows user "
-            "name. Nothing is sent: copy the report, or open it on GitHub and send it there."
+            "name. Nothing is sent by the app: add it to the bug sheet (the report is copied, "
+            "paste it in), or open it on GitHub."
         )
         intro.setWordWrap(True)
         intro.setObjectName("Muted")
@@ -390,6 +391,12 @@ class ReportBugDialog(QDialog):
         icons.set_icon(self.log_button, "scroll-text", size=15)
         close = QPushButton("Close")
         close.clicked.connect(self.reject)
+        self.sheet_button = QPushButton(" Add to Bug Sheet")
+        self.sheet_button.setToolTip(
+            "Copies the report and opens the bug sheet: paste it in a new row"
+        )
+        icons.set_icon(self.sheet_button, "file-down", size=15)
+        self.sheet_button.clicked.connect(self._open_sheet)
         self.copy_button = QPushButton(" Copy report")
         icons.set_icon(self.copy_button, "copy", size=15)
         self.copy_button.clicked.connect(self._copy)
@@ -401,6 +408,7 @@ class ReportBugDialog(QDialog):
         buttons.addStretch()
         buttons.addWidget(close)
         buttons.addWidget(self.copy_button)
+        buttons.addWidget(self.sheet_button)
         buttons.addWidget(self.open_button)
         layout.addLayout(buttons)
         self.opened_url = ""
@@ -424,6 +432,12 @@ class ReportBugDialog(QDialog):
     def _copy(self) -> None:
         QGuiApplication.clipboard().setText(self.report())
         self.copy_button.setText(" Copied")
+
+    def _open_sheet(self) -> None:
+        QGuiApplication.clipboard().setText(self.report())
+        self.opened_url = BUG_SHEET_URL
+        QDesktopServices.openUrl(QUrl(BUG_SHEET_URL))
+        self.accept()
 
     def _open(self) -> None:
         self.opened_url = self.url()

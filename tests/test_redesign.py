@@ -109,7 +109,8 @@ def test_one_home_per_function(window) -> None:
     assert window.menuBar().actions() == []  # the old menu bar duplicated everything
     more = [a.text() for a in window._more_menu.actions() if a.text()]
     assert more == [
-        "Save Progress…", "Load Save…", "Error Log…", "About", "Clear All Data…", "Quit"
+        "Save Progress…", "Load Save…", "Error Log…", "Bug Sheet (report or see known bugs)",
+        "About", "Clear All Data…", "Quit",
     ]
     assert window._credit._url == "https://www.youtube.com/@ImDePhantom"
 
