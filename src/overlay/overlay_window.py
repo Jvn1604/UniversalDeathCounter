@@ -21,7 +21,7 @@ from __future__ import annotations
 
 from PySide6.QtCore import QPoint, Qt, Signal
 from PySide6.QtGui import QContextMenuEvent, QMouseEvent, QPixmap
-from PySide6.QtWidgets import QHBoxLayout, QLabel, QSizeGrip, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QHBoxLayout, QLabel, QVBoxLayout, QWidget
 
 from src.core.counter_manager import CounterSnapshot
 from src.overlay.capture_window import (
@@ -128,9 +128,6 @@ class OverlayWindow(CaptureWindow):
         layout.addLayout(count_row)
         layout.addWidget(self._caption_label)
         layout.addWidget(self._stats_label)
-
-        self._size_grip = QSizeGrip(self)
-        layout.addWidget(self._size_grip, 0, Qt.AlignmentFlag.AlignRight)
 
     def _restyle(self) -> None:
         """Re-apply all label styles for the current config (background: paintEvent)."""

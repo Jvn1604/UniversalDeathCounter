@@ -23,7 +23,6 @@ from PySide6.QtWidgets import (
     QMenu,
     QMessageBox,
     QPushButton,
-    QSizeGrip,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
@@ -107,7 +106,6 @@ class TimerWindow(CaptureWindow):
         self._footer_label = QLabel()
         self._footer_label.setWordWrap(True)
         layout.addWidget(self._footer_label)
-        layout.addWidget(QSizeGrip(self), 0, Qt.AlignmentFlag.AlignRight)
 
         self._tick = QTimer(self)
         self._tick.setInterval(_TICK_MS)

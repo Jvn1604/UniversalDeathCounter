@@ -2600,10 +2600,14 @@ class MainWindow(QMainWindow):
         self._timer_window.restore_geometry_string(settings.get(SETTING_TIMER_GEOMETRY, ""))
         self._timer_window.setVisible(settings.get(SETTING_TIMER_VISIBLE, "false") == "true")
         self._overlay.restore_geometry_string(settings.get(SETTING_OVERLAY_GEOMETRY, ""))
+        # On, behind the windows, or off, as this profile left it.
         state = settings.get(SETTING_OVERLAY_STATE, "off")
-        if state in ("on", "behind") and not self._overlay.isVisible():
-            QTimer.singleShot(0, self._overlay.show if state == "on"
-                              else lambda: self._hide_overlay_from_screen(announce=False))
+        if state == "behind" and not self._overlay_hidden_local:
+            QTimer.singleShot(0, lambda: self._hide_overlay_from_screen(announce=False))
+        elif state == "on" and (self._overlay_hidden_local or not self._overlay.isVisible()):
+            QTimer.singleShot(0, self._restore_overlay_window)
+        elif state not in ("on", "behind") and self._overlay_active():
+            self._turn_overlay_off()
 
     def _apply_appearance(self, settings: dict[str, str]) -> None:
         """Theme, colors, fonts and backgrounds of every window (also the Settings preview)."""
@@ -2691,7 +2695,8 @@ class MainWindow(QMainWindow):
         if error:
             logger.info("Couldn't refresh theme '%s': %s", name, error)
         elif self._database.get_setting(SETTING_THEME, "dark") == name:
-            self._apply_saved_settings()
+            # Only the look: the windows stay where the player has them now.
+            self._apply_appearance(self._database.get_all_settings())
 
     def _maybe_check_updates(self) -> None:
         """Check now and every few hours (if enabled); the sidebar card shows the result."""

@@ -13,9 +13,11 @@ It owns everything the two share:
 
 from __future__ import annotations
 
-from PySide6.QtCore import QPoint, QRect, QRectF, QSize, Qt, Signal
+from PySide6.QtCore import QEvent, QPoint, QRect, QRectF, QSize, Qt, Signal
 from PySide6.QtGui import (
     QColor,
+    QCursor,
+    QEnterEvent,
     QGuiApplication,
     QHideEvent,
     QMouseEvent,
@@ -24,10 +26,17 @@ from PySide6.QtGui import (
     QPaintEvent,
     QPen,
     QPixmap,
+    QResizeEvent,
     QScreen,
     QShowEvent,
 )
-from PySide6.QtWidgets import QGraphicsDropShadowEffect, QLabel, QWidget
+from PySide6.QtWidgets import (
+    QApplication,
+    QGraphicsDropShadowEffect,
+    QLabel,
+    QSizeGrip,
+    QWidget,
+)
 
 from src.utils.backgrounds import cover, load_background
 from src.utils.constants import (
@@ -97,6 +106,11 @@ class CaptureWindow(QWidget):
         # Qt doesn't paint stylesheet backgrounds on translucent windows, so the
         # card / chroma green / image is drawn in paintEvent instead.
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+
+        # Resize grip in the bottom-right corner, only while the mouse is over
+        # the window: it isn't part of the overlay, so it never shows on stream.
+        self._size_grip = _HoverGrip(self)
+        self._grip_on_hover = True
 
     # ----------------------------------------------------------------
     # Styling
@@ -198,6 +212,8 @@ class CaptureWindow(QWidget):
 
     def set_click_through(self, enabled: bool) -> None:
         """Clicks pass through to the game underneath (no dragging or menu meanwhile)."""
+        if enabled:  # no hover comes any more to take the grip away
+            self._size_grip.set_wanted(False)
         self._set_flag(Qt.WindowType.WindowTransparentForInput, enabled)
 
     def set_locked(self, locked: bool) -> None:
@@ -206,6 +222,29 @@ class CaptureWindow(QWidget):
 
     def is_locked(self) -> bool:
         return self._locked
+
+    def set_resizable(self, enabled: bool) -> None:
+        """Whether hovering shows the resize grip (off for in-dialog previews)."""
+        self._grip_on_hover = enabled
+        if not enabled:
+            self._size_grip.set_wanted(False)
+
+    def resizeEvent(self, event: QResizeEvent) -> None:  # noqa: N802
+        grip = self._size_grip
+        grip.move(self.width() - grip.width(), self.height() - grip.height())
+        super().resizeEvent(event)
+
+    def enterEvent(self, event: QEnterEvent) -> None:  # noqa: N802
+        if self._grip_on_hover:
+            self._size_grip.raise_()
+            self._size_grip.set_wanted(True)
+        super().enterEvent(event)
+
+    def leaveEvent(self, event: QEvent) -> None:  # noqa: N802
+        # Not while resizing: the cursor can leave the window mid-drag.
+        if not QApplication.mouseButtons() & Qt.MouseButton.LeftButton:
+            self._size_grip.set_wanted(False)
+        super().leaveEvent(event)
 
     def showEvent(self, event: QShowEvent) -> None:  # noqa: N802
         super().showEvent(event)
@@ -274,6 +313,32 @@ class CaptureWindow(QWidget):
         self.show()
         self.raise_()
         logger.info("%s moved to display %s", self.windowTitle(), screen.name())
+
+
+class _HoverGrip(QSizeGrip):
+    """
+    A size grip that stays hidden until :meth:`set_wanted`. QSizeGrip shows
+    itself again whenever its window is shown, so plain hide() doesn't last.
+    """
+
+    def __init__(self, parent: QWidget) -> None:
+        self._wanted = False
+        super().__init__(parent)
+        self.setVisible(False)
+
+    def set_wanted(self, wanted: bool) -> None:
+        self._wanted = wanted
+        self.setVisible(wanted)
+
+    def setVisible(self, visible: bool) -> None:  # noqa: N802 - Qt override
+        super().setVisible(visible and self._wanted)
+
+    def mouseReleaseEvent(self, event: QMouseEvent) -> None:  # noqa: N802
+        super().mouseReleaseEvent(event)
+        window = self.parentWidget()
+        # A resize can end with the cursor outside (no leave event comes then).
+        if not window.rect().contains(window.mapFromGlobal(QCursor.pos())):
+            self.set_wanted(False)
 
 
 def _make_outline(label: QLabel) -> QGraphicsDropShadowEffect:

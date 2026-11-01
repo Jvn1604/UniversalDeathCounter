@@ -152,7 +152,6 @@ class _ColorChoice(QWidget):
         row = QHBoxLayout(self)
         row.setContentsMargins(0, 0, 0, 0)
         self._button = QPushButton()
-        self._button.setFixedWidth(90)
         self._button.clicked.connect(self._pick)
         reset = QPushButton("Reset")
         reset.setToolTip(f"Back to {default_label.lower()}")
@@ -175,6 +174,9 @@ class _ColorChoice(QWidget):
             if color
             else ""
         )
+        # Never narrower than its text: "Same as number" was cut off.
+        self._button.ensurePolished()
+        self._button.setMinimumWidth(max(90, self._button.sizeHint().width()))
 
     def _pick(self) -> None:
         start = QColor(self._color or "#e8e8e8")
@@ -602,7 +604,7 @@ class SettingsWindow(QDialog):
         self._overlay_preview = OverlayWindow(parent=preview_group)
         self._overlay_preview.setWindowFlags(Qt.WindowType.Widget)  # inside the dialog
         self._overlay_preview.set_locked(True)
-        self._overlay_preview._size_grip.hide()
+        self._overlay_preview.set_resizable(False)
         self._overlay_preview.setFixedSize(280, 150)
         self._overlay_preview.update_counters(
             CounterSnapshot("Elden Ring", "Margit, the Fell Omen", 12, 348, 27)
