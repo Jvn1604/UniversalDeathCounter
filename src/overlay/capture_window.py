@@ -34,7 +34,6 @@ from PySide6.QtWidgets import (
     QApplication,
     QGraphicsDropShadowEffect,
     QLabel,
-    QSizeGrip,
     QWidget,
 )
 
@@ -213,7 +212,7 @@ class CaptureWindow(QWidget):
     def set_click_through(self, enabled: bool) -> None:
         """Clicks pass through to the game underneath (no dragging or menu meanwhile)."""
         if enabled:  # no hover comes any more to take the grip away
-            self._size_grip.set_wanted(False)
+            self._size_grip.hide()
         self._set_flag(Qt.WindowType.WindowTransparentForInput, enabled)
 
     def set_locked(self, locked: bool) -> None:
@@ -227,7 +226,7 @@ class CaptureWindow(QWidget):
         """Whether hovering shows the resize grip (off for in-dialog previews)."""
         self._grip_on_hover = enabled
         if not enabled:
-            self._size_grip.set_wanted(False)
+            self._size_grip.hide()
 
     def resizeEvent(self, event: QResizeEvent) -> None:  # noqa: N802
         grip = self._size_grip
@@ -237,13 +236,13 @@ class CaptureWindow(QWidget):
     def enterEvent(self, event: QEnterEvent) -> None:  # noqa: N802
         if self._grip_on_hover:
             self._size_grip.raise_()
-            self._size_grip.set_wanted(True)
+            self._size_grip.show()
         super().enterEvent(event)
 
     def leaveEvent(self, event: QEvent) -> None:  # noqa: N802
         # Not while resizing: the cursor can leave the window mid-drag.
         if not QApplication.mouseButtons() & Qt.MouseButton.LeftButton:
-            self._size_grip.set_wanted(False)
+            self._size_grip.hide()
         super().leaveEvent(event)
 
     def showEvent(self, event: QShowEvent) -> None:  # noqa: N802
@@ -315,30 +314,54 @@ class CaptureWindow(QWidget):
         logger.info("%s moved to display %s", self.windowTitle(), screen.name())
 
 
-class _HoverGrip(QSizeGrip):
+class _HoverGrip(QWidget):
     """
-    A size grip that stays hidden until :meth:`set_wanted`. QSizeGrip shows
-    itself again whenever its window is shown, so plain hide() doesn't last.
+    The resize corner. Not a QSizeGrip: that one shows itself again whenever
+    its window is shown, so it couldn't stay hidden until hovered.
     """
+
+    SIZE = 14
 
     def __init__(self, parent: QWidget) -> None:
-        self._wanted = False
         super().__init__(parent)
-        self.setVisible(False)
+        self.setFixedSize(self.SIZE, self.SIZE)
+        self.setCursor(Qt.CursorShape.SizeFDiagCursor)
+        self._start: tuple[QPoint, QSize] | None = None  # manual resize fallback
+        self.hide()
 
-    def set_wanted(self, wanted: bool) -> None:
-        self._wanted = wanted
-        self.setVisible(wanted)
+    def paintEvent(self, event: QPaintEvent) -> None:  # noqa: N802
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor(255, 255, 255, 150))
+        # Six dots in a triangle, like a window's resize corner.
+        for row in range(3):
+            for col in range(row + 1):
+                x = self.SIZE - 4 - (row - col) * 4
+                y = self.SIZE - 4 - col * 4
+                painter.drawEllipse(QRectF(x - 1, y - 1, 2.4, 2.4))
+        painter.end()
 
-    def setVisible(self, visible: bool) -> None:  # noqa: N802 - Qt override
-        super().setVisible(visible and self._wanted)
+    def mousePressEvent(self, event: QMouseEvent) -> None:  # noqa: N802
+        if event.button() != Qt.MouseButton.LeftButton:
+            return
+        handle = self.window().windowHandle()
+        edges = Qt.Edge.RightEdge | Qt.Edge.BottomEdge
+        if handle is None or not handle.startSystemResize(edges):
+            self._start = (event.globalPosition().toPoint(), self.window().size())
+
+    def mouseMoveEvent(self, event: QMouseEvent) -> None:  # noqa: N802
+        if self._start is not None:
+            origin, size = self._start
+            delta = event.globalPosition().toPoint() - origin
+            self.window().resize(size.width() + delta.x(), size.height() + delta.y())
 
     def mouseReleaseEvent(self, event: QMouseEvent) -> None:  # noqa: N802
-        super().mouseReleaseEvent(event)
-        window = self.parentWidget()
+        self._start = None
+        window = self.window()
         # A resize can end with the cursor outside (no leave event comes then).
         if not window.rect().contains(window.mapFromGlobal(QCursor.pos())):
-            self.set_wanted(False)
+            self.hide()
 
 
 def _make_outline(label: QLabel) -> QGraphicsDropShadowEffect:
