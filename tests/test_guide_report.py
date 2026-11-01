@@ -84,6 +84,9 @@ def test_report_dialog_opens_github(tmp_path, monkeypatch) -> None:
     dialog = rw.ReportBugDialog(extra_details={"Theme": "glass"}, log_file=_log(tmp_path))
     dialog.title_edit.setText("Counter froze")
     dialog.what_edit.setPlainText("It stopped at 12")
+    assert "It stopped at 12" in dialog.preview.toPlainText()  # live preview
+    dialog.copy_button.click()
+    assert QApplication.clipboard().text() == dialog.report()
     dialog.open_button.click()
     assert opened and opened[0].startswith(rw.ISSUE_URL)
     body = urllib.parse.parse_qs(urllib.parse.urlsplit(dialog.opened_url).query)["body"][0]
@@ -108,10 +111,17 @@ def test_error_log_window_shows_problems(tmp_path) -> None:
 
     QApplication.instance() or QApplication([])
     log_window = rw.ErrorLogWindow(log_file=_log(tmp_path))
+    assert "Started" in log_window.text.toPlainText()  # everything by default
+    log_window.problems_check.setChecked(True)
     assert "Death watcher stopped" in log_window.text.toPlainText()
     assert "Started" not in log_window.text.toPlainText()
     log_window.problems_check.setChecked(False)
-    assert "Started" in log_window.text.toPlainText()
+    log_window.search.setText("watcher")
+    assert len(log_window.text.toPlainText().splitlines()) == 1  # only the matching line
+    log_window.search.setText("")
+    log_window._clear()
+    assert "Started" not in log_window.text.toPlainText()  # older lines hidden
+    rw.ErrorLogWindow._cleared_after = ""
 
 
 # ---------------------------------------------------------------- the guide

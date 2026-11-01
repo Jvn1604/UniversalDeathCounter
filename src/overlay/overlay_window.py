@@ -30,18 +30,20 @@ from src.overlay.capture_window import (
     CaptureWindow,
     available_screen_rects,
 )
+from src.overlay.count_text import CountStyle
 from src.ui.skulls import TIERS, skull_pixmap, tier_index
 from src.utils.constants import (
     DEFAULT_COUNTER_SOURCE,
     SETTING_OVERLAY_ALIGN,
-    SETTING_OVERLAY_COUNT_LABEL,
     SETTING_OVERLAY_COUNTER_SOURCE,
     SETTING_OVERLAY_FONT_SIZE,
+    SETTING_OVERLAY_PADDING,
     SETTING_OVERLAY_SHOW_BOSS,
     SETTING_OVERLAY_SHOW_CAPTION,
     SETTING_OVERLAY_SHOW_GAME,
     SETTING_OVERLAY_SHOW_SKULL,
     SETTING_OVERLAY_SHOW_STATS,
+    SETTING_OVERLAY_SKULL_SIZE,
 )
 from src.utils.logger import get_logger
 
@@ -87,7 +89,9 @@ class OverlayWindow(CaptureWindow):
         self._show_stats = True
         self._show_skull = True
         self._show_caption = True
-        self._count_label = "DEATH"
+        self._count_style = CountStyle()
+        self._padding = 16
+        self._skull_size = 150  # % of the number's size
         self._align = "left"
         self._skull_art: QPixmap | None = None
 
@@ -103,7 +107,7 @@ class OverlayWindow(CaptureWindow):
     # UI construction
     # ----------------------------------------------------------------
     def _build_ui(self) -> None:
-        layout = QVBoxLayout(self)
+        layout = self._layout = QVBoxLayout(self)
         layout.setContentsMargins(16, 12, 16, 12)
         layout.setSpacing(2)
 
@@ -138,10 +142,17 @@ class OverlayWindow(CaptureWindow):
             f"color: {secondary}; font-size: 13px; font-weight: 500; {font}"
         )
         self._boss_label.setStyleSheet(f"color: {secondary}; font-size: 12px; {font}")
-        self._death_label.setStyleSheet(
-            f"color: {self._text_color}; font-size: {self._font_size}px; font-weight: 800; "
-            f"{font}"
+        style = self._count_style
+        self._death_label.setTextFormat(
+            Qt.TextFormat.RichText if style.needs_html() else Qt.TextFormat.PlainText
         )
+        self._death_label.setStyleSheet(
+            f"color: {self._text_color}; font-size: {self._font_size}px; "
+            f"font-weight: {800 if style.bold else 500}; "
+            f"letter-spacing: {style.letter_spacing}px; {font}"
+        )
+        pad = self._padding
+        self._layout.setContentsMargins(pad, max(4, pad * 3 // 4), pad, max(4, pad * 3 // 4))
         self._caption_label.setStyleSheet(
             f"color: {secondary}; font-size: 10px; letter-spacing: 2px; {font}"
         )
@@ -201,11 +212,22 @@ class OverlayWindow(CaptureWindow):
         self._show_stats = settings.get(SETTING_OVERLAY_SHOW_STATS, "true") == "true"
         self._show_skull = settings.get(SETTING_OVERLAY_SHOW_SKULL, "true") == "true"
         self._show_caption = settings.get(SETTING_OVERLAY_SHOW_CAPTION, "true") == "true"
-        self._count_label = settings.get(SETTING_OVERLAY_COUNT_LABEL, "DEATH").strip()
+        self._count_style = CountStyle.from_settings(settings)
+        try:
+            self._padding = min(max(int(settings.get(SETTING_OVERLAY_PADDING, "16")), 0), 60)
+            self._skull_size = min(
+                max(int(settings.get(SETTING_OVERLAY_SKULL_SIZE, "150")), 50), 300
+            )
+        except ValueError:
+            self._padding, self._skull_size = 16, 150
         self._align = settings.get(SETTING_OVERLAY_ALIGN, "left")
         self._restyle()
         if self._last_snapshot is not None:
             self.update_counters(self._last_snapshot)
+
+    def count_text(self) -> str:
+        """The count as shown, as plain text (e.g. ``DEATH - 12``)."""
+        return self._count_style.plain(getattr(self, "_big_number", 0))
 
     def update_counters(self, snapshot: CounterSnapshot) -> None:
         """
@@ -225,14 +247,18 @@ class OverlayWindow(CaptureWindow):
 
         self._game_label.setText(snapshot.game_name or "No Game Selected")
         self._boss_label.setText(snapshot.boss_name or "")
-        label = self._count_label
-        self._death_label.setText(f"{label} - {big_number}" if label else str(big_number))
+        self._big_number = big_number
+        style = self._count_style
+        self._death_label.setText(
+            style.html(big_number, self._font_size) if style.needs_html()
+            else style.plain(big_number)
+        )
         caption = _CAPTIONS.get(self._counter_source, "DEATHS")
         if self._show_skull:
             caption += f"  ·  {TIERS[tier_index(big_number)].name.upper()}"
             art = skull_pixmap(
                 big_number,
-                round(self._font_size * 1.5),
+                round(self._font_size * self._skull_size / 100),
                 _SKULL_BODY,
                 self._text_color,
                 self.devicePixelRatioF(),

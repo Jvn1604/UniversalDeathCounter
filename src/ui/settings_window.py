@@ -44,9 +44,11 @@ from src.database.database import Database
 from src.hotkeys.conflicts import ERROR, WARNING, Conflict, find_conflicts, has_errors
 from src.hotkeys.gamepad import GamepadManager, combo_label, controllers_supported
 from src.hotkeys.hotkey_manager import HotkeyManager, global_hotkeys_available
+from src.overlay.count_text import SEPARATORS
 from src.overlay.overlay_window import OverlayWindow
 from src.ui import icons
 from src.ui.theme_picker import ThemeGallery
+from src.ui.widgets import guard_wheel
 from src.utils import startup
 from src.utils.backgrounds import IMAGE_FILTER, import_background
 from src.utils.constants import (
@@ -74,16 +76,24 @@ from src.utils.constants import (
     SETTING_OVERLAY_COUNTER_SOURCE,
     SETTING_OVERLAY_FONT,
     SETTING_OVERLAY_FONT_SIZE,
+    SETTING_OVERLAY_LETTER_SPACING,
     SETTING_OVERLAY_LOCKED,
+    SETTING_OVERLAY_NUMBER_BOLD,
     SETTING_OVERLAY_OPACITY,
+    SETTING_OVERLAY_PADDING,
     SETTING_OVERLAY_SECONDARY_COLOR,
+    SETTING_OVERLAY_SEPARATOR,
     SETTING_OVERLAY_SHOW_BOSS,
     SETTING_OVERLAY_SHOW_CAPTION,
     SETTING_OVERLAY_SHOW_GAME,
     SETTING_OVERLAY_SHOW_SKULL,
     SETTING_OVERLAY_SHOW_STATS,
+    SETTING_OVERLAY_SKULL_SIZE,
     SETTING_OVERLAY_TEXT_COLOR,
     SETTING_OVERLAY_TEXT_OUTLINE,
+    SETTING_OVERLAY_WORD_AFTER,
+    SETTING_OVERLAY_WORD_COLOR,
+    SETTING_OVERLAY_WORD_SIZE,
     SETTING_THEME,
     SETTING_TIMER_COMPARISON,
     SETTING_TIMER_DIGITS,
@@ -317,6 +327,7 @@ class SettingsWindow(QDialog):
 
     settings_changed = Signal()
     preview_changed = Signal(dict)
+    saved = Signal(dict)  # the settings from before this save (for Undo)
     TAB_GENERAL, TAB_APPEARANCE, TAB_OVERLAY, TAB_SPEEDRUN, TAB_CONTROLS = range(5)
 
     def __init__(
@@ -352,6 +363,8 @@ class SettingsWindow(QDialog):
         self._load_current_values()
         self._connect_preview()
         self._tabs.setCurrentIndex(tab)
+        self._space_out()
+        guard_wheel(self)
         self._baseline = self._state()
 
     # ----------------------------------------------------------------
@@ -377,6 +390,18 @@ class SettingsWindow(QDialog):
             ):
                 values[id(widget)] = widget.text()
         return values
+
+    def _space_out(self) -> None:
+        """Clear gaps: between the sections, and between the rows inside them."""
+        for form in self.findChildren(QFormLayout):
+            form.setVerticalSpacing(12)
+            form.setHorizontalSpacing(20)
+        for index in range(self._tabs.count()):
+            page = self._tabs.widget(index)
+            inner = page.widget() if isinstance(page, QScrollArea) else page
+            if inner is not None and inner.layout() is not None:
+                inner.layout().setSpacing(22)
+                inner.layout().setContentsMargins(4, 14, 10, 14)
 
     def has_changes(self) -> bool:
         return self._state() != self._baseline
@@ -614,6 +639,10 @@ class SettingsWindow(QDialog):
         overlay_form.addRow("Corner roundness", self._radius_spin)
         self._border_check = QCheckBox("Thin border around the card")
         overlay_form.addRow(self._border_check)
+        self._padding_spin = QSpinBox()
+        self._padding_spin.setRange(0, 60)
+        self._padding_spin.setSuffix(" px")
+        overlay_form.addRow("Space inside the card", self._padding_spin)
         transparent_note = QLabel(
             "Transparent shows just the text over your game. For OBS, Green screen "
             "keys out cleanest."
@@ -644,8 +673,34 @@ class SettingsWindow(QDialog):
         self._count_label_edit = QLineEdit()
         self._count_label_edit.setPlaceholderText("Empty: just the number")
         self._count_label_edit.setMaxLength(24)
-        self._count_label_edit.setToolTip('Shown before the number, e.g. "DEATH - 12".')
-        text_form.addRow("Text before number", self._count_label_edit)
+        self._count_label_edit.setToolTip('The word next to the number, e.g. "DEATH - 12".')
+        text_form.addRow("Death word", self._count_label_edit)
+        self._word_position_combo = QComboBox()
+        self._word_position_combo.addItem("Before the number  (DEATH - 12)", userData="false")
+        self._word_position_combo.addItem("After the number  (12 DEATHS)", userData="true")
+        text_form.addRow("Word goes", self._word_position_combo)
+        self._separator_combo = QComboBox()
+        for value, label in SEPARATORS:
+            self._separator_combo.addItem(label, userData=value)
+        text_form.addRow("Between word and number", self._separator_combo)
+        self._word_color = _ColorChoice("Death Word Color", default_label="Same as number")
+        text_form.addRow("Death word color", self._word_color)
+        self._word_size_spin = QSpinBox()
+        self._word_size_spin.setRange(30, 200)
+        self._word_size_spin.setSingleStep(10)
+        self._word_size_spin.setSuffix(" % of the number")
+        text_form.addRow("Death word size", self._word_size_spin)
+        self._bold_check = QCheckBox("Bold count")
+        text_form.addRow(self._bold_check)
+        self._spacing_spin = QSpinBox()
+        self._spacing_spin.setRange(-4, 20)
+        self._spacing_spin.setSuffix(" px")
+        text_form.addRow("Letter spacing", self._spacing_spin)
+        self._skull_size_spin = QSpinBox()
+        self._skull_size_spin.setRange(50, 300)
+        self._skull_size_spin.setSingleStep(10)
+        self._skull_size_spin.setSuffix(" % of the number")
+        text_form.addRow("Skull size", self._skull_size_spin)
         self._align_combo = QComboBox()
         for value, label in _ALIGN_LABELS:
             self._align_combo.addItem(label, userData=value)
@@ -709,6 +764,14 @@ class SettingsWindow(QDialog):
             combo.currentIndexChanged.connect(self._schedule_preview)
         self._align_combo.currentIndexChanged.connect(self._schedule_preview)
         self._count_label_edit.textChanged.connect(self._schedule_preview)
+        for combo in (self._word_position_combo, self._separator_combo):
+            combo.currentIndexChanged.connect(self._schedule_preview)
+        self._word_color.changed.connect(self._schedule_preview)
+        for spin in (
+            self._word_size_spin, self._spacing_spin, self._skull_size_spin, self._padding_spin
+        ):
+            spin.valueChanged.connect(self._schedule_preview)
+        self._bold_check.toggled.connect(self._schedule_preview)
         for choice in (
             self._ui_text_color,
             self._ui_counter_color,
@@ -780,6 +843,14 @@ class SettingsWindow(QDialog):
             SETTING_OVERLAY_SHOW_CAPTION: flag(self._show_caption_check),
             SETTING_OVERLAY_BORDER: flag(self._border_check),
             SETTING_OVERLAY_COUNT_LABEL: self._count_label_edit.text().strip(),
+            SETTING_OVERLAY_WORD_AFTER: self._word_position_combo.currentData(),
+            SETTING_OVERLAY_SEPARATOR: self._separator_combo.currentData(),
+            SETTING_OVERLAY_WORD_COLOR: self._word_color.color(),
+            SETTING_OVERLAY_WORD_SIZE: str(self._word_size_spin.value()),
+            SETTING_OVERLAY_NUMBER_BOLD: flag(self._bold_check),
+            SETTING_OVERLAY_LETTER_SPACING: str(self._spacing_spin.value()),
+            SETTING_OVERLAY_SKULL_SIZE: str(self._skull_size_spin.value()),
+            SETTING_OVERLAY_PADDING: str(self._padding_spin.value()),
             SETTING_OVERLAY_ALIGN: self._align_combo.currentData(),
         }
 
@@ -1083,6 +1154,20 @@ class SettingsWindow(QDialog):
         )
         self._border_check.setChecked(settings.get(SETTING_OVERLAY_BORDER, "true") == "true")
         self._count_label_edit.setText(settings.get(SETTING_OVERLAY_COUNT_LABEL, "DEATH"))
+        _select_data(self._word_position_combo, settings.get(SETTING_OVERLAY_WORD_AFTER, "false"))
+        _select_data(self._separator_combo, settings.get(SETTING_OVERLAY_SEPARATOR, "-"))
+        self._word_color.set_color(settings.get(SETTING_OVERLAY_WORD_COLOR, ""))
+        for spin, key, default in (
+            (self._word_size_spin, SETTING_OVERLAY_WORD_SIZE, 100),
+            (self._spacing_spin, SETTING_OVERLAY_LETTER_SPACING, 0),
+            (self._skull_size_spin, SETTING_OVERLAY_SKULL_SIZE, 150),
+            (self._padding_spin, SETTING_OVERLAY_PADDING, 16),
+        ):
+            try:
+                spin.setValue(int(settings.get(key, default)))
+            except ValueError:
+                spin.setValue(default)
+        self._bold_check.setChecked(settings.get(SETTING_OVERLAY_NUMBER_BOLD, "true") == "true")
         _select_data(self._align_combo, settings.get(SETTING_OVERLAY_ALIGN, "left"))
         self._locked_check.setChecked(settings.get(SETTING_OVERLAY_LOCKED, "false") == "true")
         self._click_through_check.setChecked(
@@ -1125,6 +1210,7 @@ class SettingsWindow(QDialog):
             )
             return False
         db = self._database
+        before = db.get_all_settings()
         for key, value in self._look_values().items():
             db.set_setting(key, value)
         db.set_setting(
@@ -1179,6 +1265,7 @@ class SettingsWindow(QDialog):
 
         logger.info("Settings saved")
         self.settings_changed.emit()
+        self.saved.emit(before)
         self.previewed = False  # what's shown is what's saved now
         self._baseline = self._state()
         return True

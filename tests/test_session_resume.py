@@ -135,7 +135,7 @@ def test_big_number_shows_all_time_by_default_and_switches_from_home(window, mon
     window._counter_manager.reset_session()  # a new session: 0 this session
     window._refresh_counters()
     assert window._counter_label.text() == "1"  # still shows the game's deaths
-    assert window._overlay._death_label.text() == "DEATH - 1"
+    assert window._overlay.count_text() == "DEATH - 1"
 
     picked: list[str] = []
 

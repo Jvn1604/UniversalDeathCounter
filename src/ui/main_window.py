@@ -20,8 +20,10 @@ from html import escape
 from pathlib import Path
 
 from PySide6.QtCore import (
+    QBuffer,
     QByteArray,
     QEvent,
+    QIODevice,
     QObject,
     QPoint,
     QPointF,
@@ -46,6 +48,7 @@ from PySide6.QtGui import (
     QShortcut,
 )
 from PySide6.QtWidgets import (
+    QApplication,
     QButtonGroup,
     QCheckBox,
     QComboBox,
@@ -153,6 +156,7 @@ from src.ui.obs_guide_window import ObsGuideWindow
 from src.ui.report_window import ErrorLogWindow, ProblemCounter, ReportBugDialog
 from src.ui.session_history_window import SessionHistoryWindow
 from src.ui.settings_window import SettingsWindow
+from src.ui.skulls import skull_pixmap, tier_index
 from src.ui.statistics_window import StatisticsWindow
 from src.ui.theme_picker import ThemeDownload
 from src.ui.timer_window import RunHistoryDialog, SplitsDialog, TimerWindow
@@ -165,10 +169,12 @@ from src.ui.widgets import (
     ResponsiveGrid,
     StatTile,
     StatusPill,
+    Toast,
     UpdateCard,
     card,
     field,
     glow,
+    guard_wheel,
     nav_button,
     page_header,
     row,
@@ -230,6 +236,7 @@ from src.utils.constants import (
     SETTING_PHONE_REMOTE_KEY,
     SETTING_QUICK_START_HIDDEN,
     SETTING_SIDEBAR_COLLAPSED,
+    SETTING_STREAM_OVERLAY,
     SETTING_THEME,
     SETTING_TIMER_AUTOSAVE,
     SETTING_TIMER_COMPARISON,
@@ -258,6 +265,7 @@ from src.utils.phone_remote import PhoneRemote, new_key
 from src.utils.platform_info import program_file_filter
 from src.utils.profiles import DEFAULT_PROFILE_NAME, ProfileManager
 from src.utils.screens import display_name, fit_to_screens, screen_index_at
+from src.utils.stream_overlay import StreamOverlay
 from src.utils.stream_writer import render_template, write_deaths_file
 from src.utils.update_checker import UpdateChecker
 from src.utils.updater import (
@@ -454,6 +462,12 @@ class MainWindow(QMainWindow):
         self._statistics_service = StatisticsService(self._database)
         self._overlay = OverlayWindow()
         self._overlay.menu_requested.connect(self._overlay_context_menu)
+        # "Hide From My Screen": the window is hidden but the overlay stays ON,
+        # so the stream page (OBS Browser Source) keeps showing it.
+        self._overlay_hidden_local = False
+        self._stream = StreamOverlay(self)
+        self._stream_skull_key: tuple = ()
+        self._last_snapshot: CounterSnapshot | None = None
         self._overlay.settings_requested.connect(self._open_overlay_settings)
         self._mini = MiniWindow()
         self._phone_remote = PhoneRemote(self)
@@ -494,6 +508,8 @@ class MainWindow(QMainWindow):
         self._build_menu()
         self._build_ui()
         self._problems.problem_logged.connect(self._on_problem_logged)
+        self._toast = Toast(self.centralWidget())
+        guard_wheel(self)  # scrolling a page never changes a drop-down or number box
         self._set_sidebar_collapsed(
             self._database.get_setting(SETTING_SIDEBAR_COLLAPSED, "false") == "true", save=False
         )
@@ -526,6 +542,8 @@ class MainWindow(QMainWindow):
         self._refresh_downloaded_themes()
         if self._database.get_setting(SETTING_PHONE_REMOTE, "false") == "true":
             self._set_phone_remote(True)
+        if self._database.get_setting(SETTING_STREAM_OVERLAY, "false") == "true":
+            self._set_stream_overlay(True)
 
     def _update_window_title(self) -> None:
         profile = self._profile_manager.active_profile
@@ -737,7 +755,7 @@ class MainWindow(QMainWindow):
             "Show or hide the overlay for OBS. Right-click the overlay for its options."
         )
         self._overlay_nav.clicked.connect(self._toggle_overlay)
-        self._overlay.visibility_changed.connect(self._overlay_nav.set_on)
+        self._overlay.visibility_changed.connect(self._on_overlay_shown)
         layout.addWidget(self._overlay_nav)
         self._nav_texts[self._overlay_nav] = "Overlay"
         for text, icon_name, handler, tip in (
@@ -1275,9 +1293,7 @@ class MainWindow(QMainWindow):
         self._watch_buttons.idClicked.connect(self._on_watch_source_changed)
         watch_layout.addLayout(watch_row)
         display_row = QHBoxLayout()
-        self._watch_display_combo = QComboBox()
-        for number, label in list_displays():
-            self._watch_display_combo.addItem(label, userData=number)
+        self._watch_display_combo = QComboBox()  # filled when the page first shows
         self._watch_display_combo.activated.connect(self._on_watch_display_picked)
         self._watch_exe_btn = QPushButton(" Change .exe…")
         self._watch_exe_btn.setObjectName("GhostButton")
@@ -1681,6 +1697,28 @@ class MainWindow(QMainWindow):
         self._nav_buttons[index].setChecked(True)
         self._page_badge.setText(_PAGE_NAMES[index])
 
+    def _on_settings_saved(self, before: dict[str, str]) -> None:
+        self._toast.show_message(
+            "Your settings are saved", "Undo", lambda: self._undo_settings(before)
+        )
+
+    def _undo_settings(self, before: dict[str, str]) -> None:
+        """Put back the settings from before the last save."""
+        db = self._database
+        now = db.get_all_settings()
+        for key, value in before.items():
+            if now.get(key) != value:
+                db.set_setting(key, value)
+        self._on_settings_changed()
+        if self._settings is not None:
+            self._settings.reload()
+        self._toast.show_message("Settings put back as they were", seconds=3, icon="undo-2")
+
+    def resizeEvent(self, event) -> None:  # noqa: N802 - keep the toast at the bottom
+        super().resizeEvent(event)
+        if self._toast.isVisible():
+            self._toast._place()
+
     def _leave_settings(self) -> bool:
         """Unsaved settings: save them, drop them, or stay (False)."""
         settings = self._settings
@@ -1717,6 +1755,7 @@ class MainWindow(QMainWindow):
             )
             self._settings.settings_changed.connect(self._on_settings_changed)
             self._settings.preview_changed.connect(self._preview_appearance)
+            self._settings.saved.connect(self._on_settings_saved)
             self._settings_host.layout().addWidget(self._settings)
         return self._settings
 
@@ -1837,6 +1876,9 @@ class MainWindow(QMainWindow):
                 "<b>+ Add game from .exe…</b> or <b>+ Add game without .exe…</b>"
             )
             return
+        if not self._watch_display_combo.count():  # listing displays takes a moment
+            for number, label in list_displays():
+                self._watch_display_combo.addItem(label, userData=number)
         display = self._screen_display(game_id)
         detection = self._database.get_game_detection(game_id)
         has_exe = detection is not None and bool(detection["exe_path"])
@@ -1880,6 +1922,7 @@ class MainWindow(QMainWindow):
     # ----------------------------------------------------------------
     def _build_tray(self) -> None:
         self._tray: QSystemTrayIcon | None = None
+        self._tray_overlay_action: QAction | None = None
         self._click_through_action: QAction | None = None
         if not QSystemTrayIcon.isSystemTrayAvailable():
             logger.info("System tray unavailable on this platform")
@@ -1913,7 +1956,7 @@ class MainWindow(QMainWindow):
         overlay_action = menu.addAction("Overlay")
         overlay_action.setCheckable(True)
         overlay_action.triggered.connect(lambda _=False: self._toggle_overlay())
-        self._overlay.visibility_changed.connect(overlay_action.setChecked)
+        self._tray_overlay_action = overlay_action
         self._add_display_menu(menu)
         # The overlay can't be right-clicked while click-through is on: turn it off here.
         self._click_through_action = menu.addAction("Overlay Click-Through")
@@ -2570,6 +2613,7 @@ class MainWindow(QMainWindow):
         self._refresh_theme_icons(settings.get(SETTING_UI_COUNTER_COLOR, "") or info.accent)
         self._refresh_artwork(settings)
         self._overlay.apply_display_settings(settings)
+        self._push_stream_state()
         self._timer_window.apply_display_settings(settings)
         self._mini.apply_display_settings(settings)
         self._overlay.set_always_on_top(
@@ -3466,6 +3510,116 @@ class MainWindow(QMainWindow):
             detection=self._detect_status_label.text(),
         )
         self._write_deaths_txt(snapshot)
+        self._last_snapshot = snapshot
+        self._push_stream_state()
+
+    # Stream overlay (OBS Browser Source) ----------------------------------
+    def _set_stream_overlay(self, on: bool) -> str:
+        """Serve the stream page (or stop it); returns its link ("" when off)."""
+        self._database.set_setting(SETTING_STREAM_OVERLAY, "true" if on else "false")
+        if not on:
+            self._stream.stop()
+            return ""
+        try:
+            self._stream.start()
+        except OSError as exc:
+            QMessageBox.warning(self, "Stream Overlay", f"Couldn't start it: {exc}")
+            return ""
+        self._push_stream_state()
+        return self._stream.url()
+
+    def _overlay_active(self) -> bool:
+        return self._overlay.isVisible() or self._overlay_hidden_local
+
+    def _push_stream_state(self) -> None:
+        """What the OBS page shows: the overlay window's content and look."""
+        if not self._stream.running:
+            return
+        overlay = self._overlay
+        settings = self._database.get_all_settings()
+        number = getattr(overlay, "_big_number", 0)
+        size = overlay._font_size
+        mode = settings.get(SETTING_OVERLAY_BG_MODE, "dark")
+        card = ""
+        if mode == "dark":
+            color = QColor(overlay._card_color)
+            card = f"rgba({color.red()},{color.green()},{color.blue()},{overlay._opacity:.2f})"
+        secondary = "#dddddd" if mode == "chroma" else overlay.secondary_color()
+        skull_px = round(size * overlay._skull_size / 100)
+        skull_key = (tier_index(number), overlay._text_color, skull_px)
+        skull_png = None
+        if skull_key != self._stream_skull_key:
+            self._stream_skull_key = skull_key
+            art = skull_pixmap(number, skull_px, "#ececf1", overlay._text_color, 2.0)
+            data = QByteArray()
+            buffer = QBuffer(data)
+            buffer.open(QIODevice.OpenModeFlag.WriteOnly)
+            art.toImage().save(buffer, "PNG")
+            skull_png = bytes(data)
+        self._stream.set_state(
+            {
+                "active": self._overlay_active(),
+                "number": number,
+                "count_html": overlay._count_style.html(number, size),
+                "game": overlay._game_label.text(),
+                "boss": overlay._boss_label.text(),
+                "caption": overlay._caption_label.text(),
+                "stats": overlay._stats_label.text(),
+                "show": {
+                    "game": overlay._show_game,
+                    "boss": overlay._show_boss,
+                    "caption": overlay._show_caption,
+                    "stats": overlay._show_stats,
+                    "skull": overlay._show_skull,
+                },
+                "align": overlay._align,
+                "font": overlay._font_family,
+                "bold": overlay._count_style.bold,
+                "spacing": overlay._count_style.letter_spacing,
+                "secondary": secondary,
+                "card": card,
+                "radius": overlay._corner_radius,
+                "padding": overlay._padding,
+                "shadow": overlay._text_outline,
+                "skull": f"{skull_key[0]}-{skull_px}-{overlay._text_color.lstrip('#')}",
+                "skull_px": skull_px,
+                "animate": True,
+            },
+            skull_png,
+        )
+
+    def _on_overlay_shown(self, visible: bool) -> None:
+        if visible:
+            self._overlay_hidden_local = False
+        on = visible or self._overlay_hidden_local
+        self._overlay_nav.set_on(on)
+        if self._tray_overlay_action is not None:
+            self._tray_overlay_action.setChecked(on)
+        self._push_stream_state()
+
+    def _hide_overlay_from_screen(self) -> None:
+        """Hide the window but keep the overlay ON for the stream (OBS Browser Source)."""
+        first_time = not self._stream.running
+        url = self._stream.url() or self._set_stream_overlay(True)
+        if not url:
+            return
+        self._overlay_hidden_local = True
+        self._overlay.hide()
+        if first_time:
+            QApplication.clipboard().setText(url)
+            QMessageBox.information(
+                self,
+                "Hidden From Your Screen",
+                "The overlay is hidden from your screen and stays ON for your stream.\n\n"
+                "Viewers see it through OBS: add a Browser Source with this link "
+                f"(copied):\n{url}\n\nOBS Setup in the sidebar shows how. "
+                "Press the overlay key or click Overlay in the sidebar to see it again.",
+            )
+
+    def _turn_overlay_off(self) -> None:
+        self._overlay_hidden_local = False
+        self._overlay.hide()
+        self._on_overlay_shown(False)
 
     def _deaths_txt_path(self) -> Path:
         raw_path = self._database.get_setting(SETTING_DEATHS_TXT_PATH, "").strip()
@@ -3738,8 +3892,17 @@ class MainWindow(QMainWindow):
             deaths_txt_path=self._deaths_txt_path(),
             show_overlay_green=self._show_overlay_for_obs,
             enable_deaths_txt=self._enable_deaths_txt,
+            enable_stream=self._enable_stream_for_obs,
             parent=self,
         ).exec()
+
+    def _enable_stream_for_obs(self) -> str:
+        """OBS Setup's Browser Source: serve the page and make sure the overlay is ON."""
+        url = self._stream.url() or self._set_stream_overlay(True)
+        if url and not self._overlay_active():
+            self._overlay_hidden_local = True  # ON for the stream, not in the player's way
+            self._on_overlay_shown(False)
+        return url
 
     def _show_overlay_for_obs(self) -> None:
         """Green-screen background (for OBS's Chroma Key) and make the overlay visible."""
@@ -3771,9 +3934,16 @@ class MainWindow(QMainWindow):
         self._update_hotkey_labels(bindings, pads)
 
     def _toggle_overlay(self) -> None:
-        self._overlay.toggle_visibility()
-        if self._overlay.isVisible():
-            self._overlay.keep_on_screen()
+        if self._overlay_hidden_local:  # hidden from the screen only: show it again
+            self._overlay_hidden_local = False
+            self._overlay.show()
+        elif self._overlay.isVisible():
+            self._turn_overlay_off()
+            return
+        else:
+            self._overlay.show()
+        self._overlay.raise_()
+        self._overlay.keep_on_screen()
 
     def _overlay_context_menu(self, position: QPoint) -> None:
         """The overlay's right-click menu: count, change its look, place it."""
@@ -3846,7 +4016,11 @@ class MainWindow(QMainWindow):
         self._add_display_menu(menu)
         menu.addSeparator()
         self._menu_action(menu, "settings", "Overlay Settings…", self._open_overlay_settings)
-        self._menu_action(menu, "eye-off", "Hide Overlay", self._toggle_overlay)
+        self._menu_action(
+            menu, "eye-off", "Hide From My Screen (stays on stream)",
+            self._hide_overlay_from_screen,
+        )
+        self._menu_action(menu, "power", "Turn Overlay Off", self._turn_overlay_off)
         menu.exec(position)
         del self._menu_icons[self._menu_icons_before:]  # this menu is gone
 
@@ -4274,6 +4448,7 @@ class MainWindow(QMainWindow):
         self._hotkey_manager.stop()
         self._gamepad_manager.stop()
         self._phone_remote.stop()
+        self._stream.stop()
         self._autosave_timer.stop()
         self._problems.close()
         self._progress_timer.stop()
