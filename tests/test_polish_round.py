@@ -133,3 +133,24 @@ def test_obs_setup_browser_source_turns_it_on(window) -> None:
     assert url.startswith("http://127.0.0.1:")
     assert window._database.get_setting("stream_overlay") == "true"
     assert window._overlay_nav.is_on()  # ON for the stream, not in the way on screen
+
+
+def test_a_second_copy_never_shares_the_stream_port() -> None:
+    from PySide6.QtWidgets import QApplication
+
+    from src.utils.stream_overlay import StreamOverlay
+
+    QApplication.instance() or QApplication([])
+    first, second = StreamOverlay(), StreamOverlay()
+    try:
+        first.start()
+        second.start(port=int(first.url().rsplit(":", 1)[1].strip("/")))
+        assert first.url() != second.url()  # the taken port is skipped, not shared
+        first.set_state({"active": True, "number": 1})
+        second.set_state({"active": True, "number": 2})
+        for overlay, number in ((first, 1), (second, 2)):
+            with urllib.request.urlopen(overlay.url() + "state", timeout=5) as response:
+                assert json.loads(response.read())["number"] == number
+    finally:
+        first.stop()
+        second.stop()

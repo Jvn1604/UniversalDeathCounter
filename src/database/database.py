@@ -73,8 +73,12 @@ class Database:
         self._connection = sqlite3.connect(str(self._db_path), check_same_thread=False)
         self._connection.row_factory = sqlite3.Row
         self._connection.execute("PRAGMA foreign_keys = ON")
+        # Settings are read all the time (every death, every look change) and
+        # only change through set_setting: kept in memory after the first read.
+        self._settings_cache: dict[str, str] | None = None
         self._create_schema()
         self._migrate_schema()
+        self._create_indexes()
         self._seed_default_settings()
         logger.info("Database initialized at %s", self._db_path)
 
@@ -257,6 +261,22 @@ class Database:
                     cursor.execute(f"ALTER TABLE speedrun_runs ADD COLUMN {column} INTEGER")
                     logger.info("Migrated schema: added %s column to speedrun_runs", column)
 
+    def _create_indexes(self) -> None:
+        """
+        Totals per session, game and boss are sums over every death: without
+        these, each one reads the whole history, slower the more you've died.
+        They include ``delta``, so a sum is read from the index alone.
+        """
+        with self._cursor() as cursor:
+            for statement in (
+                "CREATE INDEX IF NOT EXISTS idx_events_session "
+                "ON death_events (session_id, kind, delta)",
+                "CREATE INDEX IF NOT EXISTS idx_events_game ON death_events (game_id, delta)",
+                "CREATE INDEX IF NOT EXISTS idx_events_boss ON death_events (boss_id, delta)",
+                "CREATE INDEX IF NOT EXISTS idx_sessions_game ON sessions (game_id)",
+            ):
+                cursor.execute(statement)
+
     def _seed_default_settings(self) -> None:
         """Insert default settings for any keys not already present."""
         with self._cursor() as cursor:
@@ -275,7 +295,8 @@ class Database:
         cursor = self._connection.cursor()
         try:
             yield cursor
-            self._connection.commit()
+            if self._connection.in_transaction:  # only after a write: reads need no commit
+                self._connection.commit()
         except sqlite3.Error:
             self._connection.rollback()
             logger.exception("Database operation failed; transaction rolled back")
@@ -1001,12 +1022,16 @@ class Database:
     # ----------------------------------------------------------------
     # Settings
     # ----------------------------------------------------------------
+    def _settings(self) -> dict[str, str]:
+        if self._settings_cache is None:
+            with self._cursor() as cursor:
+                cursor.execute("SELECT key, value FROM settings")
+                self._settings_cache = {row["key"]: row["value"] for row in cursor.fetchall()}
+        return self._settings_cache
+
     def get_setting(self, key: str, default: str = "") -> str:
-        """Return a setting's value, or ``default`` if not set."""
-        with self._cursor() as cursor:
-            cursor.execute("SELECT value FROM settings WHERE key = ?", (key,))
-            row = cursor.fetchone()
-            return row["value"] if row is not None else default
+        """Return a setting's value, or ``default`` if not set (from memory)."""
+        return self._settings().get(key, default)
 
     def set_setting(self, key: str, value: Any) -> None:
         """Insert or update a setting value (stored as text)."""
@@ -1018,12 +1043,12 @@ class Database:
                 """,
                 (key, str(value)),
             )
+        if self._settings_cache is not None:
+            self._settings_cache[key] = str(value)
 
     def get_all_settings(self) -> dict[str, str]:
-        """Return all settings as a plain dict."""
-        with self._cursor() as cursor:
-            cursor.execute("SELECT key, value FROM settings")
-            return {row["key"]: row["value"] for row in cursor.fetchall()}
+        """Return all settings as a plain dict (a copy: changing it changes nothing)."""
+        return dict(self._settings())
 
     # ----------------------------------------------------------------
     # Full backup / restore (JSON export-import) and reset

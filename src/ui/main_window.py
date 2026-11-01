@@ -2861,14 +2861,19 @@ class MainWindow(QMainWindow):
 
     def _refresh_home(self) -> None:
         """The guide's checklist, the banner, and (while Home shows) the greeting and charts."""
-        status = self._quick_start_status()
-        if self._guide is not None:
-            self._guide.set_status(status)
-        remaining = [title for key, title in STEPS if not status[key]]
         hidden = self._database.get_setting(SETTING_QUICK_START_HIDDEN, "false") == "true"
-        if remaining and not hidden:
-            self._start_banner.set_progress(len(STEPS) - len(remaining), len(STEPS), remaining[0])
-        self._start_banner.setVisible(bool(remaining) and not hidden)
+        if self._guide is not None or not hidden:  # someone shows the checklist: check it
+            status = self._quick_start_status()
+            if self._guide is not None:
+                self._guide.set_status(status)
+            remaining = [title for key, title in STEPS if not status[key]]
+            if remaining and not hidden:
+                self._start_banner.set_progress(
+                    len(STEPS) - len(remaining), len(STEPS), remaining[0]
+                )
+            self._start_banner.setVisible(bool(remaining) and not hidden)
+        else:
+            self._start_banner.setVisible(False)
         if self._pages.currentIndex() != _PAGE_HOME:
             return
 
@@ -3366,7 +3371,8 @@ class MainWindow(QMainWindow):
 
     def _apply_counted(self, action: Callable[[], CounterSnapshot]) -> None:
         """Run a +1/-1/undo and pass the change on to a speedrun in progress."""
-        before = self._counter_manager.get_snapshot().session_deaths
+        # Only a speedrun needs the count from before (a full snapshot is 3 queries).
+        before = self._session_manager.get_session_deaths() if self._speedrun is not None else 0
         snapshot = action()
         if self._speedrun is not None:
             self._speedrun.add_deaths(

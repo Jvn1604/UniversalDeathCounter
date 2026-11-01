@@ -14,6 +14,7 @@ phone remote.
 from __future__ import annotations
 
 import json
+import socket
 import threading
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -105,6 +106,22 @@ tick();
 """
 
 
+class ExclusiveHTTPServer(ThreadingHTTPServer):
+    """
+    A server that refuses a port another program already uses. Python's
+    default allows sharing it on Windows, and then the *other* program
+    answers (e.g. a second copy of the app shows its counter in OBS).
+    """
+
+    allow_reuse_address = False
+
+    def server_bind(self) -> None:
+        exclusive = getattr(socket, "SO_EXCLUSIVEADDRUSE", None)  # Windows only
+        if exclusive is not None:
+            self.socket.setsockopt(socket.SOL_SOCKET, exclusive, 1)
+        super().server_bind()
+
+
 class StreamOverlay(QObject):
     """Serves :data:`PAGE`, its state (``/state``) and the skull (``/skull.png``)."""
 
@@ -130,7 +147,7 @@ class StreamOverlay(QObject):
         last_error: OSError | None = None
         for candidate in range(port, port + _PORT_TRIES):
             try:
-                self._server = ThreadingHTTPServer(("127.0.0.1", candidate), handler)
+                self._server = ExclusiveHTTPServer(("127.0.0.1", candidate), handler)
                 break
             except OSError as exc:
                 last_error = exc
