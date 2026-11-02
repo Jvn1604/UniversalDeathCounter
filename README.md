@@ -148,6 +148,7 @@ The **Console** page (sidebar) makes DUDC work when the game runs on a console:
 - **You always see what happened:** adding, renaming or deleting games and bosses, resets, exact counts, saves, detection changes and more each show a short message in the window.
 - **Saving is automatic:** every death is saved the moment it happens, and a full save file follows shortly after any change and when you close (*✓ Auto-saved* at the top shows when). **Save Progress** only makes an extra copy.
 - **Found a bug?** The bug icon writes a report you can paste into the **[bug sheet](https://docs.google.com/spreadsheets/d/1pvzlu8mhHzvvKCHb-E5NDlmtqT-gW0ZHRZUMq2xmtaw/edit?usp=sharing)** (⋮ → Bug Sheet), or open it on GitHub.
+- **Only what you use:** switch off the speedrun timer, Stats, the Console page or mini mode in **Settings → General → Features**. They disappear from the sidebar, menus and tray, their keys are freed (the timer's number-pad keys go back to other apps) and their background work stops. Your data stays, and switching one back on brings it all back.
 - **Mini mode:** a tiny always-on-top window with the count, +1 and Undo, for one-monitor setups. Sidebar or tray.
 - **Right-click the Game or Boss box** to rename it or mark the boss defeated, without opening Games & Bosses.
 - **Tray menu** has +1, Undo, Boss Defeated, pause detection, start/split the timer, the timer window, mini mode and the overlay.
