@@ -200,6 +200,7 @@ from src.utils.constants import (
     DETECTION_MODE_OFF,
     DETECTION_MODE_SOULS,
     DETECTION_MODE_TEMPLATE,
+    FEATURES,
     ICONS_DIR,
     OPTION_OBS_SOURCE,
     OPTION_SCREEN_DISPLAY,
@@ -1928,6 +1929,14 @@ class MainWindow(QMainWindow):
     def _feature_on(self, key: str) -> bool:
         return self._database.get_setting(key, "true") == "true"
 
+    def _show_feature_pages(self, states: dict[str, bool]) -> None:
+        """Sidebar entries for the features ticked (live while ticking in Settings)."""
+        for key, index in ((SETTING_FEATURE_TIMER, _PAGE_TIMER),
+                           (SETTING_FEATURE_STATS, _PAGE_STATS),
+                           (SETTING_FEATURE_CONSOLE, _PAGE_CONSOLE)):
+            self._nav_buttons[index].setVisible(states.get(key, True))
+        self._mini_nav.setVisible(states.get(SETTING_FEATURE_MINI, True))
+
     def _apply_features(self) -> None:
         """Show what's switched on; hide what's off, free its keys, stop its work."""
         if not hasattr(self, "_mini_nav"):
@@ -1935,16 +1944,10 @@ class MainWindow(QMainWindow):
         timer = self._feature_on(SETTING_FEATURE_TIMER)
         console = self._feature_on(SETTING_FEATURE_CONSOLE)
         mini = self._feature_on(SETTING_FEATURE_MINI)
-        shown = {
-            _PAGE_TIMER: timer,
-            _PAGE_STATS: self._feature_on(SETTING_FEATURE_STATS),
-            _PAGE_CONSOLE: console,
-        }
-        for index, on in shown.items():
-            self._nav_buttons[index].setVisible(on)
-        if not shown.get(self._pages.currentIndex(), True):
+        states = {key: self._feature_on(key) for key, _label, _tip in FEATURES}
+        self._show_feature_pages(states)
+        if not self._nav_buttons[self._pages.currentIndex()].isVisibleTo(self):
             self._show_page(_PAGE_HOME)
-        self._mini_nav.setVisible(mini)
         for key, actions in self._tray_feature_actions.items():
             for action in actions:
                 action.setVisible(self._feature_on(key))
@@ -2026,6 +2029,7 @@ class MainWindow(QMainWindow):
             self._settings.settings_changed.connect(self._on_settings_changed)
             self._settings.preview_changed.connect(self._preview_appearance)
             self._settings.saved.connect(self._on_settings_saved)
+            self._settings.features_previewed.connect(self._show_feature_pages)
             self._settings_host.layout().addWidget(self._settings)
         return self._settings
 
