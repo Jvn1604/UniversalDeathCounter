@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import os
 import sqlite3
 import tempfile
 import threading
@@ -117,6 +118,8 @@ from src.detection.matchers import (
 from src.detection.obs_client import DEFAULT_HOST as OBS_DEFAULT_HOST
 from src.detection.obs_client import DEFAULT_PORT as OBS_DEFAULT_PORT
 from src.detection.obs_client import ObsClient, ObsError
+from src.detection.save_deaths import find_known_saves
+from src.detection.save_watcher import SaveWatcher, load_config, shown_count
 from src.hotkeys.gamepad import GamepadManager, combo_label
 from src.hotkeys.hotkey_manager import HotkeyManager
 from src.overlay.overlay_window import OverlayWindow, available_screen_rects
@@ -237,6 +240,7 @@ from src.utils.constants import (
     SETTING_PHONE_REMOTE,
     SETTING_PHONE_REMOTE_KEY,
     SETTING_QUICK_START_HIDDEN,
+    SETTING_SAVE_DEATHS_PREFIX,
     SETTING_SIDEBAR_COLLAPSED,
     SETTING_STREAM_OVERLAY,
     SETTING_THEME,
@@ -371,6 +375,7 @@ _COUNTER_CAPTIONS = {
     "boss": "DEATHS ON THIS BOSS",
     "total": "ALL-TIME DEATHS",
     "run": "DEATHS THIS RUN",
+    "save": "IN-GAME DEATHS (SAVE FILE)",
 }
 
 
@@ -480,6 +485,9 @@ class MainWindow(QMainWindow):
         self._timer_window.action_requested.connect(self._on_timer_window_action)
         self._speedrun: SpeedrunController | None = None
         self._death_watcher = DeathWatcher(parent=self)
+        self._save_watcher = SaveWatcher(self)
+        self._save_watcher.config_changed.connect(self._on_save_config_changed)
+        self._save_watcher.status_changed.connect(self._on_save_status)
         self._log_watcher = LogWatcher(parent=self)
         self._detection_paused = False  # not persisted: every launch starts active
         self._quitting = False
@@ -1354,6 +1362,7 @@ class MainWindow(QMainWindow):
         for button in (setup_button, capture_button, self._pause_btn_detect):
             button.setMinimumHeight(42)
         layout.addLayout(row(setup_button, capture_button, self._pause_btn_detect))
+        layout.addWidget(self._build_save_card())
 
         tips, tips_layout = card(margins=18)
         tips_layout.addWidget(section_title("How it learns"))
@@ -1373,6 +1382,194 @@ class MainWindow(QMainWindow):
         layout.addWidget(tips)
         layout.addStretch()
         return page
+
+    def _build_save_card(self) -> QWidget:
+        """The game's own death count, read from its save file."""
+        save, save_layout = card(margins=18)
+        save_layout.addWidget(section_title("In-game death count (save file)"))
+        intro = QLabel(
+            "Shows the death total the game itself keeps in your save: every death of "
+            "that character, from before you used this app too, and from earlier NG+ "
+            "cycles. Pick the save, then play: after your next 2 deaths it knows where "
+            "the count is. Only the file is read."
+        )
+        intro.setObjectName("Muted")
+        intro.setWordWrap(True)
+        save_layout.addWidget(intro)
+        self._save_combo = QComboBox()
+        # Long paths mustn't widen the page: the full path is in each item's tooltip.
+        self._save_combo.setSizeAdjustPolicy(
+            QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon
+        )
+        self._save_combo.setMinimumContentsLength(24)
+        self._save_combo.activated.connect(self._on_save_picked)
+        choose = QPushButton(" Choose File…")
+        icons.set_icon(choose, "folder-open", size=16)
+        choose.clicked.connect(self._choose_save_file)
+        self._save_forget_btn = QPushButton(" Stop")
+        self._save_forget_btn.setObjectName("GhostButton")
+        self._save_forget_btn.setToolTip(
+            "Stop reading this game's save (and forget what it learned)."
+        )
+        self._save_forget_btn.clicked.connect(self._forget_save_file)
+        save_layout.addLayout(
+            row(self._save_combo, choose, self._save_forget_btn, stretch=(1, 0, 0))
+        )
+        self._save_status = QLabel()
+        self._save_status.setWordWrap(True)
+        save_layout.addWidget(self._save_status)
+        self._save_cycle_check = QCheckBox("Count this cycle only (NG+)")
+        self._save_cycle_check.setToolTip(
+            "Show the deaths since the cycle started, instead of the save's whole total."
+        )
+        self._save_cycle_check.toggled.connect(self._on_save_cycle_toggled)
+        self._save_cycle_btn = QPushButton(" New Cycle Starts Now")
+        icons.set_icon(self._save_cycle_btn, "refresh-cw", size=16)
+        self._save_cycle_btn.clicked.connect(self._start_save_cycle)
+        self._save_show_btn = QPushButton(" Show as the Big Number")
+        icons.set_icon(self._save_show_btn, "skull", size=16)
+        self._save_show_btn.clicked.connect(
+            lambda: self._set_overlay_setting(SETTING_OVERLAY_COUNTER_SOURCE, "save")
+        )
+        cycle_row = QHBoxLayout()
+        cycle_row.addWidget(self._save_cycle_check)
+        cycle_row.addWidget(self._save_cycle_btn)
+        cycle_row.addStretch()
+        cycle_row.addWidget(self._save_show_btn)
+        save_layout.addLayout(cycle_row)
+        self._save_card = save
+        return save
+
+    # Save-file death count -------------------------------------------
+    def _save_config(self, game_id: int | None = None) -> dict:
+        game_id = self._counter_manager.current_game_id if game_id is None else game_id
+        if game_id is None:
+            return {}
+        return load_config(
+            self._database.get_setting(f"{SETTING_SAVE_DEATHS_PREFIX}{game_id}", "")
+        )
+
+    def _write_save_config(self, game_id: int, config: dict) -> None:
+        self._database.set_setting(
+            f"{SETTING_SAVE_DEATHS_PREFIX}{game_id}",
+            json.dumps(config) if config.get("path") else "",
+        )
+
+    def _configure_save_watcher(self) -> None:
+        game_id = self._counter_manager.current_game_id
+        total = self._counter_manager.get_snapshot().total_deaths if game_id is not None else 0
+        self._save_watcher.set_game(game_id, self._save_config(), total)
+        self._refresh_save_card()
+
+    def _on_save_config_changed(self, game_id: int, config: dict) -> None:
+        stored = self._save_config(game_id)
+        # The player's own choices win over the watcher's copy.
+        config.update({k: stored[k] for k in ("cycle_only", "cycle_base") if k in stored})
+        self._write_save_config(game_id, config)
+        if game_id == self._counter_manager.current_game_id:
+            self._refresh_counters()
+            self._refresh_save_card()
+
+    def _on_save_status(self, _text: str) -> None:
+        self._refresh_save_card()
+
+    def _refresh_save_card(self) -> None:
+        if not hasattr(self, "_save_combo"):
+            return
+        game_id = self._counter_manager.current_game_id
+        self._save_card.setVisible(game_id is not None)
+        config = self._save_config()
+        path = config.get("path", "")
+        self._save_combo.blockSignals(True)
+        self._save_combo.clear()
+        self._save_combo.addItem("Choose this game's save…", userData="")
+        for game, found in find_known_saves():
+            self._save_combo.addItem(f"{game} ({found.name})", userData=str(found))
+        if path and self._save_combo.findData(path) < 0:
+            self._save_combo.addItem(Path(path).name, userData=path)
+        for index in range(1, self._save_combo.count()):
+            self._save_combo.setItemData(
+                index, self._save_combo.itemData(index), Qt.ItemDataRole.ToolTipRole
+            )
+        self._save_combo.setCurrentIndex(max(0, self._save_combo.findData(path)))
+        self._save_combo.blockSignals(False)
+        self._save_forget_btn.setVisible(bool(path))
+        status = self._save_watcher.status if path else ""
+        self._save_status.setText(status or (
+            "Not set up. Elden Ring, Sekiro and Dark Souls II/III saves are listed when "
+            "found; for other games choose the save file."
+        ))
+        has_count = config.get("last") is not None
+        for widget in (self._save_cycle_check, self._save_cycle_btn, self._save_show_btn):
+            widget.setEnabled(has_count)
+        self._save_cycle_check.blockSignals(True)
+        self._save_cycle_check.setChecked(bool(config.get("cycle_only")))
+        self._save_cycle_check.blockSignals(False)
+        base = config.get("cycle_base")
+        self._save_cycle_btn.setToolTip(
+            "You just started a new cycle (NG+): count from here."
+            + (f" This cycle started at {base:,} deaths." if base is not None else "")
+        )
+
+    def _set_save_file(self, path: str) -> None:
+        game_id = self._counter_manager.current_game_id
+        if game_id is None or path == self._save_config().get("path", ""):
+            return
+        self._write_save_config(game_id, {"path": path} if path else {})
+        self._configure_save_watcher()
+        self._refresh_counters()
+        if path:
+            self._toast.show_message(
+                f"Reading {Path(path).name}. Die as usual: after 2 deaths the game's "
+                "own count appears.", seconds=6, icon="save",
+            )
+
+    def _on_save_picked(self, index: int) -> None:
+        path = self._save_combo.itemData(index) or ""
+        if path:
+            self._set_save_file(path)
+        else:
+            self._choose_save_file()
+
+    def _choose_save_file(self) -> None:
+        if self._counter_manager.current_game_id is None:
+            return
+        start = self._save_config().get("path") or os.environ.get("APPDATA", "")
+        path, _ = QFileDialog.getOpenFileName(
+            self, "The Game's Save File", start, "All files (*)"
+        )
+        if path:
+            self._set_save_file(path)
+        else:
+            self._refresh_save_card()
+
+    def _forget_save_file(self) -> None:
+        self._set_save_file("")
+        self._toast.say("Stopped reading the save")
+
+    def _on_save_cycle_toggled(self, on: bool) -> None:
+        game_id = self._counter_manager.current_game_id
+        if game_id is None:
+            return
+        config = self._save_config()
+        config["cycle_only"] = on
+        if on and config.get("cycle_base") is None:
+            config["cycle_base"] = config.get("last") or 0
+        self._write_save_config(game_id, config)
+        self._refresh_counters()
+        self._refresh_save_card()
+
+    def _start_save_cycle(self) -> None:
+        game_id = self._counter_manager.current_game_id
+        if game_id is None:
+            return
+        config = self._save_config()
+        config["cycle_base"] = config.get("last") or 0
+        config["cycle_only"] = True
+        self._write_save_config(game_id, config)
+        self._refresh_counters()
+        self._refresh_save_card()
+        self._toast.say(f"New cycle: counting from {config['cycle_base']:,} deaths")
 
     # Console ----------------------------------------------------------
     def _build_console_page(self) -> QWidget:
@@ -3385,6 +3582,7 @@ class MainWindow(QMainWindow):
         self._refresh_counters()
         self._detect_last_label.setText("")
         self._configure_detection()
+        self._configure_save_watcher()
         self._load_speedrun()
         self._refresh_artwork()
 
@@ -3485,6 +3683,7 @@ class MainWindow(QMainWindow):
             ("session", "Deaths this session"),
             ("boss", "Deaths on this boss"),
             ("run", "Deaths this speedrun run"),
+            ("save", "In-game deaths (from the save file)"),
         ):
             action = menu.addAction(text)
             action.setCheckable(True)
@@ -3528,18 +3727,23 @@ class MainWindow(QMainWindow):
 
     def _apply_snapshot(self, snapshot: CounterSnapshot) -> None:
         snapshot.run_deaths = self._run_deaths()
+        save_config = self._save_config()
+        snapshot.save_deaths = shown_count(save_config) or 0
+        self._save_watcher.note_deaths(snapshot.total_deaths)
         source = self._database.get_setting(SETTING_OVERLAY_COUNTER_SOURCE, DEFAULT_COUNTER_SOURCE)
         big_numbers = {
             "session": snapshot.session_deaths,
             "boss": snapshot.boss_deaths,
             "total": snapshot.total_deaths,
             "run": snapshot.run_deaths,
+            "save": snapshot.save_deaths,
         }
         self._counter_label.setText(str(big_numbers.get(source, snapshot.session_deaths)))
         self._skull_badge.set_count(big_numbers.get(source, snapshot.session_deaths))
         self._home_refresh.start()
         self._counter_caption.setText(
-            _COUNTER_CAPTIONS.get(source, _COUNTER_CAPTIONS[DEFAULT_COUNTER_SOURCE])
+            "IN-GAME DEATHS THIS CYCLE" if source == "save" and save_config.get("cycle_only")
+            else _COUNTER_CAPTIONS.get(source, _COUNTER_CAPTIONS[DEFAULT_COUNTER_SOURCE])
         )
         self._tile_session.set_value(str(snapshot.session_deaths))
         boss = str(snapshot.boss_deaths) if snapshot.boss_name else "–"
@@ -4050,7 +4254,8 @@ class MainWindow(QMainWindow):
             "Big Number Shows",
             SETTING_OVERLAY_COUNTER_SOURCE,
             (("total", "All-Time", True), ("session", "This Session", True),
-             ("boss", "This Boss", True), ("run", "This Speedrun Run", True)),
+             ("boss", "This Boss", True), ("run", "This Speedrun Run", True),
+             ("save", "In-Game (Save File)", True)),
             settings.get(SETTING_OVERLAY_COUNTER_SOURCE, DEFAULT_COUNTER_SOURCE),
         )
         has_image = bool(settings.get(SETTING_OVERLAY_BG_IMAGE, ""))
@@ -4543,6 +4748,7 @@ class MainWindow(QMainWindow):
         self._page_timer.stop()
         self._death_watcher.stop()
         self._log_watcher.stop()
+        self._save_watcher.stop()
         self._overlay.close()
         self._timer_window.close()
         self._mini.close()

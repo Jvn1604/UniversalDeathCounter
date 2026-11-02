@@ -29,6 +29,7 @@ class CounterSnapshot:
     total_deaths: int
     boss_deaths: int = 0
     run_deaths: int = 0  # the speedrun in progress (filled in by the main window)
+    save_deaths: int = 0  # the game's own count, from its save file (main window)
 
 
 class CounterManager:

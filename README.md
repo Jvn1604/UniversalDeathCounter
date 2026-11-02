@@ -76,6 +76,7 @@ No Python or anything else needed. Windows 10 or 11, macOS 11 or newer, or a 64-
 - **No death screen? Use the health bar.** Mark your health bar once at full health, and a death counts when it empties.
 - **Or the game's log file.** For games that log deaths, such as Minecraft, it counts every new line that matches your text. This mode doesn't capture the screen at all.
 - **Missed a death?** Add another death screen in two clicks. Any saved one counts.
+- **The game's own death count, from your save file** (Detection page): every death the game has recorded for that character, including deaths from before you installed DUDC and from earlier NG+ cycles, with an optional *this cycle only* count. Elden Ring, Sekiro and Dark Souls II/III saves are found by themselves; for other games, pick the save. It learns where the count is from your next two deaths (counted as usual), then shows it as the big number if you like (*In-Game (Save File)*). Works with any save that isn't encrypted (Dark Souls II/III's are decrypted on Windows). Only the file is read.
 - **Switches to the right game** when you launch it. A new session starts after a break of 16 hours or more; a restart, crash or update in between continues the same session, and the **Sessions** button next to Undo brings back any earlier one.
 - **Screen capture only:** no memory reading and no injection, so it's safe with anti-cheat.
 

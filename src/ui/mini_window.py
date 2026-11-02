@@ -20,7 +20,8 @@ from src.utils.constants import DEFAULT_COUNTER_SOURCE
 
 MINI_WINDOW_TITLE = "DUDC Mini"
 _CAPTIONS = {
-    "session": "THIS SESSION", "boss": "THIS BOSS", "total": "ALL-TIME", "run": "THIS RUN"
+    "session": "THIS SESSION", "boss": "THIS BOSS", "total": "ALL-TIME", "run": "THIS RUN",
+    "save": "IN-GAME",
 }
 
 
@@ -115,6 +116,7 @@ class MiniWindow(CaptureWindow):
             "boss": snapshot.boss_deaths,
             "total": snapshot.total_deaths,
             "run": snapshot.run_deaths,
+            "save": snapshot.save_deaths,
         }
         self._count.setText(str(values.get(self._counter_source, snapshot.session_deaths)))
         self._caption.setText(_CAPTIONS.get(self._counter_source, _CAPTIONS["session"]))
