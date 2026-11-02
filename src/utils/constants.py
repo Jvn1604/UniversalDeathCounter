@@ -57,14 +57,13 @@ CREATOR_CHANNEL_URL: str = "https://www.youtube.com/@ImDePhantom"
 
 def _in_program_files(folder: Path) -> bool:
     """Whether ``folder`` is inside Program Files (either one)."""
-    roots = {
-        os.environ.get(name, "")
-        for name in ("ProgramFiles", "ProgramFiles(x86)", "ProgramW6432")
-    }
-    folder_text = str(folder).lower().rstrip("\\") + "\\"
-    return any(
-        root and folder_text.startswith(root.lower().rstrip("\\") + "\\") for root in roots
-    )
+    parts = [part.lower() for part in folder.parts]
+    for name in ("ProgramFiles", "ProgramFiles(x86)", "ProgramW6432"):
+        root = os.environ.get(name, "")
+        root_parts = [part.lower() for part in Path(root).parts] if root else []
+        if root_parts and parts[: len(root_parts)] == root_parts:
+            return True
+    return False
 
 
 def _is_frozen() -> bool:
