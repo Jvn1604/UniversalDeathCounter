@@ -112,3 +112,14 @@ def test_the_switches_are_in_settings(window) -> None:
     window._toast.action.click()  # Undo puts it back
     assert window._feature_on(SETTING_FEATURE_TIMER)
     assert window._nav_buttons[_PAGE_TIMER].isVisibleTo(window)
+
+
+def test_the_sidebar_follows_the_ticks_before_saving(window) -> None:
+    from src.ui.main_window import _PAGE_SETTINGS, _PAGE_TIMER
+
+    window._show_page(_PAGE_SETTINGS)
+    settings = window._settings
+    settings._feature_checks[SETTING_FEATURE_TIMER].setChecked(False)
+    assert not window._nav_buttons[_PAGE_TIMER].isVisibleTo(window)  # right away
+    settings.reload()  # Discard Changes
+    assert window._nav_buttons[_PAGE_TIMER].isVisibleTo(window)

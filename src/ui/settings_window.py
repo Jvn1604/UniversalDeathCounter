@@ -331,6 +331,7 @@ class SettingsWindow(QDialog):
 
     settings_changed = Signal()
     preview_changed = Signal(dict)
+    features_previewed = Signal(dict)  # {feature setting: on} as ticked, before saving
     saved = Signal(dict)  # the settings from before this save (for Undo)
     TAB_GENERAL, TAB_APPEARANCE, TAB_OVERLAY, TAB_SPEEDRUN, TAB_CONTROLS = range(5)
 
@@ -518,6 +519,12 @@ class SettingsWindow(QDialog):
 
         # --- Streaming (deaths.txt) ---
         self._feature_checks[SETTING_FEATURE_TIMER].toggled.connect(self._show_timer_settings)
+        for check in self._feature_checks.values():
+            check.toggled.connect(
+                lambda _on: self.features_previewed.emit(
+                    {key: c.isChecked() for key, c in self._feature_checks.items()}
+                )
+            )
 
         stream_group = QGroupBox("Streaming — deaths.txt for OBS Text Source")
         stream_form = QFormLayout(stream_group)
