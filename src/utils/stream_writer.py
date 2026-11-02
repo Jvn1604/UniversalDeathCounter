@@ -36,7 +36,7 @@ def render_template(template: str, snapshot: CounterSnapshot, counter_source: st
     Args:
         template: The user-defined template string.
         snapshot: The current counter state.
-        counter_source: "session", "boss", "total" or "run" — which number the
+        counter_source: "session", "boss", "total", "run" or "save" — which number the
             generic ``{deaths}`` placeholder resolves to.
 
     Returns:
@@ -47,6 +47,7 @@ def render_template(template: str, snapshot: CounterSnapshot, counter_source: st
         "boss": snapshot.boss_deaths,
         "total": snapshot.total_deaths,
         "run": snapshot.run_deaths,
+        "save": snapshot.save_deaths,
     }
     deaths = source_values.get(counter_source, snapshot.session_deaths)
 

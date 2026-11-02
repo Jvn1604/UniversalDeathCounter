@@ -53,7 +53,8 @@ logger = get_logger(__name__)
 __all__ = ["CHROMA_GREEN", "DEFAULT_CARD_COLOR", "OverlayWindow", "available_screen_rects"]
 
 _CAPTIONS = {
-    "session": "THIS SESSION", "boss": "THIS BOSS", "total": "ALL-TIME", "run": "THIS RUN"
+    "session": "THIS SESSION", "boss": "THIS BOSS", "total": "ALL-TIME", "run": "THIS RUN",
+    "save": "IN-GAME",
 }
 _SKULL_BODY = "#ececf1"
 _ALIGNMENTS = {
@@ -239,6 +240,7 @@ class OverlayWindow(CaptureWindow):
             "boss": snapshot.boss_deaths,
             "total": snapshot.total_deaths,
             "run": snapshot.run_deaths,
+            "save": snapshot.save_deaths,
         }
         big_number = source_values.get(self._counter_source, snapshot.session_deaths)
 

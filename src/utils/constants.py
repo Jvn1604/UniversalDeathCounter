@@ -169,6 +169,9 @@ BUG_SHEET_URL: str = (
     "https://docs.google.com/spreadsheets/d/1pvzlu8mhHzvvKCHb-E5NDlmtqT-gW0ZHRZUMq2xmtaw/"
     "edit?usp=sharing"
 )
+# Per game (+ the game id): JSON with the save path, the learned spot, the last
+# count and the NG+ cycle choice.
+SETTING_SAVE_DEATHS_PREFIX: str = "save_deaths_"
 SETTING_STREAM_OVERLAY: str = "stream_overlay"  # "true" = OBS Browser Source page is served
 # Console players
 SETTING_PHONE_REMOTE: str = "phone_remote_enabled"  # "true" = serve the phone page
