@@ -54,6 +54,7 @@ from src.utils.backgrounds import IMAGE_FILTER, import_background
 from src.utils.constants import (
     CONTROL_ACTIONS,
     DEFAULT_COUNTER_SOURCE,
+    FEATURES,
     SETTING_BOSS_AUTO_ADVANCE,
     SETTING_BOSS_AUTO_SPLIT,
     SETTING_BOSS_DETECTION,
@@ -62,6 +63,7 @@ from src.utils.constants import (
     SETTING_DEATHS_TXT_ENABLED,
     SETTING_DEATHS_TXT_PATH,
     SETTING_DEATHS_TXT_TEMPLATE,
+    SETTING_FEATURE_TIMER,
     SETTING_GAME_ARTWORK,
     SETTING_MINIMIZE_TO_TRAY,
     SETTING_OVERLAY_ALIGN,
@@ -394,6 +396,11 @@ class SettingsWindow(QDialog):
                 values[id(widget)] = widget.text()
         return values
 
+    def _show_timer_settings(self, on: bool) -> None:
+        """The Speedrun tab and the boss-split option only with the timer switched on."""
+        self._tabs.setTabVisible(self.TAB_SPEEDRUN, on)
+        self._boss_checks[SETTING_BOSS_AUTO_SPLIT].setVisible(on)
+
     def _space_out(self) -> None:
         """Clear gaps: between the sections, and between the rows inside them."""
         for form in self.findChildren(QFormLayout):
@@ -475,6 +482,25 @@ class SettingsWindow(QDialog):
         general_form.addRow(self._check_updates_check)
         layout.addWidget(general_group)
 
+        features_group = QGroupBox("Features")
+        features_layout = QVBoxLayout(features_group)
+        features_layout.setSpacing(12)
+        features_note = QLabel(
+            "Switch off what you don't use: it disappears from the sidebar, menus and "
+            "tray, and its keys and background work stop. Your data stays; switch it "
+            "back on any time."
+        )
+        features_note.setWordWrap(True)
+        features_note.setStyleSheet("color: #999999; font-size: 11px;")
+        features_layout.addWidget(features_note)
+        self._feature_checks: dict[str, QCheckBox] = {}
+        for key, label, tip in FEATURES:
+            check = QCheckBox(label)
+            check.setToolTip(tip)
+            features_layout.addWidget(check)
+            self._feature_checks[key] = check
+        layout.addWidget(features_group)
+
         boss_group = QGroupBox("Boss kills")
         boss_layout = QVBoxLayout(boss_group)
         self._boss_checks: dict[str, QCheckBox] = {}
@@ -492,6 +518,8 @@ class SettingsWindow(QDialog):
         layout.addWidget(boss_group)
 
         # --- Streaming (deaths.txt) ---
+        self._feature_checks[SETTING_FEATURE_TIMER].toggled.connect(self._show_timer_settings)
+
         stream_group = QGroupBox("Streaming — deaths.txt for OBS Text Source")
         stream_form = QFormLayout(stream_group)
 
@@ -1131,6 +1159,9 @@ class SettingsWindow(QDialog):
         )
         for key, check in self._boss_checks.items():
             check.setChecked(settings.get(key, "true") == "true")
+        for key, check in self._feature_checks.items():
+            check.setChecked(settings.get(key, "true") == "true")
+        self._show_timer_settings(settings.get(SETTING_FEATURE_TIMER, "true") == "true")
 
         _select_data(self._bg_mode_combo, settings.get(SETTING_OVERLAY_BG_MODE, "dark"))
         _select_data(
@@ -1233,6 +1264,8 @@ class SettingsWindow(QDialog):
             "true" if self._check_updates_check.isChecked() else "false",
         )
         for key, check in self._boss_checks.items():
+            db.set_setting(key, "true" if check.isChecked() else "false")
+        for key, check in self._feature_checks.items():
             db.set_setting(key, "true" if check.isChecked() else "false")
 
         db.set_setting(

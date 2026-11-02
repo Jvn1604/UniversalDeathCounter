@@ -192,6 +192,22 @@ SETTING_DEATHS_TXT_TEMPLATE: str = "deaths_txt_template"
 # --- v1.5 quality of life ---
 SETTING_MINIMIZE_TO_TRAY: str = "minimize_to_tray"
 SETTING_CONFIRM_CLOSE: str = "confirm_close"
+# Features the player can switch off (Settings → General → Features): hidden
+# from the sidebar, menus and tray, their keys freed and their work stopped.
+# Turning one back on brings it all back; no data is removed.
+SETTING_FEATURE_TIMER: str = "feature_timer"
+SETTING_FEATURE_STATS: str = "feature_stats"
+SETTING_FEATURE_CONSOLE: str = "feature_console"
+SETTING_FEATURE_MINI: str = "feature_mini"
+FEATURES: tuple[tuple[str, str, str], ...] = (
+    (SETTING_FEATURE_TIMER, "Speedrun timer",
+     "Timer page, timer window and the timer keys (Num 1 and others go back to "
+     "other apps)."),
+    (SETTING_FEATURE_STATS, "Stats", "The Stats page with graphs."),
+    (SETTING_FEATURE_CONSOLE, "Console players",
+     "Console page: phone remote and reading a capture card from OBS."),
+    (SETTING_FEATURE_MINI, "Mini mode", "The tiny always-on-top counter window."),
+)
 SETTING_SIDEBAR_COLLAPSED: str = "sidebar_collapsed"
 SETTING_GAME_ARTWORK: str = "game_artwork"  # "true" = faded game banner behind the cards
 SETTING_CHECK_UPDATES: str = "check_updates"

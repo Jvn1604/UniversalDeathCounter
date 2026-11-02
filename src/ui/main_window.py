@@ -214,6 +214,10 @@ from src.utils.constants import (
     SETTING_DEATHS_TXT_PATH,
     SETTING_DEATHS_TXT_TEMPLATE,
     SETTING_DETECTION_COOLDOWN,
+    SETTING_FEATURE_CONSOLE,
+    SETTING_FEATURE_MINI,
+    SETTING_FEATURE_STATS,
+    SETTING_FEATURE_TIMER,
     SETTING_GAME_ARTWORK,
     SETTING_HOTKEY_CALIBRATE,
     SETTING_HOTKEY_UNDO,
@@ -555,7 +559,8 @@ class MainWindow(QMainWindow):
         self._recovery_timer.start(0)
         self._maybe_check_updates()
         self._refresh_downloaded_themes()
-        if self._database.get_setting(SETTING_PHONE_REMOTE, "false") == "true":
+        if (self._database.get_setting(SETTING_PHONE_REMOTE, "false") == "true"
+                and self._feature_on(SETTING_FEATURE_CONSOLE)):
             self._set_phone_remote(True)
         if self._database.get_setting(SETTING_STREAM_OVERLAY, "false") == "true":
             self._set_stream_overlay(True)
@@ -800,6 +805,8 @@ class MainWindow(QMainWindow):
             button.clicked.connect(handler)
             layout.addWidget(button)
             self._nav_texts[button] = text
+            if text == "Mini Mode":
+                self._mini_nav = button
         settings_button = nav_button("Settings", "settings")
         settings_button.setToolTip("Look, themes, overlay, timer and controls")
         settings_button.clicked.connect(lambda: self._show_page(_PAGE_SETTINGS))
@@ -1918,6 +1925,46 @@ class MainWindow(QMainWindow):
         self._nav_buttons[index].setChecked(True)
         self._page_badge.setText(_PAGE_NAMES[index])
 
+    def _feature_on(self, key: str) -> bool:
+        return self._database.get_setting(key, "true") == "true"
+
+    def _apply_features(self) -> None:
+        """Show what's switched on; hide what's off, free its keys, stop its work."""
+        if not hasattr(self, "_mini_nav"):
+            return
+        timer = self._feature_on(SETTING_FEATURE_TIMER)
+        console = self._feature_on(SETTING_FEATURE_CONSOLE)
+        mini = self._feature_on(SETTING_FEATURE_MINI)
+        shown = {
+            _PAGE_TIMER: timer,
+            _PAGE_STATS: self._feature_on(SETTING_FEATURE_STATS),
+            _PAGE_CONSOLE: console,
+        }
+        for index, on in shown.items():
+            self._nav_buttons[index].setVisible(on)
+        if not shown.get(self._pages.currentIndex(), True):
+            self._show_page(_PAGE_HOME)
+        self._mini_nav.setVisible(mini)
+        for key, actions in self._tray_feature_actions.items():
+            for action in actions:
+                action.setVisible(self._feature_on(key))
+        if not timer:
+            self._timer_window.hide()
+            source = self._database.get_setting(
+                SETTING_OVERLAY_COUNTER_SOURCE, DEFAULT_COUNTER_SOURCE
+            )
+            if source == "run":  # nothing to count without the timer
+                self._database.set_setting(SETTING_OVERLAY_COUNTER_SOURCE, "total")
+        if not mini and self._mini.isVisible():
+            self._exit_mini_mode()
+        if not console and self._phone_remote.running:
+            self._phone_remote.stop()  # the setting stays: it's back with the feature
+            self._set_phone_ui()
+        elif (console and not self._phone_remote.running
+              and self._database.get_setting(SETTING_PHONE_REMOTE, "false") == "true"
+              and hasattr(self, "_autosave_timer")):  # not during startup: it starts then
+            self._set_phone_remote(True)
+
     def _on_settings_saved(self, before: dict[str, str]) -> None:
         self._toast.show_message(
             "Your settings are saved", "Undo", lambda: self._undo_settings(before)
@@ -1930,6 +1977,8 @@ class MainWindow(QMainWindow):
         for key, value in before.items():
             if now.get(key) != value:
                 db.set_setting(key, value)
+        for key in now.keys() - before.keys():  # saved for the first time: back to default
+            db.delete_setting(key)
         self._on_settings_changed()
         if self._settings is not None:
             self._settings.reload()
@@ -2142,6 +2191,7 @@ class MainWindow(QMainWindow):
     # System tray
     # ----------------------------------------------------------------
     def _build_tray(self) -> None:
+        self._tray_feature_actions: dict[str, tuple[QAction, ...]] = {}
         self._tray: QSystemTrayIcon | None = None
         self._tray_overlay_action: QAction | None = None
         self._click_through_action: QAction | None = None
@@ -2173,6 +2223,10 @@ class MainWindow(QMainWindow):
         timer_window_action.triggered.connect(self._toggle_timer_window)
         mini_action = menu.addAction("Mini Mode")
         mini_action.triggered.connect(self._toggle_mini_mode)
+        self._tray_feature_actions = {
+            SETTING_FEATURE_TIMER: (split_action, timer_window_action),
+            SETTING_FEATURE_MINI: (mini_action,),
+        }
         menu.addSeparator()
         overlay_action = menu.addAction("Overlay")
         overlay_action.setCheckable(True)
@@ -2230,6 +2284,10 @@ class MainWindow(QMainWindow):
         if not self._run_keys_active:
             for action in _RUN_ONLY_ACTIONS:
                 bindings[f"{action}_key"] = ""
+        if not self._feature_on(SETTING_FEATURE_TIMER):
+            for action in list(bindings):
+                if action.startswith("timer_"):
+                    bindings[action] = ""
         return bindings
 
     def _sync_run_hotkeys(self) -> None:
@@ -2243,8 +2301,10 @@ class MainWindow(QMainWindow):
     def _pad_bindings(self) -> dict[str, str]:
         """Controller combos from settings, keyed by action ("" = unbound)."""
         settings = self._database.get_all_settings()
+        timer = settings.get(SETTING_FEATURE_TIMER, "true") == "true"
         return {
             action: settings.get(pad_setting(action), "")
+            if timer or not action.startswith("timer_") else ""
             for action, _label, _setting, _default in CONTROL_ACTIONS
         }
 
@@ -2792,10 +2852,14 @@ class MainWindow(QMainWindow):
 
     def _apply_saved_settings(self) -> None:
         """Startup and profile switch: the look, plus where the windows were."""
+        self._apply_features()
         settings = self._database.get_all_settings()
         self._apply_appearance(settings)
         self._timer_window.restore_geometry_string(settings.get(SETTING_TIMER_GEOMETRY, ""))
-        self._timer_window.setVisible(settings.get(SETTING_TIMER_VISIBLE, "false") == "true")
+        self._timer_window.setVisible(
+            settings.get(SETTING_TIMER_VISIBLE, "false") == "true"
+            and settings.get(SETTING_FEATURE_TIMER, "true") == "true"
+        )
         self._overlay.restore_geometry_string(settings.get(SETTING_OVERLAY_GEOMETRY, ""))
         # On, behind the windows, or off, as this profile left it.
         state = settings.get(SETTING_OVERLAY_STATE, "off")
@@ -3031,6 +3095,11 @@ class MainWindow(QMainWindow):
             self._add_game_from_exe()
         elif action.startswith(ACTION_TEMPLATE):
             self._add_template_game(action[len(ACTION_TEMPLATE):])
+        elif action in pages and not self._nav_buttons[pages[action]].isVisibleTo(self):
+            self._toast.show_message(
+                "That feature is switched off", "Settings",
+                lambda: self._open_settings_window(SettingsWindow.TAB_GENERAL), icon="info",
+            )
         elif action in pages:
             self._show_page(pages[action])
             self.showNormal()
@@ -3685,6 +3754,8 @@ class MainWindow(QMainWindow):
             ("run", "Deaths this speedrun run"),
             ("save", "In-game deaths (from the save file)"),
         ):
+            if value == "run" and not self._feature_on(SETTING_FEATURE_TIMER):
+                continue
             action = menu.addAction(text)
             action.setCheckable(True)
             action.setChecked(value == current)
@@ -4196,6 +4267,7 @@ class MainWindow(QMainWindow):
         self._toast.say("deaths.txt is on: it updates on every death")
 
     def _on_settings_changed(self) -> None:
+        self._apply_features()
         self._apply_appearance(self._database.get_all_settings())
         if self._speedrun is not None:
             self._apply_timer_options(self._speedrun)
@@ -4254,7 +4326,8 @@ class MainWindow(QMainWindow):
             "Big Number Shows",
             SETTING_OVERLAY_COUNTER_SOURCE,
             (("total", "All-Time", True), ("session", "This Session", True),
-             ("boss", "This Boss", True), ("run", "This Speedrun Run", True),
+             ("boss", "This Boss", True),
+             ("run", "This Speedrun Run", self._feature_on(SETTING_FEATURE_TIMER)),
              ("save", "In-Game (Save File)", True)),
             settings.get(SETTING_OVERLAY_COUNTER_SOURCE, DEFAULT_COUNTER_SOURCE),
         )
@@ -4526,7 +4599,8 @@ class MainWindow(QMainWindow):
 
     def _timer_action(self, action: str) -> None:
         controller = self._speedrun
-        if controller is None or controller.game_id is None:
+        if (controller is None or controller.game_id is None
+                or not self._feature_on(SETTING_FEATURE_TIMER)):
             return
         timer = controller.timer
         handlers = {
