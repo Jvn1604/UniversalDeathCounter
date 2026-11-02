@@ -146,12 +146,14 @@ def test_the_watcher_reads_the_save_while_playing(tmp_path, monkeypatch) -> None
     game = _Game(deaths=99)
     path = tmp_path / "ER0000.sl2"
     stored: list[dict] = []
+    writes: list[int] = []
     watcher = sw.SaveWatcher()
     watcher.config_changed.connect(lambda _game, config: stored.append(config))
 
     def written() -> None:
         path.write_bytes(game.file())
-        os.utime(path, ns=(time.time_ns(), time.time_ns() + len(stored) + game.deaths))
+        writes.append(time.time_ns() + len(writes) * 1_000_000_000)  # a second apart
+        os.utime(path, ns=(writes[-1], writes[-1]))
         watcher._poll()
         app.processEvents()
 
