@@ -12,6 +12,7 @@ import struct
 import sys
 import time
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -132,7 +133,15 @@ def test_shown_count_this_cycle_only() -> None:
 def test_the_watcher_reads_the_save_while_playing(tmp_path, monkeypatch) -> None:
     from PySide6.QtWidgets import QApplication
 
+    class _NowThread:  # reads right away: no waiting on the event loop's timing
+        def __init__(self, target, **_kwargs) -> None:
+            self._target = target
+
+        def start(self) -> None:
+            self._target()
+
     monkeypatch.setattr(sw, "_SETTLE_SECONDS", 0.0)
+    monkeypatch.setattr(sw, "threading", SimpleNamespace(Thread=_NowThread))
     app = QApplication.instance() or QApplication([])
     game = _Game(deaths=99)
     path = tmp_path / "ER0000.sl2"
@@ -144,10 +153,6 @@ def test_the_watcher_reads_the_save_while_playing(tmp_path, monkeypatch) -> None
         path.write_bytes(game.file())
         os.utime(path, ns=(time.time_ns(), time.time_ns() + len(stored) + game.deaths))
         watcher._poll()
-        deadline = time.monotonic() + 5
-        while watcher._reading and time.monotonic() < deadline:
-            app.processEvents()
-            time.sleep(0.01)
         app.processEvents()
 
     path.write_bytes(game.file())
