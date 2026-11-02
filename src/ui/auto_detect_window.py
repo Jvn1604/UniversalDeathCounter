@@ -444,8 +444,9 @@ class AutoDetectWindow(QDialog):
         intro = QLabel(
             "The app counts a death when the death screen appears, when your health bar "
             "empties, or when the game writes a death to its log file. It only reads the "
-            "screen or files, so it is safe with anti-cheat. Run the game in borderless or "
-            "windowed mode for reliable capture."
+            "screen or files, so it is safe with anti-cheat. On Windows, exclusive "
+            "fullscreen works too; if the capture is ever black, run the game in "
+            "borderless or windowed mode."
         )
         intro.setWordWrap(True)
         layout.addWidget(intro)

@@ -15,8 +15,9 @@ injection, so it is safe to use alongside anti-cheat.
   running program is Wine itself. A Wayland desktop doesn't let apps
   capture other windows, so there OBS is the way (see :func:`capture_hint`).
 
-Exclusive-fullscreen games may capture as solid black; borderless or
-windowed mode always works.
+Exclusive-fullscreen games capture as solid black that way; on Windows,
+detection then switches to Desktop Duplication
+(:mod:`src.detection.dxgi_capture`), which sees them too.
 """
 
 from __future__ import annotations
@@ -557,17 +558,28 @@ def capture_game_frame(
         return None
     with open_screen_capture() as sct:
         if display:
-            return np.ascontiguousarray(grab_rect(sct, display_rect(sct, display)))
-        if exe_path:
-            hwnd = find_main_window(find_process_ids(exe_path), title)
-            rect = window_client_rect(hwnd) if hwnd is not None else None
-            if rect is not None:
-                return np.ascontiguousarray(grab_rect(sct, rect))
-        x, y = _cursor_position()
-        monitor = monitor_at(sct.monitors[1:], x, y)
-        return np.ascontiguousarray(
-            grab_rect(sct, (monitor["left"], monitor["top"], monitor["width"], monitor["height"]))
-        )
+            rect = display_rect(sct, display)
+        else:
+            rect = None
+            if exe_path:
+                hwnd = find_main_window(find_process_ids(exe_path), title)
+                rect = window_client_rect(hwnd) if hwnd is not None else None
+            if rect is None:
+                x, y = _cursor_position()
+                monitor = monitor_at(sct.monitors[1:], x, y)
+                rect = monitor["left"], monitor["top"], monitor["width"], monitor["height"]
+        frame = np.ascontiguousarray(grab_rect(sct, rect))
+        if IS_WINDOWS and int(frame[::4, ::4].max()) < 8:
+            # Black: perhaps an exclusive-fullscreen game. Desktop Duplication sees those.
+            from src.detection.dxgi_capture import FallbackCapture
+
+            capture = FallbackCapture(sct)
+            try:
+                if capture.use_duplication():
+                    frame = np.ascontiguousarray(grab_rect(capture, rect))
+            finally:
+                capture.close()
+        return frame
 
 
 def _cursor_position() -> tuple[int, int]:

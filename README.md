@@ -77,6 +77,7 @@ No Python or anything else needed. Windows 10 or 11, macOS 11 or newer, or a 64-
 - **Or the game's log file.** For games that log deaths, such as Minecraft, it counts every new line that matches your text. This mode doesn't capture the screen at all.
 - **Missed a death?** Add another death screen in two clicks. Any saved one counts.
 - **Switches to the right game** when you launch it. A new session starts after a break of 16 hours or more; a restart, crash or update in between continues the same session, and the **Sessions** button next to Undo brings back any earlier one.
+- **Works in exclusive fullscreen on Windows:** if the normal capture comes out black, the app switches by itself to Desktop Duplication (what OBS's Display Capture uses), which sees fullscreen games too.
 - **Screen capture only:** no memory reading and no injection, so it's safe with anti-cheat.
 
 ### 🎮 Controls, your way
@@ -156,7 +157,7 @@ The **Console** page (sidebar) makes DUDC work when the game runs on a console:
 - Deleting a game tells you exactly what goes with it (deaths, bosses, sessions, runs).
 
 ### 🪶 Lightweight
-- A 29 MB installer (about 100 MB installed), and **no** background services.
+- A 31 MB installer (about 100 MB installed), and **no** background services.
 - Detection checks the game window 5 times a second and stops when the game isn't running.
 - Controller polling only runs while a pad is connected.
 - Your data is a local SQLite file, and nothing is uploaded. The only network requests are an optional update check against GitHub Releases, if you pick Glass or Clay that theme's download, and, if you turn on game artwork, one look-up on Steam per game (its Steam folder or its name; the picture is then kept).
@@ -165,7 +166,7 @@ The **Console** page (sidebar) makes DUDC work when the game runs on a console:
 
 1. Install and open **DUDC**. The **Quick Start** checklist opens and ticks itself off as you go.
 2. In the **Game** dropdown, choose **+ Add game from .exe…** and pick your game's `.exe` (for example `eldenring.exe`). On a Mac, pick the game's app; on Linux, the `.exe` in its Proton folder or the game's program.
-3. Launch the game in **borderless or windowed** mode.
+3. Launch the game. On Windows any mode works, exclusive fullscreen too; on a Mac or Linux use **borderless or windowed**.
 4. Die. 💀
    - **Souls games** are counted automatically.
    - **Any other game:** the first time, press `F8` on the death screen and drag a box around the death text. From then on deaths are counted automatically.
@@ -223,7 +224,7 @@ To keep the count accurate:
 **Supported:** any game with a consistent death screen, a visible health bar, or a log that records deaths. Elden Ring, Dark Souls I–III and Sekiro work with no setup.
 
 **Limitations:**
-- Exclusive-fullscreen games may capture as black. Switch to borderless or windowed mode; the app tells you if this happens.
+- On Windows, exclusive-fullscreen games are read through Desktop Duplication when the normal capture is black. On a Mac or Linux, or if a game still captures as black (some protected or very old games), use borderless or windowed mode, or read the game from OBS (Console page). The app tells you if this happens.
 - Games with no death screen, no health bar and no death log can't be detected. Use the hotkeys there.
 - The Souls preset is a color heuristic. If it ever misfires, calibrate that game instead.
 
@@ -237,7 +238,7 @@ Another program has already registered that key. On many PCs plain `F12` is take
 **Deaths aren't detected**
 1. Check the status line on the Death Counter page. It should say *"Watching <game>.exe for deaths"* (or *"Watching Display 1 for deaths"*).
    If it keeps saying *Waiting for <game>.exe to start* while the game runs, the game runs under another program: choose **Watch: A whole display** in Set Up Detection.
-2. If it says the capture is **black**, switch the game to borderless or windowed mode. On a Mac, allow Screen Recording for the app; on a Wayland desktop, read the game from OBS instead.
+2. If it says the capture is **black**, switch the game to borderless or windowed mode (on Windows, exclusive fullscreen is normally handled for you), or read the game from OBS (Console page). On a Mac, allow Screen Recording for the app; on a Wayland desktop, read the game from OBS instead.
 3. If it's watching but misses deaths, use **📷 Capture Screen…** right after a death to add that screen.
 
 **The overlay shows a green box in OBS**
@@ -255,7 +256,7 @@ False positives happen with unsigned apps. DUDC uses the system's own hotkey API
 **Save and load your progress:**
 - **⋮ (top right) → Save Progress… (Ctrl+S)** saves everything to one file, including the session and speedrun run in progress. Copy it anywhere: another PC, a reinstall, a backup drive.
 - **⋮ → Load Save…** brings it back and carries on with that session and run (the run comes back paused). Replace swaps your data for the save's (yours is saved first); Add puts its games next to yours. Older backups load too.
-- **Auto-save:** every 5 minutes and when you close the app, to `Saved Progress` in the data folder above.
+- **Auto-save:** about 15 seconds after any change, every 5 minutes and when you close the app, to `Saved Progress` in the data folder above.
 - **Closing asks first**, and your progress is already saved by the time it asks. Turn the question off in Settings → General.
 
 ## Build from source
@@ -332,7 +333,7 @@ Design notes:
 - [ ] Controller combos on macOS
 - [ ] More presets (Hollow Knight / Silksong, Lies of P, Cuphead) and shareable preset files
 - [ ] Live detection score and sensitivity slider
-- [ ] Fullscreen capture via Windows Graphics Capture
+- [x] Exclusive-fullscreen capture on Windows (Desktop Duplication)
 
 Ideas and bug reports are welcome in [Issues](https://github.com/Jvn1604/UniversalDeathCounter/issues).
 
