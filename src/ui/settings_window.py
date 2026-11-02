@@ -456,7 +456,7 @@ class SettingsWindow(QDialog):
         general_page = QWidget()
         layout = QVBoxLayout(general_page)
         for page, title, icon_name in (
-            (general_page, "General", "settings"),
+            (self._scrolling(general_page), "General", "settings"),
             (self._build_appearance_page(), "Appearance", "palette"),
             (self._build_overlay_page(), "Overlay", "layers"),
             (self._build_speedrun_page(), "Speedrun", "timer"),
