@@ -7,6 +7,7 @@ throughout the codebase and makes future configuration changes trivial.
 
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
@@ -47,6 +48,22 @@ CREATOR_CHANNEL_URL: str = "https://www.youtube.com/@ImDePhantom"
 # .app and a Linux AppImage are read-only (and replaced on update), so they
 # always use the per-user folder (~/Library/Application Support, or
 # ~/.local/share).
+#
+# An installed copy in Program Files always uses %APPDATA%, even when it
+# could write there: started as administrator (as the updater's installer
+# used to reopen it), it would otherwise start a new, empty database in
+# Program Files, and the count looked reset until the next normal start.
+
+
+def _in_program_files(folder: Path) -> bool:
+    """Whether ``folder`` is inside Program Files (either one)."""
+    parts = [part.lower() for part in folder.parts]
+    for name in ("ProgramFiles", "ProgramFiles(x86)", "ProgramW6432"):
+        root = os.environ.get(name, "")
+        root_parts = [part.lower() for part in Path(root).parts] if root else []
+        if root_parts and parts[: len(root_parts)] == root_parts:
+            return True
+    return False
 
 
 def _is_frozen() -> bool:
@@ -62,6 +79,8 @@ def _resolve_persistent_data_dir() -> Path:
         return user_data_dir(APP_ORG) / "saves"
 
     exe_dir = Path(sys.executable).resolve().parent
+    if _in_program_files(exe_dir):
+        return user_data_dir(APP_ORG) / "saves"
     try:
         candidate = exe_dir / "saves"
         candidate.mkdir(parents=True, exist_ok=True)
