@@ -137,7 +137,7 @@ The **Console** page (sidebar) makes DUDC work when the game runs on a console:
 - Every button has a clear icon ([Lucide](https://lucide.dev), ISC licence).
 
 ### ✨ Comfort
-- **Home dashboard:** a friendly greeting, **Now playing** (the game, its count and whether auto-detect is hooked, one click from counting), today / this session / all-time / bosses beaten, this week's deaths per day (and versus last week), and boss progress with the bosses that killed you most.
+- **Home dashboard** in a bento layout (cards of different sizes fitted together; two columns on a narrow window): a friendly greeting, **Now playing** (the game, its count and whether auto-detect is hooked, one click from counting), today / this session / all-time / bosses beaten, this week's deaths per day (and versus last week), and boss progress with the bosses that killed you most.
 - **Death Counter page:** everything for counting in one place: game and boss, the big number with your skull, +1 / −1 / Undo / Sessions (all one height), auto-detect status, Set Exact Count and resets. Hover −1 and Undo to see the difference: −1 is logged as a death taken off, Undo takes back the last +1 or −1 as if it never happened.
 - **Auto-detect status at a glance:** a coloured dot: green = watching the game, yellow = waiting (for the game to start, or paused), red = needs attention, grey = off.
 - **Fits any window size:** rows rearrange when the window is narrow, so nothing is cut off. The button at the top of the sidebar collapses it to icons only (remembered).
