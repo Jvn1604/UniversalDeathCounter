@@ -274,7 +274,7 @@ from src.utils.constants import (
     pad_setting,
 )
 from src.utils.exporters import write_csv_summary
-from src.utils.game_templates import add_template_bosses, get_template
+from src.utils.game_templates import add_template_bosses, get_template, get_template_names
 from src.utils.logger import get_logger
 from src.utils.phone_remote import ACTIONS as PHONE_ACTIONS
 from src.utils.phone_remote import PhoneRemote, new_key
@@ -1004,9 +1004,57 @@ class MainWindow(QMainWindow):
             (bosses, 3), (detect, 1),
         ])
         self._responsive.append(bento)
+        self._home_bento = bento
         layout.addWidget(bento)
+        layout.addWidget(self._build_home_welcome())
         layout.addStretch()
         return page
+
+    def _build_home_welcome(self) -> QWidget:
+        """Home before the first game: how to add one, instead of empty cards."""
+        welcome = self._home_welcome = HeroCard(watermark="")
+        welcome_layout = QVBoxLayout(welcome)
+        welcome_layout.setContentsMargins(24, 24, 24, 24)
+        welcome_layout.setSpacing(10)
+        welcome_layout.addWidget(section_title("Start here"))
+        title = QLabel("Add the game you're playing")
+        title.setObjectName("PageTitle")
+        welcome_layout.addWidget(title)
+        text = QLabel(
+            "Then die as usual: press F9 (or +1 Death) for each death, or let the app "
+            "spot your death screen. Your stats fill this page as you play."
+        )
+        text.setObjectName("PageSubtitle")
+        text.setWordWrap(True)
+        welcome_layout.addWidget(text)
+        welcome_layout.addSpacing(6)
+        from_exe = QPushButton(" Pick the Game's .exe")
+        from_exe.setObjectName("AccentButton")
+        icons.set_icon(from_exe, "folder-open", icons.ACCENT, size=17)
+        from_exe.setToolTip("Best: auto-detect can then follow the game.")
+        from_exe.clicked.connect(self._add_game_from_exe)
+        no_exe = QPushButton(" No .exe? Watch a Display")
+        icons.set_icon(no_exe, "monitor", size=17)
+        no_exe.setToolTip("For launchers, emulators and cloud gaming.")
+        no_exe.clicked.connect(self._add_game_without_exe)
+        ready = QComboBox()
+        ready.addItems(get_template_names())
+        add_ready = QPushButton(" Add Boss List")
+        icons.set_icon(add_ready, "library", size=17)
+        add_ready.setToolTip("A game with its bosses already listed.")
+        add_ready.clicked.connect(lambda: self._add_template_game(ready.currentText()))
+        for button in (from_exe, no_exe, add_ready):
+            button.setMinimumHeight(42)
+        welcome_layout.addLayout(row(from_exe, no_exe))
+        ready_row = QHBoxLayout()
+        ready_label = QLabel("Or a ready-made boss list:")
+        ready_label.setObjectName("Muted")
+        ready_row.addWidget(ready_label)
+        ready_row.addWidget(ready, 1)
+        ready_row.addWidget(add_ready)
+        welcome_layout.addLayout(ready_row)
+        welcome.hide()
+        return welcome
 
     def _open_counter_or_add_game(self) -> None:
         if self._game_combo.count():
@@ -3276,6 +3324,9 @@ class MainWindow(QMainWindow):
         game_id = self._counter_manager.current_game_id
         has_game = game_id is not None
         self._home_open_btn.setText(" Open Death Counter" if has_game else " Add Your First Game")
+        # No game yet: one card on how to add one, not a page of empty cards.
+        self._home_bento.setVisible(has_game)
+        self._home_welcome.setVisible(not has_game)
         if not has_game:
             self._home_game.setText("No game yet")
             self._home_boss.setText("Add a game to start counting.")
