@@ -122,6 +122,8 @@ from src.detection.save_deaths import find_known_saves
 from src.detection.save_watcher import SaveWatcher, load_config, shown_count
 from src.hotkeys.gamepad import GamepadManager, combo_label
 from src.hotkeys.hotkey_manager import HotkeyManager
+from src.overlay.designs import DESIGNS, is_design
+from src.overlay.designs import render_png as render_design_png
 from src.overlay.overlay_window import OverlayWindow, available_screen_rects
 from src.themes.theme_manager import active_theme, apply_theme, outdated_themes, theme_info
 from src.ui import dashboard, icons
@@ -237,6 +239,7 @@ from src.utils.constants import (
     SETTING_OVERLAY_BG_MODE,
     SETTING_OVERLAY_CLICK_THROUGH,
     SETTING_OVERLAY_COUNTER_SOURCE,
+    SETTING_OVERLAY_DESIGN,
     SETTING_OVERLAY_EVER_SHOWN,
     SETTING_OVERLAY_FONT_SIZE,
     SETTING_OVERLAY_GEOMETRY,
@@ -480,6 +483,7 @@ class MainWindow(QMainWindow):
         self._overlay_hidden_local = False
         self._stream = StreamOverlay(self)
         self._stream_skull_key: tuple = ()
+        self._stream_frame_key = ""  # the drawn design last sent to the stream page
         self._last_snapshot: CounterSnapshot | None = None
         self._overlay.settings_requested.connect(self._open_overlay_settings)
         self._mini = MiniWindow()
@@ -3906,6 +3910,12 @@ class MainWindow(QMainWindow):
             buffer.open(QIODevice.OpenModeFlag.WriteOnly)
             art.toImage().save(buffer, "PNG")
             skull_png = bytes(data)
+        frame, frame_png = "", None
+        if is_design(overlay.design):
+            frame = f"{overlay.design}-{number}-{abs(hash(overlay._count_style.word))}"
+            if frame != self._stream_frame_key:
+                self._stream_frame_key = frame
+                frame_png = render_design_png(overlay.design, overlay._count_style.word, number)
         self._stream.set_state(
             {
                 "active": self._overlay_active(),
@@ -3934,8 +3944,10 @@ class MainWindow(QMainWindow):
                 "skull": f"{skull_key[0]}-{skull_px}-{overlay._text_color.lstrip('#')}",
                 "skull_px": skull_px,
                 "animate": True,
+                "frame": frame,
             },
             skull_png,
+            frame_png,
         )
 
     def _on_overlay_shown(self, visible: bool) -> None:
@@ -4343,6 +4355,12 @@ class MainWindow(QMainWindow):
                     lambda _=False, v=value: self._set_overlay_setting(key, v)
                 )
 
+        choices(
+            "Design",
+            SETTING_OVERLAY_DESIGN,
+            tuple((value, label, True) for value, label in DESIGNS),
+            settings.get(SETTING_OVERLAY_DESIGN, "classic"),
+        )
         choices(
             "Big Number Shows",
             SETTING_OVERLAY_COUNTER_SOURCE,

@@ -41,8 +41,10 @@ PAGE = """<!doctype html>
   @keyframes pop { 0% { transform: scale(1); } 35% { transform: scale(1.22); }
                    100% { transform: scale(1); } }
   .hidden { display: none !important; }
+  #frame { display: block; max-width: 100vw; max-height: 100vh; }
 </style></head>
 <body>
+<img id="frame" class="hidden" alt="">
 <div id="card">
   <div id="game" class="line"></div>
   <div id="boss" class="line"></div>
@@ -51,7 +53,7 @@ PAGE = """<!doctype html>
   <div id="stats" class="line"></div>
 </div>
 <script>
-let last = "", lastNumber = null, lastSkull = "";
+let last = "", lastNumber = null, lastSkull = "", lastFrame = "";
 async function tick() {
   try {
     const response = await fetch("/state", {cache: "no-store"});
@@ -69,8 +71,19 @@ function show(id, on, text) {
 }
 function render(s) {
   const card = document.getElementById("card");
-  card.classList.toggle("hidden", !s.active);
+  const frame = document.getElementById("frame");
+  // A drawn design comes as one picture, the same as on the overlay window.
+  frame.classList.toggle("hidden", !(s.active && s.frame));
+  card.classList.toggle("hidden", !s.active || !!s.frame);
   if (!s.active) return;
+  if (s.frame) {
+    if (s.frame !== lastFrame) { lastFrame = s.frame; frame.src = "/frame.png?v=" + s.frame; }
+    if (lastNumber !== null && s.number !== lastNumber && s.animate) {
+      frame.classList.remove("pop"); void frame.offsetWidth; frame.classList.add("pop");
+    }
+    lastNumber = s.number;
+    return;
+  }
   card.style.background = s.card || "transparent";
   card.style.borderRadius = (s.radius || 0) + "px";
   card.style.padding = s.padding + "px " + Math.round(s.padding * 1.2) + "px";
@@ -131,6 +144,7 @@ class StreamOverlay(QObject):
         self._lock = threading.Lock()
         self._state: dict[str, object] = {"active": False}
         self._skull_png = b""
+        self._frame_png = b""
 
     @property
     def running(self) -> bool:
@@ -166,15 +180,26 @@ class StreamOverlay(QObject):
             self._server = None
             logger.info("Stream overlay stopped")
 
-    def set_state(self, state: dict[str, object], skull_png: bytes | None = None) -> None:
+    def set_state(
+        self,
+        state: dict[str, object],
+        skull_png: bytes | None = None,
+        frame_png: bytes | None = None,
+    ) -> None:
         with self._lock:
             self._state = dict(state)
             if skull_png is not None:
                 self._skull_png = skull_png
+            if frame_png is not None:
+                self._frame_png = frame_png
 
     def state(self) -> dict[str, object]:
         with self._lock:
             return dict(self._state)
+
+    def frame_png(self) -> bytes:
+        with self._lock:
+            return self._frame_png
 
     def skull_png(self) -> bytes:
         with self._lock:
@@ -204,6 +229,8 @@ def _handler_for(overlay: StreamOverlay) -> type[BaseHTTPRequestHandler]:
                 self._send(json.dumps(overlay.state()).encode("utf-8"), "application/json")
             elif path == "/skull.png" and overlay.skull_png():
                 self._send(overlay.skull_png(), "image/png")
+            elif path == "/frame.png" and overlay.frame_png():
+                self._send(overlay.frame_png(), "image/png")
             else:
                 self.send_error(HTTPStatus.NOT_FOUND)
 

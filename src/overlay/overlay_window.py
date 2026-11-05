@@ -19,8 +19,15 @@ window behavior and background are shared with the speedrun timer through
 
 from __future__ import annotations
 
-from PySide6.QtCore import QPoint, Qt, Signal
-from PySide6.QtGui import QContextMenuEvent, QMouseEvent, QPixmap
+from PySide6.QtCore import QPoint, QRectF, Qt, Signal
+from PySide6.QtGui import (
+    QColor,
+    QContextMenuEvent,
+    QMouseEvent,
+    QPainter,
+    QPaintEvent,
+    QPixmap,
+)
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QVBoxLayout, QWidget
 
 from src.core.counter_manager import CounterSnapshot
@@ -31,11 +38,13 @@ from src.overlay.capture_window import (
     available_screen_rects,
 )
 from src.overlay.count_text import CountStyle
+from src.overlay.designs import is_design, paint_design
 from src.ui.skulls import TIERS, skull_pixmap, tier_index
 from src.utils.constants import (
     DEFAULT_COUNTER_SOURCE,
     SETTING_OVERLAY_ALIGN,
     SETTING_OVERLAY_COUNTER_SOURCE,
+    SETTING_OVERLAY_DESIGN,
     SETTING_OVERLAY_FONT_SIZE,
     SETTING_OVERLAY_PADDING,
     SETTING_OVERLAY_SHOW_BOSS,
@@ -94,6 +103,7 @@ class OverlayWindow(CaptureWindow):
         self._padding = 16
         self._skull_size = 150  # % of the number's size
         self._align = "left"
+        self._design = "classic"  # or a drawn design (src/overlay/designs.py)
         self._skull_art: QPixmap | None = None
 
         self._last_snapshot: CounterSnapshot | None = None
@@ -170,6 +180,7 @@ class OverlayWindow(CaptureWindow):
         self._stats_label.setVisible(self._show_stats)
         self._skull_label.setVisible(self._show_skull)
         self._caption_label.setVisible(self._show_caption)
+        self._death_label.setVisible(True)  # a drawn design hides it
         align = _ALIGNMENTS.get(self._align, Qt.AlignmentFlag.AlignLeft)
         for label in (self._game_label, self._boss_label, self._caption_label, self._stats_label):
             label.setAlignment(align | Qt.AlignmentFlag.AlignVCenter)
@@ -183,6 +194,25 @@ class OverlayWindow(CaptureWindow):
         row.addWidget(self._death_label)
         if self._align in ("center", "left"):
             row.addStretch(1)
+        if is_design(self._design):  # the design draws everything itself
+            for label in (self._game_label, self._boss_label, self._skull_label,
+                          self._death_label, self._caption_label, self._stats_label):
+                label.setVisible(False)
+
+    def paintEvent(self, event: QPaintEvent) -> None:  # noqa: N802
+        if not is_design(self._design):
+            super().paintEvent(event)
+            return
+        painter = QPainter(self)
+        # Alpha 1, not 0: fully clear pixels would let clicks fall through.
+        painter.fillRect(self.rect(), QColor(0, 0, 0, 1))
+        paint_design(painter, QRectF(self.rect()), self._design, self._count_style.word,
+                     getattr(self, "_big_number", 0))
+        painter.end()
+
+    @property
+    def design(self) -> str:
+        return self._design
 
     def contextMenuEvent(self, event: QContextMenuEvent) -> None:  # noqa: N802
         self.menu_requested.emit(event.globalPos())
@@ -219,6 +249,7 @@ class OverlayWindow(CaptureWindow):
         except ValueError:
             self._padding, self._skull_size = 16, 150
         self._align = settings.get(SETTING_OVERLAY_ALIGN, "left")
+        self._design = settings.get(SETTING_OVERLAY_DESIGN, "classic")
         self._restyle()
         if self._last_snapshot is not None:
             self.update_counters(self._last_snapshot)
@@ -269,3 +300,5 @@ class OverlayWindow(CaptureWindow):
         self._stats_label.setText(
             f"Session {snapshot.session_deaths}  •  All-time {snapshot.total_deaths}"
         )
+        if is_design(self._design):
+            self.update()

@@ -191,6 +191,8 @@ BUG_SHEET_URL: str = (
 # Per game (+ the game id): JSON with the save path, the learned spot, the last
 # count and the NG+ cycle choice.
 SETTING_SAVE_DEATHS_PREFIX: str = "save_deaths_"
+# Overlay design: "classic" or one drawn in src/overlay/designs.py.
+SETTING_OVERLAY_DESIGN: str = "overlay_design"
 SETTING_STREAM_OVERLAY: str = "stream_overlay"  # "true" = OBS Browser Source page is served
 # Console players
 SETTING_PHONE_REMOTE: str = "phone_remote_enabled"  # "true" = serve the phone page
