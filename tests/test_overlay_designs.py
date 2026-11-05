@@ -95,3 +95,15 @@ def test_the_design_is_picked_in_settings(window) -> None:
     assert window._overlay.design == "neon"  # live, before saving
     settings._save()
     assert window._database.get_setting("overlay_design") == "neon"
+
+
+def test_every_design_shows_the_evolving_skull() -> None:
+    from PySide6.QtWidgets import QApplication
+
+    QApplication.instance() or QApplication([])
+    for name, _label in designs.DESIGNS:
+        if designs.is_design(name):
+            # Same number of digits, another skull tier: the picture changes.
+            assert designs.render_png(name, "DEATH", 15, 300) != designs.render_png(
+                name, "DEATH", 25, 300
+            ), name
