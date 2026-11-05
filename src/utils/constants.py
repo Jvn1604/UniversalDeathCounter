@@ -169,6 +169,8 @@ BUG_SHEET_URL: str = (
     "https://docs.google.com/spreadsheets/d/1pvzlu8mhHzvvKCHb-E5NDlmtqT-gW0ZHRZUMq2xmtaw/"
     "edit?usp=sharing"
 )
+# Overlay design: "classic" or one drawn in src/overlay/designs.py.
+SETTING_OVERLAY_DESIGN: str = "overlay_design"
 SETTING_STREAM_OVERLAY: str = "stream_overlay"  # "true" = OBS Browser Source page is served
 # Console players
 SETTING_PHONE_REMOTE: str = "phone_remote_enabled"  # "true" = serve the phone page

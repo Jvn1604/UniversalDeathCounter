@@ -45,6 +45,7 @@ from src.hotkeys.conflicts import ERROR, WARNING, Conflict, find_conflicts, has_
 from src.hotkeys.gamepad import GamepadManager, combo_label, controllers_supported
 from src.hotkeys.hotkey_manager import HotkeyManager, global_hotkeys_available
 from src.overlay.count_text import SEPARATORS
+from src.overlay.designs import DESIGNS
 from src.overlay.overlay_window import OverlayWindow
 from src.ui import icons
 from src.ui.theme_picker import ThemeGallery
@@ -74,6 +75,7 @@ from src.utils.constants import (
     SETTING_OVERLAY_CORNER_RADIUS,
     SETTING_OVERLAY_COUNT_LABEL,
     SETTING_OVERLAY_COUNTER_SOURCE,
+    SETTING_OVERLAY_DESIGN,
     SETTING_OVERLAY_FONT,
     SETTING_OVERLAY_FONT_SIZE,
     SETTING_OVERLAY_LETTER_SPACING,
@@ -620,6 +622,22 @@ class SettingsWindow(QDialog):
         preview_layout.addWidget(preview_tip, 1)
         layout.addWidget(preview_group)
 
+        design_group = QGroupBox("Design")
+        design_form = QFormLayout(design_group)
+        self._design_combo = QComboBox()
+        for value, label in DESIGNS:
+            self._design_combo.addItem(label, userData=value)
+        design_form.addRow("Design", self._design_combo)
+        design_note = QLabel(
+            "Classic card uses everything below. The other designs are complete looks "
+            "of their own: they show the count with your death word (DEATH shows as "
+            "\"Deaths\"), on the overlay and in the OBS Browser Source."
+        )
+        design_note.setObjectName("Muted")
+        design_note.setWordWrap(True)
+        design_form.addRow(design_note)
+        layout.addWidget(design_group)
+
         overlay_group = QGroupBox("Background")
         overlay_form = QFormLayout(overlay_group)
         self._bg_mode_combo = QComboBox()
@@ -762,6 +780,7 @@ class SettingsWindow(QDialog):
             self._counter_source_combo,
             self._bg_mode_combo,
             self._overlay_font_combo,
+            self._design_combo,
         ):
             combo.currentIndexChanged.connect(self._schedule_preview)
         self._align_combo.currentIndexChanged.connect(self._schedule_preview)
@@ -834,6 +853,7 @@ class SettingsWindow(QDialog):
             SETTING_OVERLAY_SECONDARY_COLOR: self._secondary_color.color(),
             SETTING_OVERLAY_TEXT_OUTLINE: flag(self._outline_check),
             SETTING_OVERLAY_BG_MODE: self._bg_mode_combo.currentData(),
+            SETTING_OVERLAY_DESIGN: self._design_combo.currentData(),
             SETTING_OVERLAY_COUNTER_SOURCE: self._counter_source_combo.currentData(),
             SETTING_OVERLAY_TEXT_COLOR: self._text_color,
             SETTING_OVERLAY_FONT_SIZE: str(self._font_size_spin.value()),
@@ -1132,6 +1152,7 @@ class SettingsWindow(QDialog):
             check.setChecked(settings.get(key, "true") == "true")
 
         _select_data(self._bg_mode_combo, settings.get(SETTING_OVERLAY_BG_MODE, "dark"))
+        _select_data(self._design_combo, settings.get(SETTING_OVERLAY_DESIGN, "classic"))
         _select_data(
             self._counter_source_combo,
             settings.get(SETTING_OVERLAY_COUNTER_SOURCE, DEFAULT_COUNTER_SOURCE),
