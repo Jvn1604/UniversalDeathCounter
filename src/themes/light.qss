@@ -387,6 +387,19 @@ QPushButton#AccentButton QLabel#KeyCap {
     color: #ffffff;
 }
 
+/* Greyed out (e.g. no game yet): the accent and the big buttons too, whose
+   text and key are child labels. */
+QPushButton#AccentButton:disabled {
+    background-color: #eef0f4;
+    color: #a5a9b4;
+    border: 1px solid #e2e4ea;
+}
+
+QPushButton:disabled QLabel,
+QPushButton:disabled QLabel#KeyCap {
+    color: #a5a9b4;
+}
+
 QPushButton#DangerButton {
     background-color: transparent;
     color: #cc1f37;
