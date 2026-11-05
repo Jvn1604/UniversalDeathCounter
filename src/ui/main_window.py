@@ -165,6 +165,7 @@ from src.ui.timer_window import RunHistoryDialog, SplitsDialog, TimerWindow
 from src.ui.widgets import (
     ActionButton,
     AutoHideLabel,
+    BentoGrid,
     CreditCard,
     HeroCard,
     NavToggle,
@@ -919,9 +920,7 @@ class MainWindow(QMainWindow):
         self._home_boss.setWordWrap(True)
         now_texts.addWidget(self._home_game)
         now_texts.addWidget(self._home_boss)
-        now_texts.addSpacing(6)
-        self._home_detect = StatusPill("Auto-detect off")
-        now_texts.addWidget(self._home_detect, 0, Qt.AlignmentFlag.AlignLeft)
+        now_texts.addStretch()
         now_row.addLayout(now_texts, 1)
         count_box = QVBoxLayout()
         count_box.setSpacing(0)
@@ -943,18 +942,15 @@ class MainWindow(QMainWindow):
         self._home_open_btn.clicked.connect(self._open_counter_or_add_game)
         now_layout.addSpacing(6)
         now_layout.addWidget(self._home_open_btn)
-        layout.addWidget(now)
+        now_layout.addStretch()
 
         self._home_today = StatTile("Today")
         self._home_session = StatTile("This session")
         self._home_total = StatTile("All-time")
-        self._home_bosses = StatTile("Bosses beaten")
-        tiles = ResponsiveGrid(
-            [self._home_today, self._home_session, self._home_total, self._home_bosses],
-            stretch=(1, 1, 1, 1), columns=2,
-        )
-        self._responsive.append(tiles)
-        layout.addWidget(tiles)
+        for tile in (self._home_today, self._home_session, self._home_total):
+            # Bento style: label at the top, a big number at the bottom.
+            tile.layout().insertStretch(1)
+            tile.value.setObjectName("BentoValue")
 
         week, week_layout = card(margins=16)
         week_layout.setSpacing(4)
@@ -971,18 +967,39 @@ class MainWindow(QMainWindow):
         self._week_chart = WeekChart()
         week_layout.addWidget(self._week_chart, 1)
 
+        # Bosses beaten: the ring shows the count (the tile's own value would repeat it).
+        self._home_bosses = StatTile("Bosses beaten")
+        self._home_bosses.value.hide()
+        self._boss_ring = ProgressRing(diameter=96)
+        self._home_bosses.layout().addStretch()
+        self._home_bosses.layout().addWidget(self._boss_ring, 0, Qt.AlignmentFlag.AlignHCenter)
+        self._home_bosses.layout().addStretch()
+
         bosses, bosses_layout = card(margins=16)
-        bosses_layout.addWidget(section_title("Boss progress"))
-        boss_body = QHBoxLayout()
-        boss_body.setSpacing(18)
-        self._boss_ring = ProgressRing()
-        self._toughest = BossRanking()
-        boss_body.addWidget(self._boss_ring, 0, Qt.AlignmentFlag.AlignVCenter)
-        boss_body.addWidget(self._toughest, 1)
-        bosses_layout.addLayout(boss_body, 1)
-        insights = ResponsiveGrid([week, bosses], stretch=(3, 2), spacing=16)
-        self._responsive.append(insights)
-        layout.addWidget(insights)
+        self._toughest = BossRanking()  # has its own heading
+        bosses_layout.addWidget(self._toughest, 1)
+
+        detect, detect_layout = card(margins=16)
+        detect_layout.addWidget(section_title("Auto-detect"))
+        self._home_detect = StatusPill("Auto-detect off")
+        self._home_detect.setWordWrap(True)
+        detect_layout.addWidget(self._home_detect, 0, Qt.AlignmentFlag.AlignLeft)
+        detect_layout.addStretch()
+        detect_button = QPushButton(" Detection")
+        detect_button.setObjectName("GhostButton")
+        icons.set_icon(detect_button, "scan-eye", size=16)
+        detect_button.clicked.connect(lambda: self._show_page(_PAGE_DETECTION))
+        detect_layout.addWidget(detect_button, 0, Qt.AlignmentFlag.AlignLeft)
+
+        # A bento grid: four columns, cards one to three wide, two columns
+        # when the window is narrow.
+        bento = BentoGrid([
+            (now, 2), (self._home_today, 1), (self._home_total, 1),
+            (self._home_session, 1), (week, 2), (self._home_bosses, 1),
+            (bosses, 3), (detect, 1),
+        ])
+        self._responsive.append(bento)
+        layout.addWidget(bento)
         layout.addStretch()
         return page
 

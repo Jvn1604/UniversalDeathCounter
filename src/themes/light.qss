@@ -260,6 +260,13 @@ QLabel#SubCounterLabel {
     color: #626674;
 }
 
+QLabel#BentoValue {
+    font-family: "Segoe UI Variable Display", "Segoe UI", sans-serif;
+    font-size: 44px;
+    font-weight: 800;
+    color: #111216;
+}
+
 QLabel#StatValue {
     font-family: "Segoe UI Variable Display", "Segoe UI", sans-serif;
     font-size: 24px;

@@ -140,3 +140,21 @@ def test_minus_one_and_undo_explain_the_difference(window) -> None:
     assert "as if it never happened" in window._undo_btn.toolTip()
     heights = {b.height() for b in (window._plus_btn, window._minus_btn, window._undo_btn)}
     assert heights == {58}
+
+
+def test_bento_grid_packs_cards_of_different_widths() -> None:
+    from src.ui.widgets import BentoGrid
+
+    # Home: now playing (2), today, all-time / session, week (2), bosses / progress (3), detect.
+    spans = [2, 1, 1, 1, 2, 1, 3, 1]
+    assert BentoGrid.pack(spans, 4) == [
+        (0, 0, 2), (0, 2, 1), (0, 3, 1),
+        (1, 0, 1), (1, 1, 2), (1, 3, 1),
+        (2, 0, 3), (2, 3, 1),
+    ]
+    # Narrow: two columns, wide cards cut to two, gaps filled by later cards.
+    assert BentoGrid.pack(spans, 2) == [
+        (0, 0, 2), (1, 0, 1), (1, 1, 1),
+        (2, 0, 1), (3, 0, 2), (2, 1, 1),
+        (4, 0, 2), (5, 0, 1),
+    ]
