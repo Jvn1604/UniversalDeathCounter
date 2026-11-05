@@ -158,3 +158,26 @@ def test_bento_grid_packs_cards_of_different_widths() -> None:
         (2, 0, 1), (3, 0, 2), (2, 1, 1),
         (4, 0, 2), (5, 0, 1),
     ]
+
+
+def test_home_without_a_game_shows_how_to_add_one(tmp_path, monkeypatch) -> None:
+    from PySide6.QtWidgets import QApplication
+
+    import src.ui.main_window as mw
+    import src.utils.profiles as profiles
+
+    monkeypatch.setattr(profiles, "SAVES_DIR", tmp_path)
+    monkeypatch.setattr(profiles, "DATABASE_PATH", tmp_path / "death_counter.db")
+    monkeypatch.setattr(mw.ProfileManager.__init__, "__defaults__", (tmp_path,))
+    monkeypatch.setattr(mw.UpdateChecker, "check_async", lambda self: None)
+    app = QApplication.instance() or QApplication([])
+    win = mw.MainWindow()
+    try:
+        win._refresh_home()
+        assert win._home_welcome.isVisibleTo(win) and not win._home_bento.isVisibleTo(win)
+        win._add_template_game("Elden Ring")
+        win._refresh_home()
+        assert win._home_bento.isVisibleTo(win) and not win._home_welcome.isVisibleTo(win)
+    finally:
+        win._quit_app()
+        app.processEvents()
