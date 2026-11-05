@@ -395,6 +395,14 @@ QPushButton:disabled QLabel#KeyCap {
     color: #a5a9b4;
 }
 
+QPushButton#AccentButton:disabled QLabel,
+QPushButton#AccentButton:disabled QLabel#KeyCap,
+QPushButton#GhostButton:disabled,
+QPushButton#DangerButton:disabled {
+    color: #a5a9b4;
+    border-color: #e6e0f8;
+}
+
 QPushButton#DangerButton {
     background-color: transparent;
     color: #cc1f37;
