@@ -12,11 +12,13 @@ from PySide6.QtCore import QEvent, QObject, QRectF, Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import (
     QColor,
     QDesktopServices,
+    QFont,
     QLinearGradient,
     QMouseEvent,
     QPainter,
     QPainterPath,
     QPixmap,
+    QRawFont,
 )
 from PySide6.QtWidgets import (
     QAbstractScrollArea,
@@ -683,6 +685,29 @@ def field(label_text: str, widget: QWidget) -> QWidget:
     layout.addWidget(label)
     layout.addWidget(widget)
     return container
+
+
+_font_has: dict[str, bool] = {}
+
+
+def drawable(text: str) -> str:
+    """
+    ``text`` without the characters the app's font lacks (emoji in another
+    program's window title, say): showing one makes Qt load every fallback
+    font, about 45 MB. For text from outside the app.
+    """
+    raw = None
+    kept = []
+    for char in text:
+        if ord(char) > 127:
+            known = _font_has.get(char)
+            if known is None:
+                raw = raw or QRawFont.fromFont(QFont(QApplication.font().family()))
+                known = _font_has[char] = raw.supportsCharacter(ord(char))
+            if not known:
+                continue
+        kept.append(char)
+    return " ".join("".join(kept).split())  # no double spaces where emoji were
 
 
 def section_title(text: str) -> QLabel:
