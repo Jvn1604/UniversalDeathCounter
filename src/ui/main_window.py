@@ -260,7 +260,7 @@ from src.utils.constants import (
     pad_setting,
 )
 from src.utils.exporters import write_csv_summary
-from src.utils.game_templates import add_template_bosses, get_template
+from src.utils.game_templates import add_template_bosses, get_template, get_template_names
 from src.utils.logger import get_logger
 from src.utils.phone_remote import ACTIONS as PHONE_ACTIONS
 from src.utils.phone_remote import PhoneRemote, new_key
@@ -971,10 +971,32 @@ class MainWindow(QMainWindow):
         return page
 
     def _open_counter_or_add_game(self) -> None:
-        if self._game_combo.count():
+        if self._counter_manager.current_game_id is not None:
             self._show_page(_PAGE_COUNTER)
         else:
-            self.maybe_show_welcome(force=True)
+            self._show_add_game_menu(self._home_open_btn)
+
+    def _show_add_game_menu(self, anchor: QWidget) -> None:
+        """The ways to add a game, under the button that asked."""
+        menu = QMenu(self)
+        menu.addAction(
+            icons.icon("folder-open", icons.color(icons.NORMAL), size=16),
+            "Pick the game's .exe…  (best: auto-detect follows the game)",
+            self._add_game_from_exe,
+        )
+        menu.addAction(
+            icons.icon("monitor", icons.color(icons.NORMAL), size=16),
+            "Game without .exe…  (launcher, emulator, cloud)",
+            self._add_game_without_exe,
+        )
+        ready = menu.addMenu(
+            icons.icon("library", icons.color(icons.NORMAL), size=16), "Ready-made boss list"
+        )
+        for name in get_template_names():
+            ready.addAction(name, lambda n=name: self._add_template_game(n))
+        menu.addSeparator()
+        menu.addAction("Show me how (guide)", lambda: self.maybe_show_welcome(force=True))
+        menu.exec(anchor.mapToGlobal(QPoint(0, anchor.height() + 4)))
 
     # Death Counter ----------------------------------------------------
     def _build_counter_page(self) -> QWidget:
@@ -1070,7 +1092,9 @@ class MainWindow(QMainWindow):
         self._first_game_btn.setObjectName("AccentButton")
         self._first_game_btn.setMinimumHeight(44)
         icons.set_icon(self._first_game_btn, "plus", icons.ACCENT)
-        self._first_game_btn.clicked.connect(lambda: self.maybe_show_welcome(force=True))
+        self._first_game_btn.clicked.connect(
+            lambda: self._show_add_game_menu(self._first_game_btn)
+        )
         self._first_game_btn.hide()
         hero_layout.addSpacing(10)
         hero_layout.addWidget(self._first_game_btn, 0, Qt.AlignmentFlag.AlignHCenter)
@@ -1150,6 +1174,10 @@ class MainWindow(QMainWindow):
         reset_total_btn.setObjectName("DangerButton")
         icons.set_icon(reset_total_btn, "trash-2", icons.DANGER, size=16)
         reset_total_btn.clicked.connect(self._on_reset_total)
+        self._needs_game: list[QWidget] = [
+            self._plus_btn, self._minus_btn, self._undo_btn, self._sessions_btn,
+            set_count_btn, reset_session_btn, reset_total_btn,
+        ]
         footer = QHBoxLayout()
         footer.addWidget(set_count_btn)
         footer.addStretch()
@@ -1353,6 +1381,7 @@ class MainWindow(QMainWindow):
         self._pause_btn_detect.clicked.connect(self._toggle_detection_pause)
         for button in (setup_button, capture_button, self._pause_btn_detect):
             button.setMinimumHeight(42)
+        self._needs_game += [setup_button, capture_button, self._pause_btn_detect]
         layout.addLayout(row(setup_button, capture_button, self._pause_btn_detect))
 
         tips, tips_layout = card(margins=18)
@@ -3317,6 +3346,7 @@ class MainWindow(QMainWindow):
             self._game_combo.setCurrentIndex(index)
             self._game_combo.blockSignals(False)
             self._first_game_btn.hide()
+            self._show_has_game(True)
             self._on_game_changed(index)
         else:
             self._game_combo.blockSignals(True)
@@ -3328,6 +3358,15 @@ class MainWindow(QMainWindow):
             self._configure_detection()
             self._load_speedrun()  # drops a run of a game that was just deleted
             self._first_game_btn.show()
+            self._show_has_game(False)
+
+    def _show_has_game(self, has_game: bool) -> None:
+        """Buttons that need a game look usable only once there is one."""
+        note = "\n\nAdd a game first."
+        for widget in self._needs_game:
+            widget.setEnabled(has_game)
+            tip = widget.toolTip().removesuffix(note)
+            widget.setToolTip(tip if has_game else (tip + note if tip else note.strip()))
 
     def _saved_id(self, setting_key: str) -> int | None:
         """Read an id stored in the settings table (empty/invalid -> None)."""
