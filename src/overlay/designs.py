@@ -10,6 +10,9 @@ cost no image files and stay sharp at any size:
 * ``tombstone``: an R.I.P. gravestone with candles, a pumpkin and a ghost
 * ``banner``: a gothic title with ornate swirls over the count
 
+Each shows the evolving skull (a new look every 10 deaths, new colours past
+100: :mod:`src.ui.skulls`) in its own style.
+
 The same drawing makes the picture the OBS Browser Source page shows.
 """
 
@@ -26,7 +29,10 @@ from PySide6.QtGui import (
     QPainterPath,
     QPen,
     QRadialGradient,
+    QTransform,
 )
+
+from src.ui.skulls import draw_skull, skull_shape, tier_colors
 
 DESIGNS: tuple[tuple[str, str], ...] = (
     ("classic", "Classic card"),
@@ -114,7 +120,7 @@ def paint_design(painter: QPainter, rect: QRectF, design: str, word: str, number
                       rect.center().y() - height * scale / 2)
     painter.scale(scale, scale)
     {"seal": _seal, "neon": _neon, "tombstone": _tombstone, "banner": _banner}[design](
-        painter, word_for(word), str(number)
+        painter, word_for(word), number
     )
     painter.restore()
 
@@ -134,8 +140,17 @@ def render_png(design: str, word: str, number: int, width: int = 760) -> bytes:
     return bytes(data)
 
 
+def _skull_at(deaths: int, rect: QRectF) -> QPainterPath:
+    """The evolving skull's shape, scaled into ``rect``."""
+    transform = QTransform()
+    transform.translate(rect.left(), rect.top())
+    transform.scale(rect.width() / 100, rect.height() / 100)
+    return transform.map(skull_shape(deaths))
+
+
 # ---------------------------------------------------------------- Kanji Seal
-def _seal(painter: QPainter, word: str, number: str) -> None:
+def _seal(painter: QPainter, word: str, deaths: int) -> None:
+    number = str(deaths)
     strip = QLinearGradient(0, 0, 320, 0)
     strip.setColorAt(0, QColor(10, 10, 12, 215))
     strip.setColorAt(0.75, QColor(10, 10, 12, 170))
@@ -164,31 +179,16 @@ def _seal(painter: QPainter, word: str, number: str) -> None:
         painter.setFont(label)
         painter.setPen(QColor("#d9d4cf"))
         painter.drawText(QPointF(104, 36), word.upper())
-    painter.setFont(_fit_font(_SANS, number, 52, 205))
+    painter.setFont(_fit_font(_SANS, number, 52, 128))
     painter.setPen(QColor("#ffffff"))
     painter.drawText(QPointF(102, 86), number)
+    # The evolving skull on the right, white with the seal's red.
+    draw_skull(painter, deaths, QRectF(240, 17, 66, 66), "#f4efea", "#e0262e")
 
 
 # ---------------------------------------------------------------- Neon Sign
-def _skull_path(x: float, y: float, size: float) -> QPainterPath:
-    """A simple skull outline (head, eyes, nose, teeth) in a ``size`` square."""
-    s = size / 100
-    path = QPainterPath()
-    path.addRoundedRect(QRectF(x + 12 * s, y + 4 * s, 76 * s, 66 * s), 34 * s, 34 * s)
-    path.addRoundedRect(QRectF(x + 28 * s, y + 66 * s, 44 * s, 26 * s), 8 * s, 8 * s)
-    path.addEllipse(QRectF(x + 25 * s, y + 30 * s, 20 * s, 22 * s))
-    path.addEllipse(QRectF(x + 55 * s, y + 30 * s, 20 * s, 22 * s))
-    path.moveTo(x + 50 * s, y + 55 * s)
-    path.lineTo(x + 44 * s, y + 64 * s)
-    path.lineTo(x + 56 * s, y + 64 * s)
-    path.closeSubpath()
-    for tooth in (41, 50, 59):
-        path.moveTo(x + tooth * s, y + 76 * s)
-        path.lineTo(x + tooth * s, y + 90 * s)
-    return path
-
-
-def _neon(painter: QPainter, word: str, number: str) -> None:
+def _neon(painter: QPainter, word: str, deaths: int) -> None:
+    number = str(deaths)
     panel = QRectF(8, 26, 364, 168)
     painter.setPen(QPen(QColor(255, 255, 255, 30), 1.5))
     painter.setBrush(QColor(28, 14, 38, 225))
@@ -209,7 +209,9 @@ def _neon(painter: QPainter, word: str, number: str) -> None:
             painter.drawEllipse(QPointF(x, 50), 4.2, 4.2)
         _glow(painter, text, QColor("#ff9ff0"), 1.0, fill=True)
     cyan = QColor("#4ee6ff")
-    _glow(painter, _skull_path(66, 82, 74), cyan, 2.2)
+    # The evolving skull as neon tubes: cyan, or its tier's colour past 100.
+    _body, tier = tier_colors(deaths, "#4ee6ff", "#4ee6ff")
+    _glow(painter, _skull_at(deaths, QRectF(62, 72, 92, 92)), tier, 1.8)
     digits = _fit_font(_SANS, number, 78, 190, 600)
     _glow(painter, _text_path(digits, number, 250, 150), cyan, 1.2, fill=True)
 
@@ -280,7 +282,8 @@ def _ghost(painter: QPainter, x: float, y: float) -> None:
     painter.drawEllipse(QPointF(x + 40, y + 36), 4, 2.6)
 
 
-def _tombstone(painter: QPainter, word: str, number: str) -> None:
+def _tombstone(painter: QPainter, word: str, deaths: int) -> None:
+    number = str(deaths)
     _candle(painter, 48, 292)
     _candle(painter, 332, 292)
     stone = QPainterPath()
@@ -306,6 +309,15 @@ def _tombstone(painter: QPainter, word: str, number: str) -> None:
     painter.setPen(QPen(QColor("#f4ebe1"), 7, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
     painter.drawLine(QPointF(70, 290), QPointF(310, 290))  # the ground
     ink = QColor("#2b2440")
+    # The evolving skull, carved into the top of the stone: a light edge below
+    # the dark cut, like a chiselled groove.
+    carving = _skull_at(deaths, QRectF(171, 55, 38, 38))
+    painter.setPen(Qt.PenStyle.NoPen)
+    painter.setBrush(QColor(255, 248, 240, 110))
+    painter.drawPath(carving.translated(0.9, 1.2))
+    _body, tier = tier_colors(deaths, "#3a3157", "#3a3157")
+    painter.setBrush(tier)  # the stone's dark ink, or its tier's colour past 100
+    painter.drawPath(carving)
     painter.setPen(ink)
     rip = _font(_SANS, 15, 800)
     rip.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, 4)
@@ -316,6 +328,7 @@ def _tombstone(painter: QPainter, word: str, number: str) -> None:
         painter.drawText(QRectF(98, 118, 184, 30), Qt.AlignmentFlag.AlignCenter, word)
     painter.setFont(_fit_font(_SANS, number, 60, 140, 900))
     painter.drawText(QRectF(98, 150, 184, 80), Qt.AlignmentFlag.AlignCenter, number)
+    painter.setBrush(Qt.BrushStyle.NoBrush)
     crack = QPainterPath()
     crack.moveTo(270, 222)
     crack.lineTo(262, 238)
@@ -344,7 +357,8 @@ def _scroll(x0: float, direction: int) -> QPainterPath:
     return path
 
 
-def _banner(painter: QPainter, word: str, number: str) -> None:
+def _banner(painter: QPainter, word: str, deaths: int) -> None:
+    number = str(deaths)
     white = QColor("#f7f2f2")
     pen = QPen(white, 3.2, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap,
                Qt.PenJoinStyle.RoundJoin)
@@ -355,19 +369,16 @@ def _banner(painter: QPainter, word: str, number: str) -> None:
         painter.drawPath(path)
         painter.setPen(pen)
         painter.drawPath(path)
-    # The emblem: a little ghost-skull face in the middle.
-    painter.setPen(QPen(shadow, 5))
-    painter.setBrush(white)
-    painter.drawEllipse(QPointF(220, 52), 26, 26)
+    # The emblem: the evolving skull, with the title's red and blue edges.
+    emblem = _skull_at(deaths, QRectF(186, 14, 68, 68))
     painter.setPen(Qt.PenStyle.NoPen)
-    painter.setBrush(QColor("#1b0f1f"))
-    for eye in (-9, 9):
-        painter.drawEllipse(QPointF(220 + eye, 50), 5, 7)
-    mouth = QPainterPath()
-    mouth.moveTo(210, 62)
-    mouth.quadTo(220, 74, 230, 62)
-    mouth.closeSubpath()
-    painter.drawPath(mouth)
+    for dx, color in ((-2.5, QColor(230, 30, 60, 210)), (2.5, QColor(40, 120, 255, 200))):
+        painter.setBrush(color)
+        painter.drawPath(emblem.translated(dx, 0))
+    body, _tier = tier_colors(deaths, "#f7f2f2", "#f7f2f2")
+    painter.setPen(QPen(QColor(0, 0, 0, 110), 2))
+    painter.setBrush(body)
+    painter.drawPath(emblem)
 
     def chroma(path: QPainterPath) -> None:
         """Red and blue edges, slightly apart, under white: a glitchy title."""

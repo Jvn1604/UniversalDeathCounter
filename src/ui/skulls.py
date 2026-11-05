@@ -98,6 +98,33 @@ def _pixmap(tier: int, size: int, color: str, accent: str, ratio: float) -> QPix
     return pixmap
 
 
+def skull_shape(deaths: int) -> QPainterPath:
+    """
+    The skull for a death count as one shape (head, horns, blades, crown, with
+    its eye and nose holes cut out), in a 100 × 100 square: for overlay
+    designs that draw it their own way (neon tubes, carved in stone, …).
+    """
+    form = min(tier_index(deaths), _FULL_FORM)
+    body = _head().united(_horns(form)).united(_blades(form)).united(_crown(form))
+    return body.subtracted(_holes(form))
+
+
+def tier_colors(deaths: int, color: str, accent: str) -> tuple[QColor, QColor]:
+    """(body, accent) for a count: past 100 each tier has its own colours."""
+    tier = TIERS[tier_index(deaths)]
+    return QColor(tier.body or color), QColor(tier.aura or accent)
+
+
+def draw_skull(painter: QPainter, deaths: int, rect: QRectF, color: str, accent: str) -> None:
+    """The full skull badge (flames, aura and all) for a count, filling ``rect``."""
+    body, glow = tier_colors(deaths, color, accent)
+    painter.save()
+    painter.translate(rect.topLeft())
+    painter.scale(rect.width() / 100, rect.height() / 100)
+    _draw(painter, tier_index(deaths), body, glow)
+    painter.restore()
+
+
 # ---------------------------------------------------------------------------
 # Drawing (100 × 100 design space, skull centred on x = 50)
 # ---------------------------------------------------------------------------
