@@ -122,7 +122,7 @@ class BossWindow(QDialog):
         bosses_column.addLayout(boss_buttons)
 
         defeated_row = QHBoxLayout()
-        defeated_btn = QPushButton("Toggle Defeated ✓")
+        defeated_btn = QPushButton("Toggle Defeated")
         defeated_btn.clicked.connect(self._toggle_defeated)
         defeated_row.addWidget(defeated_btn)
         bosses_column.addLayout(defeated_row)
@@ -150,7 +150,7 @@ class BossWindow(QDialog):
         if self._selected_game_id is None:
             return
         for boss in self._database.get_bosses(self._selected_game_id):
-            prefix = "✓ " if boss["defeated"] else ""
+            prefix = "Beaten: " if boss["defeated"] else ""
             suffix = (
                 f"  ({boss['deaths_at_defeat']} deaths to victory)" if boss["defeated"] else ""
             )
@@ -215,8 +215,8 @@ class BossWindow(QDialog):
             self,
             "Delete Game",
             f"Delete '{item.text()}'?\n\n{self._what_goes(game_id)}\n\n"
-            "This can't be undone. Save your progress first (⋮ at the top → Save Progress) "
-            "if you might want them back.",
+            "This can't be undone. Save your progress first (menu at the top right → "
+            "Save Progress) if you might want them back.",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
         )

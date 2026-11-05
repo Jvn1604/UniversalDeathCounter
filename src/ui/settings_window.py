@@ -986,7 +986,7 @@ class SettingsWindow(QDialog):
         if self._gamepad is None or not controllers_supported():
             text = "Controllers aren't supported on this system yet."
         elif self._gamepad.connected:
-            text = "Controller connected ✓"
+            text = "Controller connected"
         else:
             text = "No controller detected: connect one to record combos."
         self._pad_status.setText(text)
@@ -1066,10 +1066,10 @@ class SettingsWindow(QDialog):
             label.setStyleSheet(f"color: {colors[severity]};" if severity else "")
         labels = {action: name for action, name, _s, _d in CONTROL_ACTIONS}
         lines = [
-            f"{'⛔' if c.severity == ERROR else '⚠'} {labels[c.action]}: {c.message}"
+            f"{'Error' if c.severity == ERROR else 'Warning'}: {labels[c.action]}: {c.message}"
             for c in conflicts
         ]
-        self._conflict_label.setText("\n".join(lines) or "✓ No conflicts")
+        self._conflict_label.setText("\n".join(lines) or "No conflicts")
         self._conflict_label.setStyleSheet(
             "color: #ff4d4d;" if has_errors(conflicts)
             else "color: #f0a030;" if conflicts else "color: #43b581;"

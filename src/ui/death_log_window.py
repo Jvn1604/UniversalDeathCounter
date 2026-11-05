@@ -66,7 +66,7 @@ class DeathLogWindow(QDialog):
         for event in events:
             sign = "+" if event["delta"] > 0 else ""
             boss = event["boss_name"] or "(no boss)"
-            note = f"  —  📝 {event['note']}" if event["note"] else ""
+            note = f"  —  Note: {event['note']}" if event["note"] else ""
             label = f"{event['timestamp']}   {sign}{event['delta']}   {boss}{note}"
             item = QListWidgetItem(label)
             item.setData(_USER_ROLE, event["id"])

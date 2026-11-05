@@ -85,7 +85,7 @@ def test_detected_kill_marks_defeated_and_selects_next_boss(window) -> None:
     assert boss["defeated"] and boss["deaths_at_defeat"] == 3
     assert window._counter_manager.current_boss_id == godrick
     assert "Margit defeated after 3 deaths" in window._detect_last_label.text()
-    assert window._boss_combo.itemText(window._boss_combo.findData(margit)).startswith("✓")
+    assert not window._boss_combo.itemIcon(window._boss_combo.findData(margit)).isNull()
 
     window._on_boss_victory_detected(game_id + 1)  # another game: ignored
     assert not db.get_boss(godrick)["defeated"]
