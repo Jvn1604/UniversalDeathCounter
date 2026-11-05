@@ -206,7 +206,7 @@ class OverlayWindow(CaptureWindow):
         # Alpha 1, not 0: fully clear pixels would let clicks fall through.
         painter.fillRect(self.rect(), QColor(0, 0, 0, 1))
         paint_design(painter, QRectF(self.rect()), self._design, self._count_style.word,
-                     getattr(self, "_big_number", 0))
+                     getattr(self, "_big_number", 0), skull=self._show_skull)
         painter.end()
 
     @property
