@@ -213,14 +213,30 @@ class _FontPreviewDelegate(QStyledItemDelegate):
             option.font = font
 
 
+class _FontCombo(QComboBox):
+    """
+    Font names, each shown in its own font once the list opens. The preview
+    is attached only then: on a closed box Qt sizes it by every row, which
+    loaded every installed font (40-60 MB) just for opening Settings.
+    """
+
+    def ensure_previews(self) -> None:
+        if not isinstance(self.itemDelegate(), _FontPreviewDelegate):
+            self.view().setUniformItemSizes(True)  # size the list by one row
+            self.setItemDelegate(_FontPreviewDelegate(self))
+
+    def showPopup(self) -> None:  # noqa: N802 - Qt override
+        self.ensure_previews()
+        super().showPopup()
+
+
 def _font_combo(default_label: str) -> QComboBox:
     """Installed font families, with ``default_label`` (value "") first."""
-    combo = QComboBox()
+    combo = _FontCombo()
     combo.addItem(default_label, userData="")
     for family in QFontDatabase.families():
         if not family.startswith("@"):  # vertical-text variants of CJK fonts
             combo.addItem(family, userData=family)
-    combo.setItemDelegate(_FontPreviewDelegate(combo))
     combo.setMaxVisibleItems(16)
     return combo
 

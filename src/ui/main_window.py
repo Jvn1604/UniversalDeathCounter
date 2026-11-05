@@ -177,6 +177,7 @@ from src.ui.widgets import (
     Toast,
     UpdateCard,
     card,
+    drawable,
     field,
     glow,
     guard_wheel,
@@ -1770,7 +1771,10 @@ class MainWindow(QMainWindow):
         current = self._window_combo.currentData()
         self._window_combo.clear()
         for window in windows:
-            self._window_combo.addItem(window.label, userData=(window.exe_path, window.title))
+            # Titles come from other programs: no emoji the font can't draw.
+            self._window_combo.addItem(
+                drawable(window.label), userData=(window.exe_path, window.title)
+            )
         if not windows:
             self._window_combo.addItem("No windows found: start Remote Play or your capture app")
         index = self._window_combo.findData(current) if current else -1
