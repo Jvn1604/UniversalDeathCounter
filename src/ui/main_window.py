@@ -2217,6 +2217,7 @@ class MainWindow(QMainWindow):
     def _refresh_detection_page(self) -> None:
         game_id = self._counter_manager.current_game_id
         self._watch_card.setVisible(game_id is not None)
+        self._refresh_save_card()  # hidden without a game; saves found since are listed
         if game_id is None:
             self._detect_page_info.setText(
                 "Add a game first: in the game list on the Death Counter page, choose "
