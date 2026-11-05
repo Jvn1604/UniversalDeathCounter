@@ -106,7 +106,7 @@ LESSONS: tuple[tuple[str, str, str, tuple[str, str, str] | None], ...] = (
         "list when adding a game.</li>"
         "<li>Choose the boss you're fighting in the Boss list: deaths now count "
         "against it too.</li>"
-        "<li>◄ ► switch bosses. The trophy marks the boss beaten and moves on.</li>"
+        "<li>The arrow buttons switch bosses. The trophy marks the boss beaten and moves on.</li>"
         "<li>Beaten automatically: after a boss, <b>Capture Screen</b> → \"A boss "
         "victory screen\". The next time that banner shows, the boss is marked "
         "beaten (and the timer can split).</li>"
@@ -427,7 +427,7 @@ class GuideDialog(QDialog):
             "death": f"Die in game, then press <b>{keys.get('increment') or 'your +1 key'}</b>: "
             "it works in fullscreen. Or click +1 Death on the Death Counter page.",
             "bosses": "Pick the boss you're fighting so deaths count against it. "
-            "◄ ► switch bosses, the trophy marks one beaten.",
+            "The arrow buttons switch bosses, the trophy marks one beaten.",
             "detect": "Die once, then press "
             f"<b>{keys.get('calibrate') or 'the capture key'}</b> while the death screen "
             "shows. From then on, deaths count themselves.",
