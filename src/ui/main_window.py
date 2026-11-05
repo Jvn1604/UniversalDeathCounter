@@ -718,7 +718,7 @@ class MainWindow(QMainWindow):
         self._saved_label.setToolTip(
             "Everything saves by itself: each death the moment it happens, and a full save "
             "file shortly after any change and when you close.\n"
-            "⋮ → Save Progress makes an extra copy wherever you like."
+            "Menu (top right) → Save Progress makes an extra copy wherever you like."
         )
         layout.addSpacing(12)
         layout.addWidget(self._saved_label)
@@ -1044,7 +1044,7 @@ class MainWindow(QMainWindow):
         self._next_boss_btn = QPushButton()
         self._next_boss_btn.clicked.connect(lambda: self._select_adjacent_boss(+1))
         self._defeated_btn = QPushButton()
-        self._defeated_btn.setToolTip("Boss defeated: mark it ✓ and move to the next boss")
+        self._defeated_btn.setToolTip("Boss defeated: mark it beaten and move to the next boss")
         self._defeated_btn.clicked.connect(lambda: self._defeat_current_boss(detected=False))
         for button, icon_name in (
             (self._prev_boss_btn, "chevron-left"),
@@ -1844,7 +1844,7 @@ class MainWindow(QMainWindow):
         try:
             sources = client.video_sources()
         except ObsError as exc:
-            self._obs_status.setText(f"⚠ {exc}")
+            self._obs_status.setText(f"Problem: {exc}")
             return
         finally:
             client.close()
@@ -1854,7 +1854,7 @@ class MainWindow(QMainWindow):
         # A combo with placeholder text stays unselected unless told otherwise.
         self._obs_source_combo.setCurrentIndex(sources.index(current) if current in sources else 0)
         self._obs_status.setText(
-            f"Connected to OBS ✓  Pick the source that shows your console "
+            f"Connected to OBS. Pick the source that shows your console "
             f"({len(sources)} found)." if sources else "Connected, but OBS has no sources yet."
         )
         self._configure_detection()  # a game already using OBS picks up new settings
@@ -1931,7 +1931,7 @@ class MainWindow(QMainWindow):
             )
 
     def _on_phone_seen(self) -> None:
-        self._phone_status.setText(f"Phone connected ✓  (last seen {datetime.now():%H:%M})")
+        self._phone_status.setText(f"Phone connected (last seen {datetime.now():%H:%M})")
 
     def _on_phone_action(self, action: str) -> None:
         if action in PHONE_ACTIONS:  # the server already refuses anything else
@@ -2153,7 +2153,7 @@ class MainWindow(QMainWindow):
                 continue
             when = datetime.fromisoformat(event["timestamp"]).astimezone()
             where = event["boss_name"] or "No boss"
-            text = f"✝  {when:%a %H:%M}   ·   {where}"
+            text = f"†  {when:%a %H:%M}   ·   {where}"
             if event["note"]:
                 text += f"   ·   {event['note']}"
             self._recent_list.addItem(text)
@@ -2366,7 +2366,7 @@ class MainWindow(QMainWindow):
         self._prev_boss_btn.setToolTip(tooltip("prev_boss", "Previous boss"))
         self._next_boss_btn.setToolTip(tooltip("next_boss", "Next boss not yet defeated"))
         self._defeated_btn.setToolTip(
-            tooltip("boss_defeated", "Boss defeated: mark it ✓ and move to the next boss")
+            tooltip("boss_defeated", "Boss defeated: mark it beaten and move to the next boss")
         )
         for action, button in self._timer_buttons.items():
             button.set_key(key(f"timer_{action}"))
@@ -2591,12 +2591,12 @@ class MainWindow(QMainWindow):
         if split:
             self._timer_action("split")
 
-        self._reload_bosses(game_id)  # show the ✓, still on this boss
+        self._reload_bosses(game_id)  # show it beaten, still on this boss
         if settings.get(SETTING_BOSS_AUTO_ADVANCE, "true") == "true":
             self._select_adjacent_boss(+1)
 
         plural = "" if deaths == 1 else "s"
-        message = f"⚔ {boss['name']} defeated after {deaths} death{plural}!"
+        message = f"{boss['name']} defeated after {deaths} death{plural}!"
         if split:
             message += " Split recorded."
         self._detect_last_label.setText(
@@ -3454,7 +3454,7 @@ class MainWindow(QMainWindow):
             if boss is not None and boss["defeated"]:
                 menu.addAction("Mark Not Defeated", lambda: self._set_boss_defeated(False))
             else:
-                menu.addAction("Mark Defeated ✓", lambda: self._set_boss_defeated(True))
+                menu.addAction("Mark Defeated", lambda: self._set_boss_defeated(True))
             menu.addSeparator()
         menu.addAction("Games && Bosses…", self._open_boss_window)
         menu.exec(self._boss_combo.mapToGlobal(position))
@@ -3631,8 +3631,12 @@ class MainWindow(QMainWindow):
         self._boss_combo.addItem("(No Boss)", userData=None)
         if game_id is not None:
             for boss in self._database.get_bosses(game_id):
-                prefix = "✓ " if boss["defeated"] else ""
-                self._boss_combo.addItem(f"{prefix}{boss['name']}", userData=boss["id"])
+                self._boss_combo.addItem(boss["name"], userData=boss["id"])
+                if boss["defeated"]:  # an icon: the UI font has no tick (test_light_fonts)
+                    self._boss_combo.setItemIcon(
+                        self._boss_combo.count() - 1,
+                        icons.icon("check", icons.color(icons.NORMAL), size=14),
+                    )
         # Re-select the last boss if it belongs to this game.
         last_boss = self._saved_id(SETTING_LAST_BOSS_ID)
         index = max(self._boss_combo.findData(last_boss), 0) if last_boss else 0
@@ -4061,7 +4065,7 @@ class MainWindow(QMainWindow):
             logger.warning("Auto-save failed: %s", exc)
             return None
         self._last_progress_save = stamp
-        self._saved_label.setText(f"✓ Auto-saved {datetime.now():%H:%M}")
+        self._saved_label.setText(f"Auto-saved {datetime.now():%H:%M}")
         return path
 
     def _save_progress(self) -> None:
@@ -4242,7 +4246,7 @@ class MainWindow(QMainWindow):
         icons.set_icon(self._bug_button, "bug", icons.DANGER, size=19)
         self._bug_button.setToolTip(
             f"{count} error{'' if count == 1 else 's'} logged this session: "
-            "click to report it (the error log is under ⋮)"
+            "click to report it (the error log is in the menu at the top right)"
         )
 
     def _open_error_log(self) -> None:
@@ -4657,7 +4661,7 @@ class MainWindow(QMainWindow):
         handlers[action]()
         if action == "split" and controller.is_new_pb():
             total = format_time(controller.timer.elapsed_ms(controller.method), 2)
-            self._notify(f"🏆 New personal best! {total}", 8000)
+            self._notify(f"New personal best! {total}", 8000)
         if action == "reset" and controller.game_id != self._counter_manager.current_game_id:
             self._load_speedrun()  # the finished-with game's run is saved; follow the UI
         if action == "split" and not self._timer_window.isVisible():
@@ -4773,7 +4777,7 @@ class MainWindow(QMainWindow):
     # Multiple displays
     # ----------------------------------------------------------------
     def _add_display_menu(self, parent_menu: QMenu) -> None:
-        """'Move Overlay to Display ▸' submenu, rebuilt each time it opens."""
+        """'Move Overlay to Display ›' submenu, rebuilt each time it opens."""
         menu = parent_menu.addMenu("Move Overlay to Display")
         menu.aboutToShow.connect(lambda m=menu: self._fill_display_menu(m))
 

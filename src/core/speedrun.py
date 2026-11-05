@@ -214,7 +214,7 @@ class SpeedrunTimer:
     """
     Start / split / pause / undo / skip / reset, with real and game time.
 
-    States: idle → running ⇄ paused → finished. Splitting while idle starts
+    States: idle → running ↔ paused → finished. Splitting while idle starts
     the run, like LiveSplit's single start/split key. A manual pause stops
     both clocks; :meth:`set_game_paused` (loads, pause screens…) stops only
     game time.

@@ -63,7 +63,7 @@ logger = get_logger(__name__)
 _MODE_LABELS: tuple[tuple[str, str], ...] = (
     (DETECTION_MODE_OFF, "Off"),
     (DETECTION_MODE_TEMPLATE, "Calibrated death screen (any game)"),
-    (DETECTION_MODE_SOULS, "Souls preset (red \"YOU DIED\" / 死 text)"),
+    (DETECTION_MODE_SOULS, "Souls preset (red \"YOU DIED\" / Sekiro's death text)"),
     (DETECTION_MODE_HEALTH, "Health bar empties (games without a death screen)"),
     (DETECTION_MODE_LOG, "Game log file (e.g. Minecraft)"),
 )
@@ -674,13 +674,13 @@ class AutoDetectWindow(QDialog):
     def _update_calibration_label(self) -> None:
         count = len(self._database.get_death_templates(self._game_id))
         self._calibration_label.setText(
-            "None saved" if count == 0 else f"{count} saved ✓"
+            "None saved" if count == 0 else f"{count} saved"
         )
         self._clear_button.setEnabled(count > 0)
 
     def _update_pause_label(self) -> None:
         count = len(self._database.get_death_templates(self._game_id, SCREEN_PAUSE))
-        self._pause_label.setText("None saved" if count == 0 else f"{count} saved ✓")
+        self._pause_label.setText("None saved" if count == 0 else f"{count} saved")
         self._pause_clear_button.setEnabled(count > 0)
 
     def _mark_pause_screen(self, frame: np.ndarray) -> None:
@@ -721,7 +721,7 @@ class AutoDetectWindow(QDialog):
 
     def _update_victory_label(self) -> None:
         count = len(self._database.get_death_templates(self._game_id, SCREEN_VICTORY))
-        self._victory_label.setText("None saved" if count == 0 else f"{count} saved ✓")
+        self._victory_label.setText("None saved" if count == 0 else f"{count} saved")
         self._victory_clear_button.setEnabled(count > 0)
 
     def _victory_from_file(self) -> None:
@@ -754,7 +754,7 @@ class AutoDetectWindow(QDialog):
             self._health_label.setStyleSheet("")
             return
         r, g, b = bar.color
-        self._health_label.setText("■ Set ✓")
+        self._health_label.setText("■ Set")
         self._health_label.setStyleSheet(f"color: rgb({r}, {g}, {b}); font-weight: 600;")
 
     def _clear_templates(self) -> None:

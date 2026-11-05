@@ -169,9 +169,9 @@ class ObsGuideWindow(QDialog):
         url = enable()
         if url:
             QApplication.clipboard().setText(url)
-            self._stream_button.setText(f"✓ On, link copied: {url}")
+            self._stream_button.setText(f"On: link copied: {url}")
 
     def _enable_text(self, enable: Callable[[], None], button: QPushButton) -> None:
         enable()
         QApplication.clipboard().setText(str(self._deaths_txt_path))
-        button.setText("✓ Enabled, path copied")
+        button.setText("Enabled: path copied")

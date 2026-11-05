@@ -41,6 +41,7 @@ from PySide6.QtWidgets import (
 
 from src.ui import icons
 from src.utils.constants import APP_VERSION, BUG_SHEET_URL, GITHUB_REPO, LOG_FILE
+from src.utils.platform_info import IS_MAC, IS_WINDOWS
 
 ISSUE_URL = f"https://github.com/{GITHUB_REPO}/issues/new"
 APP_STARTED = datetime.now()  # this module loads with the main window
@@ -145,7 +146,10 @@ class ProblemCounter(QObject):
         logging.getLogger().removeHandler(self._handler)
 
 
-_MONO_CSS = 'font-family: "Cascadia Mono", Consolas, "Courier New", monospace; font-size: 12px;'
+# One font, not a list: a list of fonts makes Qt hold every fallback font in
+# memory (tens of MB).
+_MONO_FAMILY = "Consolas" if IS_WINDOWS else "Menlo" if IS_MAC else "DejaVu Sans Mono"
+_MONO_CSS = f'font-family: "{_MONO_FAMILY}"; font-size: 12px;'
 
 
 def _mono() -> object:
