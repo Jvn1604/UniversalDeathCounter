@@ -18,10 +18,13 @@ The same drawing makes the picture the OBS Browser Source page shows.
 
 from __future__ import annotations
 
+from functools import lru_cache
+
 from PySide6.QtCore import QBuffer, QByteArray, QIODevice, QPointF, QRectF, Qt
 from PySide6.QtGui import (
     QColor,
     QFont,
+    QFontDatabase,
     QFontMetricsF,
     QImage,
     QLinearGradient,
@@ -64,9 +67,19 @@ def word_for(word: str) -> str:
     return "Deaths" if word.strip().upper() == "DEATH" else word.strip()
 
 
+@lru_cache(maxsize=16)
+def _installed(families: tuple[str, ...]) -> str:
+    """The first of ``families`` on this PC ("" for the default font)."""
+    installed = set(QFontDatabase.families())
+    return next((family for family in families if family in installed), "")
+
+
 def _font(families: list[str], size: float, weight: int = 700, italic: bool = False) -> QFont:
+    # One family, not the list: a list makes Qt load every fallback font (~45 MB).
     font = QFont()
-    font.setFamilies(families)
+    family = _installed(tuple(families))
+    if family:
+        font.setFamily(family)
     font.setPixelSize(max(1, round(size)))
     font.setWeight(QFont.Weight(weight))
     font.setItalic(italic)
@@ -171,12 +184,12 @@ def _seal(painter: QPainter, word: str, deaths: int, skull: bool) -> None:
     painter.drawRect(seal.adjusted(5, 5, -5, -5))
     kanji = _font(_KANJI, 50, 700)
     painter.setPen(QColor("#fbf3ee"))
-    if QFontMetricsF(kanji).inFontUcs4(ord("死")):
+    if _installed(tuple(_KANJI)):
         painter.setFont(kanji)
         painter.drawText(seal, Qt.AlignmentFlag.AlignCenter, "死")
     else:  # no Japanese font here: a cross instead
         painter.setFont(_font(_SANS, 44, 800))
-        painter.drawText(seal, Qt.AlignmentFlag.AlignCenter, "✝")
+        painter.drawText(seal, Qt.AlignmentFlag.AlignCenter, "†")
     if word:
         label = _font(_SANS, 15, 800)
         label.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, 4.5)
