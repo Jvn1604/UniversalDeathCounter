@@ -107,3 +107,20 @@ def test_every_design_shows_the_evolving_skull() -> None:
             assert designs.render_png(name, "DEATH", 15, 300) != designs.render_png(
                 name, "DEATH", 25, 300
             ), name
+
+
+def test_the_skull_can_be_switched_off(window) -> None:
+    for name, _label in designs.DESIGNS:
+        if designs.is_design(name):
+            with_skull = designs.render_png(name, "DEATH", 15, 300)
+            without = designs.render_png(name, "DEATH", 15, 300, skull=False)
+            assert with_skull != without, name
+            # No skull: another skull tier changes nothing.
+            assert without == designs.render_png(name, "DEATH", 16, 300, skull=False)
+    window._toggle_overlay()
+    window._set_overlay_setting("overlay_design", "neon")
+    window._set_stream_overlay(True)
+    assert "-1-" in window._stream.state()["frame"]
+    window._set_overlay_setting("overlay_show_skull", "false")  # unticked
+    assert not window._overlay._show_skull
+    assert window._stream.state()["frame"].startswith("neon-0-0-")
