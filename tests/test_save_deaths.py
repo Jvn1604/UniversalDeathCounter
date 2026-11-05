@@ -222,3 +222,30 @@ def test_the_save_count_shows_as_the_big_number(window, tmp_path) -> None:
     window._forget_save_file()
     assert window._save_config() == {}
     assert window._counter_label.text() == "0"
+
+
+def test_the_save_card_waits_for_a_game(tmp_path, monkeypatch) -> None:
+    from PySide6.QtWidgets import QApplication
+
+    import src.ui.main_window as mw
+    import src.utils.profiles as profiles
+    from src.ui.main_window import _PAGE_DETECTION
+
+    monkeypatch.setattr(profiles, "SAVES_DIR", tmp_path)
+    monkeypatch.setattr(profiles, "DATABASE_PATH", tmp_path / "death_counter.db")
+    monkeypatch.setattr(mw.ProfileManager.__init__, "__defaults__", (tmp_path,))
+    monkeypatch.setattr(mw.UpdateChecker, "check_async", lambda self: None)
+    monkeypatch.setattr(mw, "find_known_saves", lambda: [])
+    app = QApplication.instance() or QApplication([])
+    win = mw.MainWindow()
+    try:
+        win._show_page(_PAGE_DETECTION)
+        assert not win._save_card.isVisibleTo(win)  # no game yet
+        game = win._database.create_game("Sekiro")
+        win._reload_games(select_game_id=game)
+        win._show_page(_PAGE_DETECTION)
+        assert win._save_card.isVisibleTo(win)
+        assert win._save_combo.itemText(0) == "Choose this game's save…"
+    finally:
+        win._quit_app()
+        app.processEvents()
