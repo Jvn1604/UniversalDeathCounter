@@ -32,7 +32,8 @@ class _Game:
 
     def __init__(self, deaths: int = 412, slot: int = 1, offset: int = 0x1235) -> None:
         rng = random.Random(3)
-        self.slots = [bytearray(rng.randbytes(0x8000)) for _ in range(2)]
+        # Like a real save: some varied data, lots of structure (zeros).
+        self.slots = [bytearray(rng.randbytes(0x2000) + bytes(0x6000)) for _ in range(2)]
         self.slot, self.offset, self.deaths = slot, offset, deaths
         self.play_time = 0x2000
         struct.pack_into("<I", self.slots[slot], offset, deaths)
@@ -173,6 +174,59 @@ def test_the_watcher_reads_the_save_while_playing(tmp_path, monkeypatch) -> None
     watcher.stop()
 
 
+def test_learning_when_the_game_saves_before_the_app_counts(tmp_path, monkeypatch) -> None:
+    """
+    The real order: the game writes the death to its save the moment you die;
+    the app counts it a little later (death screen spotted, or F9), and other
+    autosaves come and go meanwhile.
+    """
+    from PySide6.QtWidgets import QApplication
+
+    class _NowThread:
+        def __init__(self, target, **_kwargs) -> None:
+            self._target = target
+
+        def start(self) -> None:
+            self._target()
+
+    clock = [1000.0]
+    monkeypatch.setattr(sw.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(sw, "threading", SimpleNamespace(Thread=_NowThread))
+    app = QApplication.instance() or QApplication([])
+    game = _Game(deaths=40)
+    path = tmp_path / "game.sav"
+    stored: list[dict] = []
+    stamp = [time.time_ns()]
+    watcher = sw.SaveWatcher()
+    watcher.config_changed.connect(lambda _game, config: stored.append(config))
+
+    def tick(seconds: float, write: bool = False) -> None:
+        """Time passes; the game writes its save if ``write``; the watcher polls."""
+        if write:
+            path.write_bytes(game.file())
+            stamp[0] += 1_000_000_000
+            os.utime(path, ns=(stamp[0], stamp[0]))
+        clock[0] += seconds
+        watcher._poll()
+        app.processEvents()
+
+    path.write_bytes(game.file())
+    watcher.set_game(5, {"path": str(path)}, deaths=0)
+    app_count = 0
+    for _death in range(3):
+        tick(20, write=True)  # playing: an autosave
+        game.die()
+        tick(1, write=True)  # the game saves the death at once...
+        app_count += 1
+        watcher.note_deaths(app_count)  # ...the app counts it a moment later
+        tick(2)
+        game.autosave()
+        tick(3, write=True)  # another autosave right after
+        tick(15)  # the dust settles
+    assert stored and stored[-1]["last"] == 43, watcher.status
+    watcher.stop()
+
+
 @pytest.fixture()
 def window(tmp_path, monkeypatch):
     from PySide6.QtWidgets import QApplication
@@ -249,3 +303,34 @@ def test_the_save_card_waits_for_a_game(tmp_path, monkeypatch) -> None:
     finally:
         win._quit_app()
         app.processEvents()
+
+
+def test_it_says_when_a_save_has_no_count_to_find(tmp_path, monkeypatch) -> None:
+    from PySide6.QtWidgets import QApplication
+
+    class _NowThread:
+        def __init__(self, target, **_kwargs) -> None:
+            self._target = target
+
+        def start(self) -> None:
+            self._target()
+
+    clock = [1000.0]
+    monkeypatch.setattr(sw.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(sw, "threading", SimpleNamespace(Thread=_NowThread))
+    app = QApplication.instance() or QApplication([])
+    path = tmp_path / "scrambled.sav"
+    rng = random.Random(9)
+    path.write_bytes(rng.randbytes(50_000))  # like a compressed or encrypted save
+    watcher = sw.SaveWatcher()
+    watcher.set_game(5, {"path": str(path)}, deaths=0)
+    app.processEvents()
+    assert "compressed or encrypted" in watcher.status
+    for count in range(1, 7):  # deaths counted, but no field in it ever goes up
+        path.write_bytes(rng.randbytes(50_000))
+        watcher.note_deaths(count)
+        clock[0] += 20
+        watcher._poll()
+        app.processEvents()
+    assert "No death count found in this save after 6 deaths" in watcher.status
+    watcher.stop()

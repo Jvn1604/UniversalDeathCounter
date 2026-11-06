@@ -13,6 +13,7 @@ import json
 import os
 import threading
 import time
+import zlib
 
 from PySide6.QtCore import QObject, QTimer, Signal
 
@@ -28,8 +29,14 @@ from src.utils.logger import get_logger
 logger = get_logger(__name__)
 
 _POLL_MS = 2000
-# After a counted death, give the game this long to write it to the save.
-_SETTLE_SECONDS = 6.0
+# While learning, the save is compared only at checkpoints: this long after
+# the app counted a death, when the save holds it whichever came first (games
+# save the moment you die, a little before the death screen is spotted or F9
+# pressed). Comparing at every write threw out the very field that counts
+# deaths, because it went up while the app hadn't counted yet.
+_SETTLE_SECONDS = 10.0
+# Counted deaths without finding the count: the save probably doesn't keep one.
+_GIVE_UP_DEATHS = 6
 
 
 def load_config(text: str) -> dict:
@@ -73,6 +80,9 @@ class SaveWatcher(QObject):
         self._learner = SaveLearner()
         self._deaths = 0
         self._last_death = 0.0
+        self._checkpoint: int | None = None  # the app's count when the learner last looked
+        self._learning_since: int | None = None  # the app's count when learning began
+        self._scrambled = False  # the save looks compressed or encrypted
         self._stamp: tuple[int, int] | None = None
         self._pending = False
         self._reading = False
@@ -90,7 +100,8 @@ class SaveWatcher(QObject):
         self._game_id, self._config = game_id, dict(config)
         self._location = SaveLocation.from_json(config.get("location") or "")
         self._learner.reset()
-        self._deaths, self._last_death = deaths, 0.0
+        self._deaths, self._last_death, self._checkpoint = deaths, 0.0, None
+        self._learning_since, self._scrambled = None, False
         self._stamp, self._pending, self._reading = None, True, False
         if game_id is None or not config.get("path"):
             self._timer.stop()
@@ -127,7 +138,12 @@ class SaveWatcher(QObject):
         stamp = (info.st_mtime_ns, info.st_size)
         if stamp != self._stamp:
             self._stamp, self._pending = stamp, True
-        if not self._pending or time.monotonic() - self._last_death < _SETTLE_SECONDS:
+        # Learning: a death the app counted is a checkpoint, even if the game
+        # wrote the save before it was counted (no write after it to notice).
+        checkpoint_due = self.learning and self._deaths != self._checkpoint
+        if not (self._pending or checkpoint_due) or (
+            time.monotonic() - self._last_death < _SETTLE_SECONDS
+        ):
             return
         self._pending, self._reading = False, True
         token, deaths = self._token, self._deaths
@@ -161,20 +177,47 @@ class SaveWatcher(QObject):
             self._location = None
             self._config["location"] = None
             self._learner.reset()
+            self._checkpoint = None
+        if self._learning_since is None:
+            self._learning_since = deaths
+            self._scrambled = _looks_scrambled(contents)
+        if self._checkpoint is not None and deaths == self._checkpoint:
+            self._show_learning()  # an autosave between deaths: nothing to learn from
+            return
+        self._checkpoint = deaths
         location = self._learner.observe(contents, deaths)
         if location is None:
-            left = max(0, DEATHS_TO_LEARN - self._learner.deaths_seen)
-            self._set_status(
-                "Learning: keep playing. Die "
-                + (f"{left} more time{'s' if left != 1 else ''}" if left else "once or twice more")
-                + " (count each death here as usual) and the game's own count appears."
-            )
+            self._show_learning()
             return
         value = self._learner.finish(contents)
         self._location = location
         self._config["location"] = None  # stored by _store, with the count
         if value is not None:
             self._store(value)
+
+    def _show_learning(self) -> None:
+        tried = self._deaths - (self._learning_since or 0)
+        if tried >= _GIVE_UP_DEATHS:
+            self._set_status(
+                f"No death count found in this save after {tried} deaths. This game "
+                "probably doesn't keep one in its save"
+                + (", or the save is compressed or encrypted." if self._scrambled else ".")
+                + " It keeps trying; Stop turns it off."
+            )
+            return
+        if self._scrambled:
+            self._set_status(
+                "This save looks compressed or encrypted, so its death count probably "
+                "can't be read. It will still try as you die (+1 or F9 for each death)."
+            )
+            return
+        left = max(0, DEATHS_TO_LEARN - self._learner.deaths_seen)
+        self._set_status(
+            "Learning the game's count: each time you die, let auto-detect count it or "
+            "press +1 (F9). "
+            + (f"{left} more death{'s' if left != 1 else ''} to go." if left
+               else "Almost there: one or two more deaths.")
+        )
 
     def _store(self, value: int) -> None:
         name = os.path.basename(self._config.get("path", ""))
@@ -190,3 +233,11 @@ class SaveWatcher(QObject):
         if text != self.status:
             self.status = text
             self.status_changed.emit(text)
+
+
+def _looks_scrambled(contents: object) -> bool:
+    """Compressed or encrypted data doesn't compress any further."""
+    if isinstance(contents, str) or not contents:
+        return False
+    sample = max(contents, key=len)[:262_144]
+    return len(sample) > 4096 and len(zlib.compress(sample, 1)) > 0.95 * len(sample)
