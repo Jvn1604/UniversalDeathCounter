@@ -75,6 +75,7 @@ No Python or anything else needed. Windows 10 or 11, macOS 11 or newer, or a 64-
 - **Zero setup for Souls games.** The built-in preset recognizes Elden Ring, Dark Souls I–III and Sekiro.
 - **No death screen? Use the health bar.** Mark your health bar once at full health, and a death counts when it empties.
 - **Or the game's log file.** For games that log deaths, such as Minecraft, it counts every new line that matches your text. This mode doesn't capture the screen at all.
+- **Setups Library:** ready-made auto-detect setups shared by other players (Detection → **Setups Library**). Pick your game and deaths count with no calibrating; when you add a game from its `.exe` and the library has it, the app offers it. **Share My Setup…** saves yours as a small file to give a friend or add to the library (`presets/` in this repository; see its README). Setups hold only the captured screens and detection settings, nothing personal.
 - **Missed a death?** Add another death screen in two clicks. Any saved one counts.
 - **Switches to the right game** when you launch it. A new session starts after a break of 16 hours or more; a restart, crash or update in between continues the same session, and the **Sessions** button next to Undo brings back any earlier one.
 - **Screen capture only:** no memory reading and no injection, so it's safe with anti-cheat.
@@ -159,7 +160,7 @@ The **Console** page (sidebar) makes DUDC work when the game runs on a console:
 - A 29 MB installer (about 100 MB installed), and **no** background services.
 - Detection checks the game window 5 times a second and stops when the game isn't running.
 - Controller polling only runs while a pad is connected.
-- Your data is a local SQLite file, and nothing is uploaded. The only network requests are an optional update check against GitHub Releases, if you pick Glass or Clay that theme's download, and, if you turn on game artwork, one look-up on Steam per game (its Steam folder or its name; the picture is then kept).
+- Your data is a local SQLite file, and nothing is uploaded. The only network requests are an optional update check against GitHub Releases, if you pick Glass or Clay that theme's download, if you turn on game artwork, one look-up on Steam per game (its Steam folder or its name; the picture is then kept), and the Setups Library's list when you open it or add a game (only with update checks on).
 
 ## Quick start
 

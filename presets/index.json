@@ -1,0 +1,15 @@
+{
+ "format": 1,
+ "presets": [
+  {
+   "game": "Phantom Blade Zero",
+   "file": "phantom-blade-zero.dudc.json",
+   "exe_names": [
+    "PBZ.exe"
+   ],
+   "mode": "template",
+   "screens": 1,
+   "author": "DePhantom"
+  }
+ ]
+}
