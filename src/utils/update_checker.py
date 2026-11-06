@@ -78,15 +78,23 @@ class UpdateChecker(QObject):
                 tag, release_url = self._from_release_page()
             except Exception:  # noqa: BLE001
                 logger.debug("Update check failed (offline or repo unavailable)", exc_info=True)
-                self.check_failed.emit()
+                self._emit(self.check_failed)
                 return
         if _parse_version(tag) > _parse_version(APP_VERSION):
             logger.info("Update available: %s (current %s)", tag, APP_VERSION)
             # Cross-thread signal emission is safe: Qt queues it to the
             # receiver's (main) thread automatically.
-            self.update_available.emit(tag, release_url)
+            self._emit(self.update_available, tag, release_url)
         else:
-            self.up_to_date.emit(tag)
+            self._emit(self.up_to_date, tag)
+
+    @staticmethod
+    def _emit(signal, *args) -> None:
+        """Report the result, unless the app closed while the check ran."""
+        try:
+            signal.emit(*args)
+        except RuntimeError:  # the checker was deleted with its window
+            logger.debug("Update check finished after the app closed")
 
     def _from_api(self) -> tuple[str, str]:
         headers = {"Accept": "application/vnd.github+json"}
