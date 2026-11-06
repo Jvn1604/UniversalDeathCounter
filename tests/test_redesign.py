@@ -201,6 +201,7 @@ def test_font_list_draws_fonts_without_giving_every_item_a_font() -> None:
     assert all(
         combo.itemData(i, Qt.ItemDataRole.FontRole) is None for i in range(combo.count())
     )
+    combo.ensure_previews()  # what opening the list does
     option = QStyleOptionViewItem()
     index = combo.model().index(1, 0)
     combo.itemDelegate().initStyleOption(option, index)

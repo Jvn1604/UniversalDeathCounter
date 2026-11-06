@@ -121,7 +121,7 @@ def test_progress_saves_itself_after_a_change(window) -> None:
     window._on_increment()
     assert window._progress_soon.isActive()  # a full save file follows shortly
     window._progress_soon.timeout.emit()
-    assert window._saved_label.text().startswith("✓ Auto-saved")
+    assert window._saved_label.text().startswith("Auto-saved")
 
 
 # ---------------------------------------------------------------- bug sheet

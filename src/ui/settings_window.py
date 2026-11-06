@@ -45,6 +45,7 @@ from src.hotkeys.conflicts import ERROR, WARNING, Conflict, find_conflicts, has_
 from src.hotkeys.gamepad import GamepadManager, combo_label, controllers_supported
 from src.hotkeys.hotkey_manager import HotkeyManager, global_hotkeys_available
 from src.overlay.count_text import SEPARATORS
+from src.overlay.designs import DESIGNS
 from src.overlay.overlay_window import OverlayWindow
 from src.ui import icons
 from src.ui.theme_picker import ThemeGallery
@@ -54,6 +55,7 @@ from src.utils.backgrounds import IMAGE_FILTER, import_background
 from src.utils.constants import (
     CONTROL_ACTIONS,
     DEFAULT_COUNTER_SOURCE,
+    FEATURES,
     SETTING_BOSS_AUTO_ADVANCE,
     SETTING_BOSS_AUTO_SPLIT,
     SETTING_BOSS_DETECTION,
@@ -62,6 +64,7 @@ from src.utils.constants import (
     SETTING_DEATHS_TXT_ENABLED,
     SETTING_DEATHS_TXT_PATH,
     SETTING_DEATHS_TXT_TEMPLATE,
+    SETTING_FEATURE_TIMER,
     SETTING_GAME_ARTWORK,
     SETTING_MINIMIZE_TO_TRAY,
     SETTING_OVERLAY_ALIGN,
@@ -74,6 +77,7 @@ from src.utils.constants import (
     SETTING_OVERLAY_CORNER_RADIUS,
     SETTING_OVERLAY_COUNT_LABEL,
     SETTING_OVERLAY_COUNTER_SOURCE,
+    SETTING_OVERLAY_DESIGN,
     SETTING_OVERLAY_FONT,
     SETTING_OVERLAY_FONT_SIZE,
     SETTING_OVERLAY_LETTER_SPACING,
@@ -129,6 +133,7 @@ _COUNTER_SOURCE_LABELS: tuple[tuple[str, str], ...] = (
     ("boss", "Deaths on this boss"),
     ("total", "All-time deaths"),
     ("run", "Deaths this speedrun run"),
+    ("save", "In-game deaths (from the save file)"),
 )
 
 
@@ -208,14 +213,30 @@ class _FontPreviewDelegate(QStyledItemDelegate):
             option.font = font
 
 
+class _FontCombo(QComboBox):
+    """
+    Font names, each shown in its own font once the list opens. The preview
+    is attached only then: on a closed box Qt sizes it by every row, which
+    loaded every installed font (40-60 MB) just for opening Settings.
+    """
+
+    def ensure_previews(self) -> None:
+        if not isinstance(self.itemDelegate(), _FontPreviewDelegate):
+            self.view().setUniformItemSizes(True)  # size the list by one row
+            self.setItemDelegate(_FontPreviewDelegate(self))
+
+    def showPopup(self) -> None:  # noqa: N802 - Qt override
+        self.ensure_previews()
+        super().showPopup()
+
+
 def _font_combo(default_label: str) -> QComboBox:
     """Installed font families, with ``default_label`` (value "") first."""
-    combo = QComboBox()
+    combo = _FontCombo()
     combo.addItem(default_label, userData="")
     for family in QFontDatabase.families():
         if not family.startswith("@"):  # vertical-text variants of CJK fonts
             combo.addItem(family, userData=family)
-    combo.setItemDelegate(_FontPreviewDelegate(combo))
     combo.setMaxVisibleItems(16)
     return combo
 
@@ -329,6 +350,7 @@ class SettingsWindow(QDialog):
 
     settings_changed = Signal()
     preview_changed = Signal(dict)
+    features_previewed = Signal(dict)  # {feature setting: on} as ticked, before saving
     saved = Signal(dict)  # the settings from before this save (for Undo)
     TAB_GENERAL, TAB_APPEARANCE, TAB_OVERLAY, TAB_SPEEDRUN, TAB_CONTROLS = range(5)
 
@@ -393,6 +415,11 @@ class SettingsWindow(QDialog):
                 values[id(widget)] = widget.text()
         return values
 
+    def _show_timer_settings(self, on: bool) -> None:
+        """The Speedrun tab and the boss-split option only with the timer switched on."""
+        self._tabs.setTabVisible(self.TAB_SPEEDRUN, on)
+        self._boss_checks[SETTING_BOSS_AUTO_SPLIT].setVisible(on)
+
     def _space_out(self) -> None:
         """Clear gaps: between the sections, and between the rows inside them."""
         for form in self.findChildren(QFormLayout):
@@ -448,7 +475,7 @@ class SettingsWindow(QDialog):
         general_page = QWidget()
         layout = QVBoxLayout(general_page)
         for page, title, icon_name in (
-            (general_page, "General", "settings"),
+            (self._scrolling(general_page), "General", "settings"),
             (self._build_appearance_page(), "Appearance", "palette"),
             (self._build_overlay_page(), "Overlay", "layers"),
             (self._build_speedrun_page(), "Speedrun", "timer"),
@@ -474,6 +501,25 @@ class SettingsWindow(QDialog):
         general_form.addRow(self._check_updates_check)
         layout.addWidget(general_group)
 
+        features_group = QGroupBox("Features")
+        features_layout = QVBoxLayout(features_group)
+        features_layout.setSpacing(12)
+        features_note = QLabel(
+            "Switch off what you don't use: it disappears from the sidebar, menus and "
+            "tray, and its keys and background work stop. Your data stays; switch it "
+            "back on any time."
+        )
+        features_note.setWordWrap(True)
+        features_note.setStyleSheet("color: #999999; font-size: 11px;")
+        features_layout.addWidget(features_note)
+        self._feature_checks: dict[str, QCheckBox] = {}
+        for key, label, tip in FEATURES:
+            check = QCheckBox(label)
+            check.setToolTip(tip)
+            features_layout.addWidget(check)
+            self._feature_checks[key] = check
+        layout.addWidget(features_group)
+
         boss_group = QGroupBox("Boss kills")
         boss_layout = QVBoxLayout(boss_group)
         self._boss_checks: dict[str, QCheckBox] = {}
@@ -491,6 +537,14 @@ class SettingsWindow(QDialog):
         layout.addWidget(boss_group)
 
         # --- Streaming (deaths.txt) ---
+        self._feature_checks[SETTING_FEATURE_TIMER].toggled.connect(self._show_timer_settings)
+        for check in self._feature_checks.values():
+            check.toggled.connect(
+                lambda _on: self.features_previewed.emit(
+                    {key: c.isChecked() for key, c in self._feature_checks.items()}
+                )
+            )
+
         stream_group = QGroupBox("Streaming — deaths.txt for OBS Text Source")
         stream_form = QFormLayout(stream_group)
 
@@ -619,6 +673,22 @@ class SettingsWindow(QDialog):
         preview_layout.addSpacing(10)
         preview_layout.addWidget(preview_tip, 1)
         layout.addWidget(preview_group)
+
+        design_group = QGroupBox("Design")
+        design_form = QFormLayout(design_group)
+        self._design_combo = QComboBox()
+        for value, label in DESIGNS:
+            self._design_combo.addItem(label, userData=value)
+        design_form.addRow("Design", self._design_combo)
+        design_note = QLabel(
+            "Classic card uses everything below. The other designs are complete looks "
+            "of their own: they show the count with your death word (DEATH shows as "
+            "\"Deaths\"), on the overlay and in the OBS Browser Source."
+        )
+        design_note.setObjectName("Muted")
+        design_note.setWordWrap(True)
+        design_form.addRow(design_note)
+        layout.addWidget(design_group)
 
         overlay_group = QGroupBox("Background")
         overlay_form = QFormLayout(overlay_group)
@@ -762,6 +832,7 @@ class SettingsWindow(QDialog):
             self._counter_source_combo,
             self._bg_mode_combo,
             self._overlay_font_combo,
+            self._design_combo,
         ):
             combo.currentIndexChanged.connect(self._schedule_preview)
         self._align_combo.currentIndexChanged.connect(self._schedule_preview)
@@ -834,6 +905,7 @@ class SettingsWindow(QDialog):
             SETTING_OVERLAY_SECONDARY_COLOR: self._secondary_color.color(),
             SETTING_OVERLAY_TEXT_OUTLINE: flag(self._outline_check),
             SETTING_OVERLAY_BG_MODE: self._bg_mode_combo.currentData(),
+            SETTING_OVERLAY_DESIGN: self._design_combo.currentData(),
             SETTING_OVERLAY_COUNTER_SOURCE: self._counter_source_combo.currentData(),
             SETTING_OVERLAY_TEXT_COLOR: self._text_color,
             SETTING_OVERLAY_FONT_SIZE: str(self._font_size_spin.value()),
@@ -986,7 +1058,7 @@ class SettingsWindow(QDialog):
         if self._gamepad is None or not controllers_supported():
             text = "Controllers aren't supported on this system yet."
         elif self._gamepad.connected:
-            text = "Controller connected ✓"
+            text = "Controller connected"
         else:
             text = "No controller detected: connect one to record combos."
         self._pad_status.setText(text)
@@ -1066,10 +1138,10 @@ class SettingsWindow(QDialog):
             label.setStyleSheet(f"color: {colors[severity]};" if severity else "")
         labels = {action: name for action, name, _s, _d in CONTROL_ACTIONS}
         lines = [
-            f"{'⛔' if c.severity == ERROR else '⚠'} {labels[c.action]}: {c.message}"
+            f"{'Error' if c.severity == ERROR else 'Warning'}: {labels[c.action]}: {c.message}"
             for c in conflicts
         ]
-        self._conflict_label.setText("\n".join(lines) or "✓ No conflicts")
+        self._conflict_label.setText("\n".join(lines) or "No conflicts")
         self._conflict_label.setStyleSheet(
             "color: #ff4d4d;" if has_errors(conflicts)
             else "color: #f0a030;" if conflicts else "color: #43b581;"
@@ -1130,8 +1202,12 @@ class SettingsWindow(QDialog):
         )
         for key, check in self._boss_checks.items():
             check.setChecked(settings.get(key, "true") == "true")
+        for key, check in self._feature_checks.items():
+            check.setChecked(settings.get(key, "true") == "true")
+        self._show_timer_settings(settings.get(SETTING_FEATURE_TIMER, "true") == "true")
 
         _select_data(self._bg_mode_combo, settings.get(SETTING_OVERLAY_BG_MODE, "dark"))
+        _select_data(self._design_combo, settings.get(SETTING_OVERLAY_DESIGN, "classic"))
         _select_data(
             self._counter_source_combo,
             settings.get(SETTING_OVERLAY_COUNTER_SOURCE, DEFAULT_COUNTER_SOURCE),
@@ -1232,6 +1308,8 @@ class SettingsWindow(QDialog):
             "true" if self._check_updates_check.isChecked() else "false",
         )
         for key, check in self._boss_checks.items():
+            db.set_setting(key, "true" if check.isChecked() else "false")
+        for key, check in self._feature_checks.items():
             db.set_setting(key, "true" if check.isChecked() else "false")
 
         db.set_setting(

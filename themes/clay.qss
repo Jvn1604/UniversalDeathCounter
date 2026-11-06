@@ -7,7 +7,7 @@
 QWidget {
     background-color: #efecfa;
     color: #1e2145;
-    font-family: "Segoe UI Variable Text", "Segoe UI", sans-serif;
+    font-family: "Segoe UI";
     font-size: 13px;
 }
 
@@ -39,7 +39,7 @@ QFrame#TopBar QWidget, QFrame#Sidebar QWidget {
 }
 
 QLabel#TitleLabel {
-    font-family: "Segoe UI Variable Display", "Segoe UI", sans-serif;
+    font-family: "Segoe UI";
     font-size: 19px;
     font-weight: 800;
     color: #15173a;
@@ -170,7 +170,7 @@ QLabel#NavFooter {
 }
 
 QLabel#PageTitle {
-    font-family: "Segoe UI Variable Display", "Segoe UI", sans-serif;
+    font-family: "Segoe UI";
     font-size: 22px;
     font-weight: 800;
     color: #15173a;
@@ -210,7 +210,7 @@ QFrame#HeroCard {
 }
 
 QLabel#CounterLabel {
-    font-family: "Segoe UI Variable Display", "Segoe UI", sans-serif;
+    font-family: "Segoe UI";
     font-size: 92px;
     font-weight: 900;
     color: #6c5ce7;
@@ -238,7 +238,7 @@ QPushButton#CounterCaption:hover {
 }
 
 QLabel#HomeCount {
-    font-family: "Segoe UI Variable Display", "Segoe UI", sans-serif;
+    font-family: "Segoe UI";
     font-size: 54px;
     font-weight: 900;
     color: #6c5ce7;
@@ -255,8 +255,15 @@ QLabel#SubCounterLabel {
     color: #6b6890;
 }
 
+QLabel#BentoValue {
+    font-family: "Segoe UI";
+    font-size: 44px;
+    font-weight: 800;
+    color: #15173a;
+}
+
 QLabel#StatValue {
-    font-family: "Segoe UI Variable Display", "Segoe UI", sans-serif;
+    font-family: "Segoe UI";
     font-size: 24px;
     font-weight: 800;
     color: #15173a;
@@ -270,7 +277,7 @@ QLabel#StatLabel {
 }
 
 QLabel#TimerValue {
-    font-family: "Segoe UI Variable Display", "Segoe UI", sans-serif;
+    font-family: "Segoe UI";
     font-size: 60px;
     font-weight: 800;
     color: #15173a;
@@ -380,6 +387,27 @@ QPushButton#AccentButton QLabel#KeyCap {
     border: 1px solid rgba(255, 255, 255, 0.35);
     border-bottom: 2px solid rgba(255, 255, 255, 0.45);
     color: #ffffff;
+}
+
+/* Greyed out (e.g. no game yet): the accent and the big buttons too, whose
+   text and key are child labels. */
+QPushButton#AccentButton:disabled {
+    background-color: #f3f0fd;
+    color: #a5a9b4;
+    border: 1px solid #e6e0f8;
+}
+
+QPushButton:disabled QLabel,
+QPushButton:disabled QLabel#KeyCap {
+    color: #a5a9b4;
+}
+
+QPushButton#AccentButton:disabled QLabel,
+QPushButton#AccentButton:disabled QLabel#KeyCap,
+QPushButton#GhostButton:disabled,
+QPushButton#DangerButton:disabled {
+    color: #a5a9b4;
+    border-color: #e6e0f8;
 }
 
 QPushButton#DangerButton {
@@ -601,16 +629,22 @@ QGroupBox {
     background-color: #f8f6ff;
     border: 1px solid #e6e0f8;
     border-radius: 14px;
-    margin-top: 16px;
-    padding: 16px 14px 12px 14px;
+    margin-top: 0px;
+    /* Room at the top for the section's header, which sits inside the card. */
+    padding: 40px 16px 14px 16px;
     font-weight: 800;
 }
 
 QGroupBox::title {
-    subcontrol-origin: margin;
-    left: 14px;
-    padding: 0 6px;
-    color: #6b6890;
+    subcontrol-origin: padding;
+    subcontrol-position: top left;
+    left: 16px;
+    top: 2px;
+    padding: 1px 0 1px 10px;
+    border-left: 3px solid #6c5ce7;
+    color: #1e2145;
+    font-size: 14px;
+    font-weight: 800;
 }
 
 QGroupBox QWidget {
@@ -778,7 +812,7 @@ QFrame#UpdateCard QPushButton#AccentButton {
 
 QLabel#PhoneLink {
     color: #1e2145;
-    font-family: "Cascadia Mono", "Consolas", monospace;
+    font-family: "Consolas";
     font-size: 15px;
     font-weight: 700;
     padding: 10px 12px;
@@ -821,7 +855,7 @@ QProgressBar#TierProgress::chunk {
 }
 
 QLabel#InsightValue {
-    font-family: "Segoe UI Variable Display", "Segoe UI", sans-serif;
+    font-family: "Segoe UI";
     font-size: 24px;
     font-weight: 800;
     color: #15173a;

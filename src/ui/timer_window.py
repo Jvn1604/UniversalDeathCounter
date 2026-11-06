@@ -233,7 +233,7 @@ class TimerWindow(CaptureWindow):
                 continue
             row = view.rows[index]
             weight = "700" if row.current else "400"
-            name.setText(("▸ " if row.current else "") + row.name)
+            name.setText(("► " if row.current else "") + row.name)
             name.setStyleSheet(f"color: {secondary}; font-weight: {weight}; {font}")
             delta.setText(row.delta)
             delta.setStyleSheet(
@@ -440,13 +440,13 @@ class RunHistoryDialog(QDialog):
         lines = [f"<b>Attempts:</b> {records.attempts} &nbsp; <b>Finished:</b> {records.finished}"]
         if pb is not None:
             lines.append(
-                f"<b>🏆 Personal best:</b> {format_time(pb.total(controller.method), digits)} "
+                f"<b>Personal best:</b> {format_time(pb.total(controller.method), digits)} "
                 f"({pb.deaths} deaths, {_local_time(pb.started_at)})"
             )
         if records.fewest_deaths is not None and records.fewest_deaths is not pb:
             run = records.fewest_deaths
             lines.append(
-                f"<b>💀 Fewest deaths:</b> {run.deaths} in "
+                f"<b>Fewest deaths:</b> {run.deaths} in "
                 f"{format_time(run.total(controller.method), digits)} "
                 f"({_local_time(run.started_at)})"
             )
@@ -473,7 +473,7 @@ class RunHistoryDialog(QDialog):
             cells = [
                 str(number),
                 _local_time(run.started_at),
-                ("🏆 PB  " if is_pb else "") + result,
+                ("PB  " if is_pb else "") + result,
                 format_time(_ended_at(run.real_ms, run.split_times, run.finished), digits),
                 format_time(_ended_at(run.game_ms, run.times("game"), run.finished), digits),
                 str(run.deaths),

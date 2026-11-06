@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import os
 import sqlite3
 import tempfile
 import threading
@@ -117,8 +118,12 @@ from src.detection.matchers import (
 from src.detection.obs_client import DEFAULT_HOST as OBS_DEFAULT_HOST
 from src.detection.obs_client import DEFAULT_PORT as OBS_DEFAULT_PORT
 from src.detection.obs_client import ObsClient, ObsError
+from src.detection.save_deaths import find_known_saves
+from src.detection.save_watcher import SaveWatcher, load_config, shown_count
 from src.hotkeys.gamepad import GamepadManager, combo_label
 from src.hotkeys.hotkey_manager import HotkeyManager
+from src.overlay.designs import DESIGNS, is_design
+from src.overlay.designs import render_png as render_design_png
 from src.overlay.overlay_window import OverlayWindow, available_screen_rects
 from src.themes.theme_manager import active_theme, apply_theme, outdated_themes, theme_info
 from src.ui import dashboard, icons
@@ -150,6 +155,7 @@ from src.ui.guide_dialog import (
     STEPS,
     GuideDialog,
 )
+from src.ui.library_window import Fetcher, LibraryDialog
 from src.ui.mini_window import MiniWindow
 from src.ui.obs_guide_window import ObsGuideWindow
 from src.ui.report_window import ErrorLogWindow, ProblemCounter, ReportBugDialog
@@ -162,6 +168,7 @@ from src.ui.timer_window import RunHistoryDialog, SplitsDialog, TimerWindow
 from src.ui.widgets import (
     ActionButton,
     AutoHideLabel,
+    BentoGrid,
     CreditCard,
     HeroCard,
     NavToggle,
@@ -171,6 +178,7 @@ from src.ui.widgets import (
     Toast,
     UpdateCard,
     card,
+    drawable,
     field,
     glow,
     guard_wheel,
@@ -179,7 +187,7 @@ from src.ui.widgets import (
     row,
     section_title,
 )
-from src.utils import artwork, save_files
+from src.utils import artwork, presets, save_files
 from src.utils.backgrounds import cover, load_background
 from src.utils.constants import (
     APP_BRAND,
@@ -197,6 +205,7 @@ from src.utils.constants import (
     DETECTION_MODE_OFF,
     DETECTION_MODE_SOULS,
     DETECTION_MODE_TEMPLATE,
+    FEATURES,
     ICONS_DIR,
     OPTION_OBS_SOURCE,
     OPTION_SCREEN_DISPLAY,
@@ -211,6 +220,10 @@ from src.utils.constants import (
     SETTING_DEATHS_TXT_PATH,
     SETTING_DEATHS_TXT_TEMPLATE,
     SETTING_DETECTION_COOLDOWN,
+    SETTING_FEATURE_CONSOLE,
+    SETTING_FEATURE_MINI,
+    SETTING_FEATURE_STATS,
+    SETTING_FEATURE_TIMER,
     SETTING_GAME_ARTWORK,
     SETTING_HOTKEY_CALIBRATE,
     SETTING_HOTKEY_UNDO,
@@ -228,6 +241,7 @@ from src.utils.constants import (
     SETTING_OVERLAY_BG_MODE,
     SETTING_OVERLAY_CLICK_THROUGH,
     SETTING_OVERLAY_COUNTER_SOURCE,
+    SETTING_OVERLAY_DESIGN,
     SETTING_OVERLAY_EVER_SHOWN,
     SETTING_OVERLAY_FONT_SIZE,
     SETTING_OVERLAY_GEOMETRY,
@@ -237,6 +251,7 @@ from src.utils.constants import (
     SETTING_PHONE_REMOTE,
     SETTING_PHONE_REMOTE_KEY,
     SETTING_QUICK_START_HIDDEN,
+    SETTING_SAVE_DEATHS_PREFIX,
     SETTING_SIDEBAR_COLLAPSED,
     SETTING_STREAM_OVERLAY,
     SETTING_THEME,
@@ -260,7 +275,7 @@ from src.utils.constants import (
     pad_setting,
 )
 from src.utils.exporters import write_csv_summary
-from src.utils.game_templates import add_template_bosses, get_template
+from src.utils.game_templates import add_template_bosses, get_template, get_template_names
 from src.utils.logger import get_logger
 from src.utils.phone_remote import ACTIONS as PHONE_ACTIONS
 from src.utils.phone_remote import PhoneRemote, new_key
@@ -371,6 +386,7 @@ _COUNTER_CAPTIONS = {
     "boss": "DEATHS ON THIS BOSS",
     "total": "ALL-TIME DEATHS",
     "run": "DEATHS THIS RUN",
+    "save": "IN-GAME DEATHS (SAVE FILE)",
 }
 
 
@@ -469,6 +485,7 @@ class MainWindow(QMainWindow):
         self._overlay_hidden_local = False
         self._stream = StreamOverlay(self)
         self._stream_skull_key: tuple = ()
+        self._stream_frame_key = ""  # the drawn design last sent to the stream page
         self._last_snapshot: CounterSnapshot | None = None
         self._overlay.settings_requested.connect(self._open_overlay_settings)
         self._mini = MiniWindow()
@@ -480,6 +497,9 @@ class MainWindow(QMainWindow):
         self._timer_window.action_requested.connect(self._on_timer_window_action)
         self._speedrun: SpeedrunController | None = None
         self._death_watcher = DeathWatcher(parent=self)
+        self._save_watcher = SaveWatcher(self)
+        self._save_watcher.config_changed.connect(self._on_save_config_changed)
+        self._save_watcher.status_changed.connect(self._on_save_status)
         self._log_watcher = LogWatcher(parent=self)
         self._detection_paused = False  # not persisted: every launch starts active
         self._quitting = False
@@ -547,7 +567,8 @@ class MainWindow(QMainWindow):
         self._recovery_timer.start(0)
         self._maybe_check_updates()
         self._refresh_downloaded_themes()
-        if self._database.get_setting(SETTING_PHONE_REMOTE, "false") == "true":
+        if (self._database.get_setting(SETTING_PHONE_REMOTE, "false") == "true"
+                and self._feature_on(SETTING_FEATURE_CONSOLE)):
             self._set_phone_remote(True)
         if self._database.get_setting(SETTING_STREAM_OVERLAY, "false") == "true":
             self._set_stream_overlay(True)
@@ -699,7 +720,7 @@ class MainWindow(QMainWindow):
         self._saved_label.setToolTip(
             "Everything saves by itself: each death the moment it happens, and a full save "
             "file shortly after any change and when you close.\n"
-            "⋮ → Save Progress makes an extra copy wherever you like."
+            "Menu (top right) → Save Progress makes an extra copy wherever you like."
         )
         layout.addSpacing(12)
         layout.addWidget(self._saved_label)
@@ -792,6 +813,8 @@ class MainWindow(QMainWindow):
             button.clicked.connect(handler)
             layout.addWidget(button)
             self._nav_texts[button] = text
+            if text == "Mini Mode":
+                self._mini_nav = button
         settings_button = nav_button("Settings", "settings")
         settings_button.setToolTip("Look, themes, overlay, timer and controls")
         settings_button.clicked.connect(lambda: self._show_page(_PAGE_SETTINGS))
@@ -903,9 +926,7 @@ class MainWindow(QMainWindow):
         self._home_boss.setWordWrap(True)
         now_texts.addWidget(self._home_game)
         now_texts.addWidget(self._home_boss)
-        now_texts.addSpacing(6)
-        self._home_detect = StatusPill("Auto-detect off")
-        now_texts.addWidget(self._home_detect, 0, Qt.AlignmentFlag.AlignLeft)
+        now_texts.addStretch()
         now_row.addLayout(now_texts, 1)
         count_box = QVBoxLayout()
         count_box.setSpacing(0)
@@ -927,18 +948,15 @@ class MainWindow(QMainWindow):
         self._home_open_btn.clicked.connect(self._open_counter_or_add_game)
         now_layout.addSpacing(6)
         now_layout.addWidget(self._home_open_btn)
-        layout.addWidget(now)
+        now_layout.addStretch()
 
         self._home_today = StatTile("Today")
         self._home_session = StatTile("This session")
         self._home_total = StatTile("All-time")
-        self._home_bosses = StatTile("Bosses beaten")
-        tiles = ResponsiveGrid(
-            [self._home_today, self._home_session, self._home_total, self._home_bosses],
-            stretch=(1, 1, 1, 1), columns=2,
-        )
-        self._responsive.append(tiles)
-        layout.addWidget(tiles)
+        for tile in (self._home_today, self._home_session, self._home_total):
+            # Bento style: label at the top, a big number at the bottom.
+            tile.layout().insertStretch(1)
+            tile.value.setObjectName("BentoValue")
 
         week, week_layout = card(margins=16)
         week_layout.setSpacing(4)
@@ -955,26 +973,117 @@ class MainWindow(QMainWindow):
         self._week_chart = WeekChart()
         week_layout.addWidget(self._week_chart, 1)
 
+        # Bosses beaten: the ring shows the count (the tile's own value would repeat it).
+        self._home_bosses = StatTile("Bosses beaten")
+        self._home_bosses.value.hide()
+        self._boss_ring = ProgressRing(diameter=96)
+        self._home_bosses.layout().addStretch()
+        self._home_bosses.layout().addWidget(self._boss_ring, 0, Qt.AlignmentFlag.AlignHCenter)
+        self._home_bosses.layout().addStretch()
+
         bosses, bosses_layout = card(margins=16)
-        bosses_layout.addWidget(section_title("Boss progress"))
-        boss_body = QHBoxLayout()
-        boss_body.setSpacing(18)
-        self._boss_ring = ProgressRing()
-        self._toughest = BossRanking()
-        boss_body.addWidget(self._boss_ring, 0, Qt.AlignmentFlag.AlignVCenter)
-        boss_body.addWidget(self._toughest, 1)
-        bosses_layout.addLayout(boss_body, 1)
-        insights = ResponsiveGrid([week, bosses], stretch=(3, 2), spacing=16)
-        self._responsive.append(insights)
-        layout.addWidget(insights)
+        self._toughest = BossRanking()  # has its own heading
+        bosses_layout.addWidget(self._toughest, 1)
+
+        detect, detect_layout = card(margins=16)
+        detect_layout.addWidget(section_title("Auto-detect"))
+        self._home_detect = StatusPill("Auto-detect off")
+        self._home_detect.setWordWrap(True)
+        detect_layout.addWidget(self._home_detect, 0, Qt.AlignmentFlag.AlignLeft)
+        detect_layout.addStretch()
+        detect_button = QPushButton(" Detection")
+        detect_button.setObjectName("GhostButton")
+        icons.set_icon(detect_button, "scan-eye", size=16)
+        detect_button.clicked.connect(lambda: self._show_page(_PAGE_DETECTION))
+        detect_layout.addWidget(detect_button, 0, Qt.AlignmentFlag.AlignLeft)
+
+        # A bento grid: four columns, cards one to three wide, two columns
+        # when the window is narrow.
+        bento = BentoGrid([
+            (now, 2), (self._home_today, 1), (self._home_total, 1),
+            (self._home_session, 1), (week, 2), (self._home_bosses, 1),
+            (bosses, 3), (detect, 1),
+        ])
+        self._responsive.append(bento)
+        self._home_bento = bento
+        layout.addWidget(bento)
+        layout.addWidget(self._build_home_welcome())
         layout.addStretch()
         return page
 
+    def _build_home_welcome(self) -> QWidget:
+        """Home before the first game: how to add one, instead of empty cards."""
+        welcome = self._home_welcome = HeroCard(watermark="")
+        welcome_layout = QVBoxLayout(welcome)
+        welcome_layout.setContentsMargins(24, 24, 24, 24)
+        welcome_layout.setSpacing(10)
+        welcome_layout.addWidget(section_title("Start here"))
+        title = QLabel("Add the game you're playing")
+        title.setObjectName("PageTitle")
+        welcome_layout.addWidget(title)
+        text = QLabel(
+            "Then die as usual: press F9 (or +1 Death) for each death, or let the app "
+            "spot your death screen. Your stats fill this page as you play."
+        )
+        text.setObjectName("PageSubtitle")
+        text.setWordWrap(True)
+        welcome_layout.addWidget(text)
+        welcome_layout.addSpacing(6)
+        from_exe = QPushButton(" Pick the Game's .exe")
+        from_exe.setObjectName("AccentButton")
+        icons.set_icon(from_exe, "folder-open", icons.ACCENT, size=17)
+        from_exe.setToolTip("Best: auto-detect can then follow the game.")
+        from_exe.clicked.connect(self._add_game_from_exe)
+        no_exe = QPushButton(" No .exe? Watch a Display")
+        icons.set_icon(no_exe, "monitor", size=17)
+        no_exe.setToolTip("For launchers, emulators and cloud gaming.")
+        no_exe.clicked.connect(self._add_game_without_exe)
+        ready = QComboBox()
+        ready.addItems(get_template_names())
+        add_ready = QPushButton(" Add Boss List")
+        icons.set_icon(add_ready, "library", size=17)
+        add_ready.setToolTip("A game with its bosses already listed.")
+        add_ready.clicked.connect(lambda: self._add_template_game(ready.currentText()))
+        for button in (from_exe, no_exe, add_ready):
+            button.setMinimumHeight(42)
+        welcome_layout.addLayout(row(from_exe, no_exe))
+        ready_row = QHBoxLayout()
+        ready_label = QLabel("Or a ready-made boss list:")
+        ready_label.setObjectName("Muted")
+        ready_row.addWidget(ready_label)
+        ready_row.addWidget(ready, 1)
+        ready_row.addWidget(add_ready)
+        welcome_layout.addLayout(ready_row)
+        welcome.hide()
+        return welcome
+
     def _open_counter_or_add_game(self) -> None:
-        if self._game_combo.count():
+        if self._counter_manager.current_game_id is not None:
             self._show_page(_PAGE_COUNTER)
         else:
-            self.maybe_show_welcome(force=True)
+            self._show_add_game_menu(self._home_open_btn)
+
+    def _show_add_game_menu(self, anchor: QWidget) -> None:
+        """The ways to add a game, under the button that asked."""
+        menu = QMenu(self)
+        menu.addAction(
+            icons.icon("folder-open", icons.color(icons.NORMAL), size=16),
+            "Pick the game's .exe…  (best: auto-detect follows the game)",
+            self._add_game_from_exe,
+        )
+        menu.addAction(
+            icons.icon("monitor", icons.color(icons.NORMAL), size=16),
+            "Game without .exe…  (launcher, emulator, cloud)",
+            self._add_game_without_exe,
+        )
+        ready = menu.addMenu(
+            icons.icon("library", icons.color(icons.NORMAL), size=16), "Ready-made boss list"
+        )
+        for name in get_template_names():
+            ready.addAction(name, lambda n=name: self._add_template_game(n))
+        menu.addSeparator()
+        menu.addAction("Show me how (guide)", lambda: self.maybe_show_welcome(force=True))
+        menu.exec(anchor.mapToGlobal(QPoint(0, anchor.height() + 4)))
 
     # Death Counter ----------------------------------------------------
     def _build_counter_page(self) -> QWidget:
@@ -1007,7 +1116,7 @@ class MainWindow(QMainWindow):
         self._next_boss_btn = QPushButton()
         self._next_boss_btn.clicked.connect(lambda: self._select_adjacent_boss(+1))
         self._defeated_btn = QPushButton()
-        self._defeated_btn.setToolTip("Boss defeated: mark it ✓ and move to the next boss")
+        self._defeated_btn.setToolTip("Boss defeated: mark it beaten and move to the next boss")
         self._defeated_btn.clicked.connect(lambda: self._defeat_current_boss(detected=False))
         for button, icon_name in (
             (self._prev_boss_btn, "chevron-left"),
@@ -1070,7 +1179,9 @@ class MainWindow(QMainWindow):
         self._first_game_btn.setObjectName("AccentButton")
         self._first_game_btn.setMinimumHeight(44)
         icons.set_icon(self._first_game_btn, "plus", icons.ACCENT)
-        self._first_game_btn.clicked.connect(lambda: self.maybe_show_welcome(force=True))
+        self._first_game_btn.clicked.connect(
+            lambda: self._show_add_game_menu(self._first_game_btn)
+        )
         self._first_game_btn.hide()
         hero_layout.addSpacing(10)
         hero_layout.addWidget(self._first_game_btn, 0, Qt.AlignmentFlag.AlignHCenter)
@@ -1150,6 +1261,10 @@ class MainWindow(QMainWindow):
         reset_total_btn.setObjectName("DangerButton")
         icons.set_icon(reset_total_btn, "trash-2", icons.DANGER, size=16)
         reset_total_btn.clicked.connect(self._on_reset_total)
+        self._needs_game: list[QWidget] = [
+            self._plus_btn, self._minus_btn, self._undo_btn, self._sessions_btn,
+            set_count_btn, reset_session_btn, reset_total_btn,
+        ]
         footer = QHBoxLayout()
         footer.addWidget(set_count_btn)
         footer.addStretch()
@@ -1351,9 +1466,21 @@ class MainWindow(QMainWindow):
         self._pause_btn_detect = QPushButton(" Pause")
         icons.set_icon(self._pause_btn_detect, "pause", size=16)
         self._pause_btn_detect.clicked.connect(self._toggle_detection_pause)
-        for button in (setup_button, capture_button, self._pause_btn_detect):
+        library_button = QPushButton(" Setups Library")
+        icons.set_icon(library_button, "library", size=16)
+        library_button.setToolTip(
+            "Ready-made setups from other players: deaths count with no calibrating. "
+            "Share yours there too."
+        )
+        library_button.clicked.connect(self._open_library)
+        for button in (setup_button, capture_button, self._pause_btn_detect, library_button):
             button.setMinimumHeight(42)
-        layout.addLayout(row(setup_button, capture_button, self._pause_btn_detect))
+        self._needs_game += [setup_button, library_button, capture_button,
+                             self._pause_btn_detect]
+        layout.addLayout(
+            row(setup_button, library_button, capture_button, self._pause_btn_detect)
+        )
+        layout.addWidget(self._build_save_card())
 
         tips, tips_layout = card(margins=18)
         tips_layout.addWidget(section_title("How it learns"))
@@ -1373,6 +1500,194 @@ class MainWindow(QMainWindow):
         layout.addWidget(tips)
         layout.addStretch()
         return page
+
+    def _build_save_card(self) -> QWidget:
+        """The game's own death count, read from its save file."""
+        save, save_layout = card(margins=18)
+        save_layout.addWidget(section_title("In-game death count (save file)"))
+        intro = QLabel(
+            "Shows the death total the game itself keeps in your save: every death of "
+            "that character, from before you used this app too, and from earlier NG+ "
+            "cycles. Pick the save, then play: after your next 2 deaths it knows where "
+            "the count is. Only the file is read."
+        )
+        intro.setObjectName("Muted")
+        intro.setWordWrap(True)
+        save_layout.addWidget(intro)
+        self._save_combo = QComboBox()
+        # Long paths mustn't widen the page: the full path is in each item's tooltip.
+        self._save_combo.setSizeAdjustPolicy(
+            QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon
+        )
+        self._save_combo.setMinimumContentsLength(24)
+        self._save_combo.activated.connect(self._on_save_picked)
+        choose = QPushButton(" Choose File…")
+        icons.set_icon(choose, "folder-open", size=16)
+        choose.clicked.connect(self._choose_save_file)
+        self._save_forget_btn = QPushButton(" Stop")
+        self._save_forget_btn.setObjectName("GhostButton")
+        self._save_forget_btn.setToolTip(
+            "Stop reading this game's save (and forget what it learned)."
+        )
+        self._save_forget_btn.clicked.connect(self._forget_save_file)
+        save_layout.addLayout(
+            row(self._save_combo, choose, self._save_forget_btn, stretch=(1, 0, 0))
+        )
+        self._save_status = QLabel()
+        self._save_status.setWordWrap(True)
+        save_layout.addWidget(self._save_status)
+        self._save_cycle_check = QCheckBox("Count this cycle only (NG+)")
+        self._save_cycle_check.setToolTip(
+            "Show the deaths since the cycle started, instead of the save's whole total."
+        )
+        self._save_cycle_check.toggled.connect(self._on_save_cycle_toggled)
+        self._save_cycle_btn = QPushButton(" New Cycle Starts Now")
+        icons.set_icon(self._save_cycle_btn, "refresh-cw", size=16)
+        self._save_cycle_btn.clicked.connect(self._start_save_cycle)
+        self._save_show_btn = QPushButton(" Show as the Big Number")
+        icons.set_icon(self._save_show_btn, "skull", size=16)
+        self._save_show_btn.clicked.connect(
+            lambda: self._set_overlay_setting(SETTING_OVERLAY_COUNTER_SOURCE, "save")
+        )
+        cycle_row = QHBoxLayout()
+        cycle_row.addWidget(self._save_cycle_check)
+        cycle_row.addWidget(self._save_cycle_btn)
+        cycle_row.addStretch()
+        cycle_row.addWidget(self._save_show_btn)
+        save_layout.addLayout(cycle_row)
+        self._save_card = save
+        return save
+
+    # Save-file death count -------------------------------------------
+    def _save_config(self, game_id: int | None = None) -> dict:
+        game_id = self._counter_manager.current_game_id if game_id is None else game_id
+        if game_id is None:
+            return {}
+        return load_config(
+            self._database.get_setting(f"{SETTING_SAVE_DEATHS_PREFIX}{game_id}", "")
+        )
+
+    def _write_save_config(self, game_id: int, config: dict) -> None:
+        self._database.set_setting(
+            f"{SETTING_SAVE_DEATHS_PREFIX}{game_id}",
+            json.dumps(config) if config.get("path") else "",
+        )
+
+    def _configure_save_watcher(self) -> None:
+        game_id = self._counter_manager.current_game_id
+        total = self._counter_manager.get_snapshot().total_deaths if game_id is not None else 0
+        self._save_watcher.set_game(game_id, self._save_config(), total)
+        self._refresh_save_card()
+
+    def _on_save_config_changed(self, game_id: int, config: dict) -> None:
+        stored = self._save_config(game_id)
+        # The player's own choices win over the watcher's copy.
+        config.update({k: stored[k] for k in ("cycle_only", "cycle_base") if k in stored})
+        self._write_save_config(game_id, config)
+        if game_id == self._counter_manager.current_game_id:
+            self._refresh_counters()
+            self._refresh_save_card()
+
+    def _on_save_status(self, _text: str) -> None:
+        self._refresh_save_card()
+
+    def _refresh_save_card(self) -> None:
+        if not hasattr(self, "_save_combo"):
+            return
+        game_id = self._counter_manager.current_game_id
+        self._save_card.setVisible(game_id is not None)
+        config = self._save_config()
+        path = config.get("path", "")
+        self._save_combo.blockSignals(True)
+        self._save_combo.clear()
+        self._save_combo.addItem("Choose this game's save…", userData="")
+        for game, found in find_known_saves():
+            self._save_combo.addItem(f"{game} ({found.name})", userData=str(found))
+        if path and self._save_combo.findData(path) < 0:
+            self._save_combo.addItem(Path(path).name, userData=path)
+        for index in range(1, self._save_combo.count()):
+            self._save_combo.setItemData(
+                index, self._save_combo.itemData(index), Qt.ItemDataRole.ToolTipRole
+            )
+        self._save_combo.setCurrentIndex(max(0, self._save_combo.findData(path)))
+        self._save_combo.blockSignals(False)
+        self._save_forget_btn.setVisible(bool(path))
+        status = self._save_watcher.status if path else ""
+        self._save_status.setText(status or (
+            "Not set up. Elden Ring, Sekiro and Dark Souls II/III saves are listed when "
+            "found; for other games choose the save file."
+        ))
+        has_count = config.get("last") is not None
+        for widget in (self._save_cycle_check, self._save_cycle_btn, self._save_show_btn):
+            widget.setEnabled(has_count)
+        self._save_cycle_check.blockSignals(True)
+        self._save_cycle_check.setChecked(bool(config.get("cycle_only")))
+        self._save_cycle_check.blockSignals(False)
+        base = config.get("cycle_base")
+        self._save_cycle_btn.setToolTip(
+            "You just started a new cycle (NG+): count from here."
+            + (f" This cycle started at {base:,} deaths." if base is not None else "")
+        )
+
+    def _set_save_file(self, path: str) -> None:
+        game_id = self._counter_manager.current_game_id
+        if game_id is None or path == self._save_config().get("path", ""):
+            return
+        self._write_save_config(game_id, {"path": path} if path else {})
+        self._configure_save_watcher()
+        self._refresh_counters()
+        if path:
+            self._toast.show_message(
+                f"Reading {Path(path).name}. Die as usual: after 2 deaths the game's "
+                "own count appears.", seconds=6, icon="save",
+            )
+
+    def _on_save_picked(self, index: int) -> None:
+        path = self._save_combo.itemData(index) or ""
+        if path:
+            self._set_save_file(path)
+        else:
+            self._choose_save_file()
+
+    def _choose_save_file(self) -> None:
+        if self._counter_manager.current_game_id is None:
+            return
+        start = self._save_config().get("path") or os.environ.get("APPDATA", "")
+        path, _ = QFileDialog.getOpenFileName(
+            self, "The Game's Save File", start, "All files (*)"
+        )
+        if path:
+            self._set_save_file(path)
+        else:
+            self._refresh_save_card()
+
+    def _forget_save_file(self) -> None:
+        self._set_save_file("")
+        self._toast.say("Stopped reading the save")
+
+    def _on_save_cycle_toggled(self, on: bool) -> None:
+        game_id = self._counter_manager.current_game_id
+        if game_id is None:
+            return
+        config = self._save_config()
+        config["cycle_only"] = on
+        if on and config.get("cycle_base") is None:
+            config["cycle_base"] = config.get("last") or 0
+        self._write_save_config(game_id, config)
+        self._refresh_counters()
+        self._refresh_save_card()
+
+    def _start_save_cycle(self) -> None:
+        game_id = self._counter_manager.current_game_id
+        if game_id is None:
+            return
+        config = self._save_config()
+        config["cycle_base"] = config.get("last") or 0
+        config["cycle_only"] = True
+        self._write_save_config(game_id, config)
+        self._refresh_counters()
+        self._refresh_save_card()
+        self._toast.say(f"New cycle: counting from {config['cycle_base']:,} deaths")
 
     # Console ----------------------------------------------------------
     def _build_console_page(self) -> QWidget:
@@ -1544,7 +1859,10 @@ class MainWindow(QMainWindow):
         current = self._window_combo.currentData()
         self._window_combo.clear()
         for window in windows:
-            self._window_combo.addItem(window.label, userData=(window.exe_path, window.title))
+            # Titles come from other programs: no emoji the font can't draw.
+            self._window_combo.addItem(
+                drawable(window.label), userData=(window.exe_path, window.title)
+            )
         if not windows:
             self._window_combo.addItem("No windows found: start Remote Play or your capture app")
         index = self._window_combo.findData(current) if current else -1
@@ -1618,7 +1936,7 @@ class MainWindow(QMainWindow):
         try:
             sources = client.video_sources()
         except ObsError as exc:
-            self._obs_status.setText(f"⚠ {exc}")
+            self._obs_status.setText(f"Problem: {exc}")
             return
         finally:
             client.close()
@@ -1628,7 +1946,7 @@ class MainWindow(QMainWindow):
         # A combo with placeholder text stays unselected unless told otherwise.
         self._obs_source_combo.setCurrentIndex(sources.index(current) if current in sources else 0)
         self._obs_status.setText(
-            f"Connected to OBS ✓  Pick the source that shows your console "
+            f"Connected to OBS. Pick the source that shows your console "
             f"({len(sources)} found)." if sources else "Connected, but OBS has no sources yet."
         )
         self._configure_detection()  # a game already using OBS picks up new settings
@@ -1705,7 +2023,7 @@ class MainWindow(QMainWindow):
             )
 
     def _on_phone_seen(self) -> None:
-        self._phone_status.setText(f"Phone connected ✓  (last seen {datetime.now():%H:%M})")
+        self._phone_status.setText(f"Phone connected (last seen {datetime.now():%H:%M})")
 
     def _on_phone_action(self, action: str) -> None:
         if action in PHONE_ACTIONS:  # the server already refuses anything else
@@ -1721,6 +2039,48 @@ class MainWindow(QMainWindow):
         self._nav_buttons[index].setChecked(True)
         self._page_badge.setText(_PAGE_NAMES[index])
 
+    def _feature_on(self, key: str) -> bool:
+        return self._database.get_setting(key, "true") == "true"
+
+    def _show_feature_pages(self, states: dict[str, bool]) -> None:
+        """Sidebar entries for the features ticked (live while ticking in Settings)."""
+        for key, index in ((SETTING_FEATURE_TIMER, _PAGE_TIMER),
+                           (SETTING_FEATURE_STATS, _PAGE_STATS),
+                           (SETTING_FEATURE_CONSOLE, _PAGE_CONSOLE)):
+            self._nav_buttons[index].setVisible(states.get(key, True))
+        self._mini_nav.setVisible(states.get(SETTING_FEATURE_MINI, True))
+
+    def _apply_features(self) -> None:
+        """Show what's switched on; hide what's off, free its keys, stop its work."""
+        if not hasattr(self, "_mini_nav"):
+            return
+        timer = self._feature_on(SETTING_FEATURE_TIMER)
+        console = self._feature_on(SETTING_FEATURE_CONSOLE)
+        mini = self._feature_on(SETTING_FEATURE_MINI)
+        states = {key: self._feature_on(key) for key, _label, _tip in FEATURES}
+        self._show_feature_pages(states)
+        if not self._nav_buttons[self._pages.currentIndex()].isVisibleTo(self):
+            self._show_page(_PAGE_HOME)
+        for key, actions in self._tray_feature_actions.items():
+            for action in actions:
+                action.setVisible(self._feature_on(key))
+        if not timer:
+            self._timer_window.hide()
+            source = self._database.get_setting(
+                SETTING_OVERLAY_COUNTER_SOURCE, DEFAULT_COUNTER_SOURCE
+            )
+            if source == "run":  # nothing to count without the timer
+                self._database.set_setting(SETTING_OVERLAY_COUNTER_SOURCE, "total")
+        if not mini and self._mini.isVisible():
+            self._exit_mini_mode()
+        if not console and self._phone_remote.running:
+            self._phone_remote.stop()  # the setting stays: it's back with the feature
+            self._set_phone_ui()
+        elif (console and not self._phone_remote.running
+              and self._database.get_setting(SETTING_PHONE_REMOTE, "false") == "true"
+              and hasattr(self, "_autosave_timer")):  # not during startup: it starts then
+            self._set_phone_remote(True)
+
     def _on_settings_saved(self, before: dict[str, str]) -> None:
         self._toast.show_message(
             "Your settings are saved", "Undo", lambda: self._undo_settings(before)
@@ -1733,6 +2093,8 @@ class MainWindow(QMainWindow):
         for key, value in before.items():
             if now.get(key) != value:
                 db.set_setting(key, value)
+        for key in now.keys() - before.keys():  # saved for the first time: back to default
+            db.delete_setting(key)
         self._on_settings_changed()
         if self._settings is not None:
             self._settings.reload()
@@ -1780,6 +2142,7 @@ class MainWindow(QMainWindow):
             self._settings.settings_changed.connect(self._on_settings_changed)
             self._settings.preview_changed.connect(self._preview_appearance)
             self._settings.saved.connect(self._on_settings_saved)
+            self._settings.features_previewed.connect(self._show_feature_pages)
             self._settings_host.layout().addWidget(self._settings)
         return self._settings
 
@@ -1882,7 +2245,7 @@ class MainWindow(QMainWindow):
                 continue
             when = datetime.fromisoformat(event["timestamp"]).astimezone()
             where = event["boss_name"] or "No boss"
-            text = f"✝  {when:%a %H:%M}   ·   {where}"
+            text = f"†  {when:%a %H:%M}   ·   {where}"
             if event["note"]:
                 text += f"   ·   {event['note']}"
             self._recent_list.addItem(text)
@@ -1894,6 +2257,7 @@ class MainWindow(QMainWindow):
     def _refresh_detection_page(self) -> None:
         game_id = self._counter_manager.current_game_id
         self._watch_card.setVisible(game_id is not None)
+        self._refresh_save_card()  # hidden without a game; saves found since are listed
         if game_id is None:
             self._detect_page_info.setText(
                 "Add a game first: in the game list on the Death Counter page, choose "
@@ -1945,6 +2309,7 @@ class MainWindow(QMainWindow):
     # System tray
     # ----------------------------------------------------------------
     def _build_tray(self) -> None:
+        self._tray_feature_actions: dict[str, tuple[QAction, ...]] = {}
         self._tray: QSystemTrayIcon | None = None
         self._tray_overlay_action: QAction | None = None
         self._click_through_action: QAction | None = None
@@ -1976,6 +2341,10 @@ class MainWindow(QMainWindow):
         timer_window_action.triggered.connect(self._toggle_timer_window)
         mini_action = menu.addAction("Mini Mode")
         mini_action.triggered.connect(self._toggle_mini_mode)
+        self._tray_feature_actions = {
+            SETTING_FEATURE_TIMER: (split_action, timer_window_action),
+            SETTING_FEATURE_MINI: (mini_action,),
+        }
         menu.addSeparator()
         overlay_action = menu.addAction("Overlay")
         overlay_action.setCheckable(True)
@@ -2033,6 +2402,10 @@ class MainWindow(QMainWindow):
         if not self._run_keys_active:
             for action in _RUN_ONLY_ACTIONS:
                 bindings[f"{action}_key"] = ""
+        if not self._feature_on(SETTING_FEATURE_TIMER):
+            for action in list(bindings):
+                if action.startswith("timer_"):
+                    bindings[action] = ""
         return bindings
 
     def _sync_run_hotkeys(self) -> None:
@@ -2046,8 +2419,10 @@ class MainWindow(QMainWindow):
     def _pad_bindings(self) -> dict[str, str]:
         """Controller combos from settings, keyed by action ("" = unbound)."""
         settings = self._database.get_all_settings()
+        timer = settings.get(SETTING_FEATURE_TIMER, "true") == "true"
         return {
             action: settings.get(pad_setting(action), "")
+            if timer or not action.startswith("timer_") else ""
             for action, _label, _setting, _default in CONTROL_ACTIONS
         }
 
@@ -2084,7 +2459,7 @@ class MainWindow(QMainWindow):
         self._prev_boss_btn.setToolTip(tooltip("prev_boss", "Previous boss"))
         self._next_boss_btn.setToolTip(tooltip("next_boss", "Next boss not yet defeated"))
         self._defeated_btn.setToolTip(
-            tooltip("boss_defeated", "Boss defeated: mark it ✓ and move to the next boss")
+            tooltip("boss_defeated", "Boss defeated: mark it beaten and move to the next boss")
         )
         for action, button in self._timer_buttons.items():
             button.set_key(key(f"timer_{action}"))
@@ -2309,12 +2684,12 @@ class MainWindow(QMainWindow):
         if split:
             self._timer_action("split")
 
-        self._reload_bosses(game_id)  # show the ✓, still on this boss
+        self._reload_bosses(game_id)  # show it beaten, still on this boss
         if settings.get(SETTING_BOSS_AUTO_ADVANCE, "true") == "true":
             self._select_adjacent_boss(+1)
 
         plural = "" if deaths == 1 else "s"
-        message = f"⚔ {boss['name']} defeated after {deaths} death{plural}!"
+        message = f"{boss['name']} defeated after {deaths} death{plural}!"
         if split:
             message += " Split recorded."
         self._detect_last_label.setText(
@@ -2521,8 +2896,63 @@ class MainWindow(QMainWindow):
         )
         self._reload_games(select_game_id=game_id)
         if not preset and not has_templates:
-            hotkey = self._database.get_setting(SETTING_HOTKEY_CALIBRATE, "f8").upper()
-            QMessageBox.information(self, "Teach It Your Death Screen", first_death_hint(hotkey))
+            self._suggest_library_setup(game_id, Path(path).name)
+
+    def _show_first_death_hint(self) -> None:
+        hotkey = self._database.get_setting(SETTING_HOTKEY_CALIBRATE, "f8").upper()
+        QMessageBox.information(self, "Teach It Your Death Screen", first_death_hint(hotkey))
+
+    def _suggest_library_setup(self, game_id: int, exe_name: str) -> None:
+        """
+        A new game: if the library has a setup for its .exe, offer it; else how
+        to teach it the death screen. The library is only asked when update
+        checks are allowed (the app's network switch).
+        """
+        if self._database.get_setting(SETTING_CHECK_UPDATES, "true") != "true":
+            self._show_first_death_hint()
+            return
+
+        def found(entries, error: str) -> None:
+            match = next((e for e in entries or [] if e.matches_exe(exe_name)), None)
+            if error or match is None:
+                self._show_first_death_hint()
+                return
+            self._toast.show_message(
+                f"The library has a ready-made setup for {match.game}", "Use It",
+                lambda: self._use_library_setup(game_id, match), seconds=15, icon="library",
+            )
+
+        fetcher = Fetcher(self)
+        fetcher.done.connect(found)
+        fetcher.run(presets.fetch_library)
+
+    def _use_library_setup(self, game_id: int, entry) -> None:
+        def got(preset, error: str) -> None:
+            if error or preset is None:
+                self._toast.say(f"Couldn't get the setup: {error}", icon="circle-alert")
+                return
+            presets.apply_preset(self._database, game_id, preset)
+            self._on_setup_applied(preset["game"])
+
+        fetcher = Fetcher(self)
+        fetcher.done.connect(got)
+        fetcher.run(lambda: presets.fetch_preset(entry))
+
+    def _open_library(self) -> None:
+        game_id = self._counter_manager.current_game_id
+        if game_id is None:
+            return
+        dialog = LibraryDialog(self._database, game_id, self._game_combo.currentText(), self)
+        dialog.applied.connect(self._on_setup_applied)
+        dialog.exec()
+
+    def _on_setup_applied(self, game: str) -> None:
+        self._reload_bosses(self._counter_manager.current_game_id)
+        self._configure_detection()
+        self._refresh_detection_page()
+        self._toast.show_message(
+            f"Using the {game} setup: deaths count by themselves now", seconds=6, icon="check"
+        )
 
     def _add_game_without_exe(self) -> None:
         """A game whose .exe isn't known (or isn't found): watch the display it's on."""
@@ -2595,10 +3025,14 @@ class MainWindow(QMainWindow):
 
     def _apply_saved_settings(self) -> None:
         """Startup and profile switch: the look, plus where the windows were."""
+        self._apply_features()
         settings = self._database.get_all_settings()
         self._apply_appearance(settings)
         self._timer_window.restore_geometry_string(settings.get(SETTING_TIMER_GEOMETRY, ""))
-        self._timer_window.setVisible(settings.get(SETTING_TIMER_VISIBLE, "false") == "true")
+        self._timer_window.setVisible(
+            settings.get(SETTING_TIMER_VISIBLE, "false") == "true"
+            and settings.get(SETTING_FEATURE_TIMER, "true") == "true"
+        )
         self._overlay.restore_geometry_string(settings.get(SETTING_OVERLAY_GEOMETRY, ""))
         # On, behind the windows, or off, as this profile left it.
         state = settings.get(SETTING_OVERLAY_STATE, "off")
@@ -2834,6 +3268,11 @@ class MainWindow(QMainWindow):
             self._add_game_from_exe()
         elif action.startswith(ACTION_TEMPLATE):
             self._add_template_game(action[len(ACTION_TEMPLATE):])
+        elif action in pages and not self._nav_buttons[pages[action]].isVisibleTo(self):
+            self._toast.show_message(
+                "That feature is switched off", "Settings",
+                lambda: self._open_settings_window(SettingsWindow.TAB_GENERAL), icon="info",
+            )
         elif action in pages:
             self._show_page(pages[action])
             self.showNormal()
@@ -2981,6 +3420,9 @@ class MainWindow(QMainWindow):
         game_id = self._counter_manager.current_game_id
         has_game = game_id is not None
         self._home_open_btn.setText(" Open Death Counter" if has_game else " Add Your First Game")
+        # No game yet: one card on how to add one, not a page of empty cards.
+        self._home_bento.setVisible(has_game)
+        self._home_welcome.setVisible(not has_game)
         if not has_game:
             self._home_game.setText("No game yet")
             self._home_boss.setText("Add a game to start counting.")
@@ -3163,7 +3605,7 @@ class MainWindow(QMainWindow):
             if boss is not None and boss["defeated"]:
                 menu.addAction("Mark Not Defeated", lambda: self._set_boss_defeated(False))
             else:
-                menu.addAction("Mark Defeated ✓", lambda: self._set_boss_defeated(True))
+                menu.addAction("Mark Defeated", lambda: self._set_boss_defeated(True))
             menu.addSeparator()
         menu.addAction("Games && Bosses…", self._open_boss_window)
         menu.exec(self._boss_combo.mapToGlobal(position))
@@ -3317,6 +3759,7 @@ class MainWindow(QMainWindow):
             self._game_combo.setCurrentIndex(index)
             self._game_combo.blockSignals(False)
             self._first_game_btn.hide()
+            self._show_has_game(True)
             self._on_game_changed(index)
         else:
             self._game_combo.blockSignals(True)
@@ -3328,6 +3771,15 @@ class MainWindow(QMainWindow):
             self._configure_detection()
             self._load_speedrun()  # drops a run of a game that was just deleted
             self._first_game_btn.show()
+            self._show_has_game(False)
+
+    def _show_has_game(self, has_game: bool) -> None:
+        """Buttons that need a game look usable only once there is one."""
+        note = "\n\nAdd a game first."
+        for widget in self._needs_game:
+            widget.setEnabled(has_game)
+            tip = widget.toolTip().removesuffix(note)
+            widget.setToolTip(tip if has_game else (tip + note if tip else note.strip()))
 
     def _saved_id(self, setting_key: str) -> int | None:
         """Read an id stored in the settings table (empty/invalid -> None)."""
@@ -3340,8 +3792,12 @@ class MainWindow(QMainWindow):
         self._boss_combo.addItem("(No Boss)", userData=None)
         if game_id is not None:
             for boss in self._database.get_bosses(game_id):
-                prefix = "✓ " if boss["defeated"] else ""
-                self._boss_combo.addItem(f"{prefix}{boss['name']}", userData=boss["id"])
+                self._boss_combo.addItem(boss["name"], userData=boss["id"])
+                if boss["defeated"]:  # an icon: the UI font has no tick (test_light_fonts)
+                    self._boss_combo.setItemIcon(
+                        self._boss_combo.count() - 1,
+                        icons.icon("check", icons.color(icons.NORMAL), size=14),
+                    )
         # Re-select the last boss if it belongs to this game.
         last_boss = self._saved_id(SETTING_LAST_BOSS_ID)
         index = max(self._boss_combo.findData(last_boss), 0) if last_boss else 0
@@ -3385,6 +3841,7 @@ class MainWindow(QMainWindow):
         self._refresh_counters()
         self._detect_last_label.setText("")
         self._configure_detection()
+        self._configure_save_watcher()
         self._load_speedrun()
         self._refresh_artwork()
 
@@ -3485,7 +3942,10 @@ class MainWindow(QMainWindow):
             ("session", "Deaths this session"),
             ("boss", "Deaths on this boss"),
             ("run", "Deaths this speedrun run"),
+            ("save", "In-game deaths (from the save file)"),
         ):
+            if value == "run" and not self._feature_on(SETTING_FEATURE_TIMER):
+                continue
             action = menu.addAction(text)
             action.setCheckable(True)
             action.setChecked(value == current)
@@ -3528,18 +3988,23 @@ class MainWindow(QMainWindow):
 
     def _apply_snapshot(self, snapshot: CounterSnapshot) -> None:
         snapshot.run_deaths = self._run_deaths()
+        save_config = self._save_config()
+        snapshot.save_deaths = shown_count(save_config) or 0
+        self._save_watcher.note_deaths(snapshot.total_deaths)
         source = self._database.get_setting(SETTING_OVERLAY_COUNTER_SOURCE, DEFAULT_COUNTER_SOURCE)
         big_numbers = {
             "session": snapshot.session_deaths,
             "boss": snapshot.boss_deaths,
             "total": snapshot.total_deaths,
             "run": snapshot.run_deaths,
+            "save": snapshot.save_deaths,
         }
         self._counter_label.setText(str(big_numbers.get(source, snapshot.session_deaths)))
         self._skull_badge.set_count(big_numbers.get(source, snapshot.session_deaths))
         self._home_refresh.start()
         self._counter_caption.setText(
-            _COUNTER_CAPTIONS.get(source, _COUNTER_CAPTIONS[DEFAULT_COUNTER_SOURCE])
+            "IN-GAME DEATHS THIS CYCLE" if source == "save" and save_config.get("cycle_only")
+            else _COUNTER_CAPTIONS.get(source, _COUNTER_CAPTIONS[DEFAULT_COUNTER_SOURCE])
         )
         self._tile_session.set_value(str(snapshot.session_deaths))
         boss = str(snapshot.boss_deaths) if snapshot.boss_name else "–"
@@ -3610,6 +4075,16 @@ class MainWindow(QMainWindow):
             buffer.open(QIODevice.OpenModeFlag.WriteOnly)
             art.toImage().save(buffer, "PNG")
             skull_png = bytes(data)
+        frame, frame_png = "", None
+        if is_design(overlay.design):
+            frame = (f"{overlay.design}-{number}-{int(overlay._show_skull)}-"
+                     f"{abs(hash(overlay._count_style.word))}")
+            if frame != self._stream_frame_key:
+                self._stream_frame_key = frame
+                frame_png = render_design_png(
+                    overlay.design, overlay._count_style.word, number,
+                    skull=overlay._show_skull,
+                )
         self._stream.set_state(
             {
                 "active": self._overlay_active(),
@@ -3638,8 +4113,10 @@ class MainWindow(QMainWindow):
                 "skull": f"{skull_key[0]}-{skull_px}-{overlay._text_color.lstrip('#')}",
                 "skull_px": skull_px,
                 "animate": True,
+                "frame": frame,
             },
             skull_png,
+            frame_png,
         )
 
     def _on_overlay_shown(self, visible: bool) -> None:
@@ -3749,7 +4226,7 @@ class MainWindow(QMainWindow):
             logger.warning("Auto-save failed: %s", exc)
             return None
         self._last_progress_save = stamp
-        self._saved_label.setText(f"✓ Auto-saved {datetime.now():%H:%M}")
+        self._saved_label.setText(f"Auto-saved {datetime.now():%H:%M}")
         return path
 
     def _save_progress(self) -> None:
@@ -3930,7 +4407,7 @@ class MainWindow(QMainWindow):
         icons.set_icon(self._bug_button, "bug", icons.DANGER, size=19)
         self._bug_button.setToolTip(
             f"{count} error{'' if count == 1 else 's'} logged this session: "
-            "click to report it (the error log is under ⋮)"
+            "click to report it (the error log is in the menu at the top right)"
         )
 
     def _open_error_log(self) -> None:
@@ -3992,6 +4469,7 @@ class MainWindow(QMainWindow):
         self._toast.say("deaths.txt is on: it updates on every death")
 
     def _on_settings_changed(self) -> None:
+        self._apply_features()
         self._apply_appearance(self._database.get_all_settings())
         if self._speedrun is not None:
             self._apply_timer_options(self._speedrun)
@@ -4047,10 +4525,18 @@ class MainWindow(QMainWindow):
                 )
 
         choices(
+            "Design",
+            SETTING_OVERLAY_DESIGN,
+            tuple((value, label, True) for value, label in DESIGNS),
+            settings.get(SETTING_OVERLAY_DESIGN, "classic"),
+        )
+        choices(
             "Big Number Shows",
             SETTING_OVERLAY_COUNTER_SOURCE,
             (("total", "All-Time", True), ("session", "This Session", True),
-             ("boss", "This Boss", True), ("run", "This Speedrun Run", True)),
+             ("boss", "This Boss", True),
+             ("run", "This Speedrun Run", self._feature_on(SETTING_FEATURE_TIMER)),
+             ("save", "In-Game (Save File)", True)),
             settings.get(SETTING_OVERLAY_COUNTER_SOURCE, DEFAULT_COUNTER_SOURCE),
         )
         has_image = bool(settings.get(SETTING_OVERLAY_BG_IMAGE, ""))
@@ -4321,7 +4807,8 @@ class MainWindow(QMainWindow):
 
     def _timer_action(self, action: str) -> None:
         controller = self._speedrun
-        if controller is None or controller.game_id is None:
+        if (controller is None or controller.game_id is None
+                or not self._feature_on(SETTING_FEATURE_TIMER)):
             return
         timer = controller.timer
         handlers = {
@@ -4335,7 +4822,7 @@ class MainWindow(QMainWindow):
         handlers[action]()
         if action == "split" and controller.is_new_pb():
             total = format_time(controller.timer.elapsed_ms(controller.method), 2)
-            self._notify(f"🏆 New personal best! {total}", 8000)
+            self._notify(f"New personal best! {total}", 8000)
         if action == "reset" and controller.game_id != self._counter_manager.current_game_id:
             self._load_speedrun()  # the finished-with game's run is saved; follow the UI
         if action == "split" and not self._timer_window.isVisible():
@@ -4451,7 +4938,7 @@ class MainWindow(QMainWindow):
     # Multiple displays
     # ----------------------------------------------------------------
     def _add_display_menu(self, parent_menu: QMenu) -> None:
-        """'Move Overlay to Display ▸' submenu, rebuilt each time it opens."""
+        """'Move Overlay to Display ›' submenu, rebuilt each time it opens."""
         menu = parent_menu.addMenu("Move Overlay to Display")
         menu.aboutToShow.connect(lambda m=menu: self._fill_display_menu(m))
 
@@ -4543,6 +5030,7 @@ class MainWindow(QMainWindow):
         self._page_timer.stop()
         self._death_watcher.stop()
         self._log_watcher.stop()
+        self._save_watcher.stop()
         self._overlay.close()
         self._timer_window.close()
         self._mini.close()

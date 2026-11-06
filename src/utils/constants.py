@@ -7,6 +7,7 @@ throughout the codebase and makes future configuration changes trivial.
 
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
@@ -21,7 +22,7 @@ APP_BRAND: str = "DePhantom"  # big header text; APP_SUBTITLE goes underneath
 APP_SUBTITLE: str = "Universal Death Counter (DUDC)"
 # APP_ORG (below), the exe name and the data folder intentionally keep the
 # old internal name, so existing installs upgrade in place and keep data.
-APP_VERSION: str = "2.16.0"
+APP_VERSION: str = "2.17.0"
 APP_ORG: str = "UniversalDeathCounter"
 
 # GitHub repository ("owner/repo") used by the update checker. Edit this
@@ -47,6 +48,22 @@ CREATOR_CHANNEL_URL: str = "https://www.youtube.com/@ImDePhantom"
 # .app and a Linux AppImage are read-only (and replaced on update), so they
 # always use the per-user folder (~/Library/Application Support, or
 # ~/.local/share).
+#
+# An installed copy in Program Files always uses %APPDATA%, even when it
+# could write there: started as administrator (as the updater's installer
+# used to reopen it), it would otherwise start a new, empty database in
+# Program Files, and the count looked reset until the next normal start.
+
+
+def _in_program_files(folder: Path) -> bool:
+    """Whether ``folder`` is inside Program Files (either one)."""
+    parts = [part.lower() for part in folder.parts]
+    for name in ("ProgramFiles", "ProgramFiles(x86)", "ProgramW6432"):
+        root = os.environ.get(name, "")
+        root_parts = [part.lower() for part in Path(root).parts] if root else []
+        if root_parts and parts[: len(root_parts)] == root_parts:
+            return True
+    return False
 
 
 def _is_frozen() -> bool:
@@ -62,6 +79,8 @@ def _resolve_persistent_data_dir() -> Path:
         return user_data_dir(APP_ORG) / "saves"
 
     exe_dir = Path(sys.executable).resolve().parent
+    if _in_program_files(exe_dir):
+        return user_data_dir(APP_ORG) / "saves"
     try:
         candidate = exe_dir / "saves"
         candidate.mkdir(parents=True, exist_ok=True)
@@ -169,6 +188,11 @@ BUG_SHEET_URL: str = (
     "https://docs.google.com/spreadsheets/d/1pvzlu8mhHzvvKCHb-E5NDlmtqT-gW0ZHRZUMq2xmtaw/"
     "edit?usp=sharing"
 )
+# Per game (+ the game id): JSON with the save path, the learned spot, the last
+# count and the NG+ cycle choice.
+SETTING_SAVE_DEATHS_PREFIX: str = "save_deaths_"
+# Overlay design: "classic" or one drawn in src/overlay/designs.py.
+SETTING_OVERLAY_DESIGN: str = "overlay_design"
 SETTING_STREAM_OVERLAY: str = "stream_overlay"  # "true" = OBS Browser Source page is served
 # Console players
 SETTING_PHONE_REMOTE: str = "phone_remote_enabled"  # "true" = serve the phone page
@@ -189,6 +213,22 @@ SETTING_DEATHS_TXT_TEMPLATE: str = "deaths_txt_template"
 # --- v1.5 quality of life ---
 SETTING_MINIMIZE_TO_TRAY: str = "minimize_to_tray"
 SETTING_CONFIRM_CLOSE: str = "confirm_close"
+# Features the player can switch off (Settings → General → Features): hidden
+# from the sidebar, menus and tray, their keys freed and their work stopped.
+# Turning one back on brings it all back; no data is removed.
+SETTING_FEATURE_TIMER: str = "feature_timer"
+SETTING_FEATURE_STATS: str = "feature_stats"
+SETTING_FEATURE_CONSOLE: str = "feature_console"
+SETTING_FEATURE_MINI: str = "feature_mini"
+FEATURES: tuple[tuple[str, str, str], ...] = (
+    (SETTING_FEATURE_TIMER, "Speedrun timer",
+     "Timer page, timer window and the timer keys (Num 1 and others go back to "
+     "other apps)."),
+    (SETTING_FEATURE_STATS, "Stats", "The Stats page with graphs."),
+    (SETTING_FEATURE_CONSOLE, "Console players",
+     "Console page: phone remote and reading a capture card from OBS."),
+    (SETTING_FEATURE_MINI, "Mini mode", "The tiny always-on-top counter window."),
+)
 SETTING_SIDEBAR_COLLAPSED: str = "sidebar_collapsed"
 SETTING_GAME_ARTWORK: str = "game_artwork"  # "true" = faded game banner behind the cards
 SETTING_CHECK_UPDATES: str = "check_updates"

@@ -20,6 +20,7 @@ from pathlib import Path
 import numpy as np
 from PySide6.QtCore import QObject, Signal
 
+from src.detection.dxgi_capture import FallbackCapture
 from src.detection.game_window import (
     desktop_clip,
     detection_available,
@@ -42,6 +43,7 @@ from src.detection.matchers import (
 )
 from src.detection.obs_client import ObsClient, ObsError
 from src.utils.logger import get_logger
+from src.utils.platform_info import IS_WINDOWS
 
 try:
     import mss
@@ -56,6 +58,9 @@ _IDLE_POLL_SECONDS: float = 1.0
 _PROCESS_POLL_SECONDS: float = 2.0
 # ~5 s of solid black frames triggers the "use borderless" hint.
 _BLACK_SECONDS: float = 5.0
+# Black this long on Windows: try Desktop Duplication, which also sees
+# exclusive-fullscreen games (the normal capture shows those as black).
+_DUPLICATION_AFTER_SECONDS: float = 1.0
 # Between full captures only the parts the matchers read are captured; a
 # full frame still comes this often (recent frames, the black-capture hint).
 _FULL_FRAME_INTERVAL: float = 1.0
@@ -216,7 +221,12 @@ class DeathWatcher(QObject):
     def _run(self) -> None:
         try:
             with open_screen_capture() as sct:
-                self._watch_loop(sct)
+                capture = FallbackCapture(sct) if IS_WINDOWS else sct
+                try:
+                    self._watch_loop(capture)
+                finally:
+                    if IS_WINDOWS:
+                        capture.close()
         except Exception:  # noqa: BLE001 - detection must never crash the app
             logger.exception("Death watcher stopped unexpectedly")
             self._set_status("Auto-detect stopped (error, see log)")
@@ -268,6 +278,8 @@ class DeathWatcher(QObject):
                 canvas = None
                 hwnd, next_lookup, black_since, next_recent, next_full = None, 0.0, None, 0.0, 0.0
                 ever_seen, loading_frames, pause_frames = False, 0, 0
+                if isinstance(sct, FallbackCapture):
+                    sct.reset()  # another game: start with the normal capture again
                 self._last_activity = ""
 
             if config is None:
@@ -349,6 +361,14 @@ class DeathWatcher(QObject):
                             self._recent_frames.append((now, frame[::step, ::step].copy()))
                     if int(frame[::4, ::4].max()) < 8:
                         black_since = now if black_since is None else black_since
+                        if (
+                            isinstance(sct, FallbackCapture)
+                            and not sct.duplicating
+                            and now - black_since >= _DUPLICATION_AFTER_SECONDS
+                            and sct.use_duplication()
+                        ):
+                            black_since, next_full = None, 0.0  # look again right away
+                            continue
                     else:
                         black_since = None
                 else:
@@ -367,7 +387,8 @@ class DeathWatcher(QObject):
                 )
             elif black_for >= _BLACK_SECONDS:
                 self._set_status(
-                    f"Capture of {exe_name} is black. Switch the game to borderless/windowed."
+                    f"Capture of {exe_name} is black. Switch the game to borderless/windowed, "
+                    "or read it from OBS (Console page)."
                 )
             elif config.matcher is None:
                 self._set_status(f"Watching {exe_name}: {config.setup_hint}")

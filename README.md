@@ -75,8 +75,11 @@ No Python or anything else needed. Windows 10 or 11, macOS 11 or newer, or a 64-
 - **Zero setup for Souls games.** The built-in preset recognizes Elden Ring, Dark Souls I–III and Sekiro.
 - **No death screen? Use the health bar.** Mark your health bar once at full health, and a death counts when it empties.
 - **Or the game's log file.** For games that log deaths, such as Minecraft, it counts every new line that matches your text. This mode doesn't capture the screen at all.
+- **Setups Library:** ready-made auto-detect setups shared by other players (Detection → **Setups Library**). Pick your game and deaths count with no calibrating; when you add a game from its `.exe` and the library has it, the app offers it. **Share My Setup…** saves yours as a small file to give a friend or add to the library (`presets/` in this repository; see its README). Setups hold only the captured screens and detection settings, nothing personal.
 - **Missed a death?** Add another death screen in two clicks. Any saved one counts.
+- **The game's own death count, from your save file** (Detection page): every death the game has recorded for that character, including deaths from before you installed DUDC and from earlier NG+ cycles, with an optional *this cycle only* count. Elden Ring, Sekiro and Dark Souls II/III saves are found by themselves; for other games, pick the save. It learns where the count is from your next two deaths (counted as usual), then shows it as the big number if you like (*In-Game (Save File)*). Works with any save that isn't encrypted (Dark Souls II/III's are decrypted on Windows). Only the file is read.
 - **Switches to the right game** when you launch it. A new session starts after a break of 16 hours or more; a restart, crash or update in between continues the same session, and the **Sessions** button next to Undo brings back any earlier one.
+- **Works in exclusive fullscreen on Windows:** if the normal capture comes out black, the app switches by itself to Desktop Duplication (what OBS's Display Capture uses), which sees fullscreen games too.
 - **Screen capture only:** no memory reading and no injection, so it's safe with anti-cheat.
 
 ### 🎮 Controls, your way
@@ -110,6 +113,7 @@ Every 10 deaths your skull earns something new: horns, a nose ring, blades, a cr
 - **`deaths.txt`** for OBS Text sources, with your own template, e.g. `{game} - {boss}: {deaths}`.
 - **OBS Setup** (sidebar) walks you through every method, with one-click setup buttons. Best: the **Browser Source**. OBS shows the counter straight from the app, truly transparent (no green screen), and the number pops on every death. Only this PC can open its link.
 - **Right-click the overlay** to count from it, switch what the big number shows, change the background or number size, lock it in place, keep it on top, make it click-through, or move it to another display. **Hide From My Screen** moves it behind your other windows (your game covers it) and lets clicks through, while it keeps counting live for OBS (Window Capture or the Browser Source); the overlay key, the sidebar or *Bring Back* puts it in front again. **Turn Overlay Off** turns it off everywhere. It comes back the way you left it next time you start the app. Double-click it for all its settings.
+- **Overlay designs:** besides the classic card, four complete looks drawn by the app: **Kanji Seal** (a red 死 seal), **Neon Sign** (glowing neon tubes and a neon skull), **Tombstone** (an R.I.P. gravestone with candles, a pumpkin and a ghost) and **Death Banner** (a gothic title with ornate swirls). Pick one in Settings → Overlay or the overlay's right-click menu; it shows the same in the OBS Browser Source. No image files: they stay sharp at any size.
 - **Backgrounds:** card, green screen (for OBS Chroma Key), **transparent** (just the text floating over your game) or your own image.
 - **Overlay settings** (Settings → Overlay): font, number size and colour, the **death word** (DEATH, TRIES, or none) with its **own colour and size**, before or after the number, what goes between them (-, :, ×, ·, | or nothing), bold, letter spacing, skull size, space inside the card, alignment, card border and roundness, which lines show, always on top, lock position, and click-through (turn it off from the tray menu).
 - **Multi-monitor:** move the overlay to any display. Windows come back on-screen if a monitor is unplugged.
@@ -137,7 +141,7 @@ The **Console** page (sidebar) makes DUDC work when the game runs on a console:
 - Every button has a clear icon ([Lucide](https://lucide.dev), ISC licence).
 
 ### ✨ Comfort
-- **Home dashboard:** a friendly greeting, **Now playing** (the game, its count and whether auto-detect is hooked, one click from counting), today / this session / all-time / bosses beaten, this week's deaths per day (and versus last week), and boss progress with the bosses that killed you most.
+- **Home dashboard** in a bento layout (cards of different sizes fitted together; two columns on a narrow window): a friendly greeting, **Now playing** (the game, its count and whether auto-detect is hooked, one click from counting), today / this session / all-time / bosses beaten, this week's deaths per day (and versus last week), and boss progress with the bosses that killed you most.
 - **Death Counter page:** everything for counting in one place: game and boss, the big number with your skull, +1 / −1 / Undo / Sessions (all one height), auto-detect status, Set Exact Count and resets. Hover −1 and Undo to see the difference: −1 is logged as a death taken off, Undo takes back the last +1 or −1 as if it never happened.
 - **Auto-detect status at a glance:** a coloured dot: green = watching the game, yellow = waiting (for the game to start, or paused), red = needs attention, grey = off.
 - **Fits any window size:** rows rearrange when the window is narrow, so nothing is cut off. The button at the top of the sidebar collapses it to icons only (remembered).
@@ -148,6 +152,7 @@ The **Console** page (sidebar) makes DUDC work when the game runs on a console:
 - **You always see what happened:** adding, renaming or deleting games and bosses, resets, exact counts, saves, detection changes and more each show a short message in the window.
 - **Saving is automatic:** every death is saved the moment it happens, and a full save file follows shortly after any change and when you close (*✓ Auto-saved* at the top shows when). **Save Progress** only makes an extra copy.
 - **Found a bug?** The bug icon writes a report you can paste into the **[bug sheet](https://docs.google.com/spreadsheets/d/1pvzlu8mhHzvvKCHb-E5NDlmtqT-gW0ZHRZUMq2xmtaw/edit?usp=sharing)** (⋮ → Bug Sheet), or open it on GitHub.
+- **Only what you use:** switch off the speedrun timer, Stats, the Console page or mini mode in **Settings → General → Features**. They disappear from the sidebar, menus and tray, their keys are freed (the timer's number-pad keys go back to other apps) and their background work stops. Your data stays, and switching one back on brings it all back.
 - **Mini mode:** a tiny always-on-top window with the count, +1 and Undo, for one-monitor setups. Sidebar or tray.
 - **Right-click the Game or Boss box** to rename it or mark the boss defeated, without opening Games & Bosses.
 - **Tray menu** has +1, Undo, Boss Defeated, pause detection, start/split the timer, the timer window, mini mode and the overlay.
@@ -156,16 +161,16 @@ The **Console** page (sidebar) makes DUDC work when the game runs on a console:
 - Deleting a game tells you exactly what goes with it (deaths, bosses, sessions, runs).
 
 ### 🪶 Lightweight
-- A 29 MB installer (about 100 MB installed), and **no** background services.
+- A 31 MB installer (about 100 MB installed), and **no** background services.
 - Detection checks the game window 5 times a second and stops when the game isn't running.
 - Controller polling only runs while a pad is connected.
-- Your data is a local SQLite file, and nothing is uploaded. The only network requests are an optional update check against GitHub Releases, if you pick Glass or Clay that theme's download, and, if you turn on game artwork, one look-up on Steam per game (its Steam folder or its name; the picture is then kept).
+- Your data is a local SQLite file, and nothing is uploaded. The only network requests are an optional update check against GitHub Releases, if you pick Glass or Clay that theme's download, if you turn on game artwork, one look-up on Steam per game (its Steam folder or its name; the picture is then kept), and the Setups Library's list when you open it or add a game (only with update checks on).
 
 ## Quick start
 
 1. Install and open **DUDC**. The **Quick Start** checklist opens and ticks itself off as you go.
 2. In the **Game** dropdown, choose **+ Add game from .exe…** and pick your game's `.exe` (for example `eldenring.exe`). On a Mac, pick the game's app; on Linux, the `.exe` in its Proton folder or the game's program.
-3. Launch the game in **borderless or windowed** mode.
+3. Launch the game. On Windows any mode works, exclusive fullscreen too; on a Mac or Linux use **borderless or windowed**.
 4. Die. 💀
    - **Souls games** are counted automatically.
    - **Any other game:** the first time, press `F8` on the death screen and drag a box around the death text. From then on deaths are counted automatically.
@@ -223,7 +228,7 @@ To keep the count accurate:
 **Supported:** any game with a consistent death screen, a visible health bar, or a log that records deaths. Elden Ring, Dark Souls I–III and Sekiro work with no setup.
 
 **Limitations:**
-- Exclusive-fullscreen games may capture as black. Switch to borderless or windowed mode; the app tells you if this happens.
+- On Windows, exclusive-fullscreen games are read through Desktop Duplication when the normal capture is black. On a Mac or Linux, or if a game still captures as black (some protected or very old games), use borderless or windowed mode, or read the game from OBS (Console page). The app tells you if this happens.
 - Games with no death screen, no health bar and no death log can't be detected. Use the hotkeys there.
 - The Souls preset is a color heuristic. If it ever misfires, calibrate that game instead.
 
@@ -237,7 +242,7 @@ Another program has already registered that key. On many PCs plain `F12` is take
 **Deaths aren't detected**
 1. Check the status line on the Death Counter page. It should say *"Watching <game>.exe for deaths"* (or *"Watching Display 1 for deaths"*).
    If it keeps saying *Waiting for <game>.exe to start* while the game runs, the game runs under another program: choose **Watch: A whole display** in Set Up Detection.
-2. If it says the capture is **black**, switch the game to borderless or windowed mode. On a Mac, allow Screen Recording for the app; on a Wayland desktop, read the game from OBS instead.
+2. If it says the capture is **black**, switch the game to borderless or windowed mode (on Windows, exclusive fullscreen is normally handled for you), or read the game from OBS (Console page). On a Mac, allow Screen Recording for the app; on a Wayland desktop, read the game from OBS instead.
 3. If it's watching but misses deaths, use **📷 Capture Screen…** right after a death to add that screen.
 
 **The overlay shows a green box in OBS**
@@ -255,7 +260,7 @@ False positives happen with unsigned apps. DUDC uses the system's own hotkey API
 **Save and load your progress:**
 - **⋮ (top right) → Save Progress… (Ctrl+S)** saves everything to one file, including the session and speedrun run in progress. Copy it anywhere: another PC, a reinstall, a backup drive.
 - **⋮ → Load Save…** brings it back and carries on with that session and run (the run comes back paused). Replace swaps your data for the save's (yours is saved first); Add puts its games next to yours. Older backups load too.
-- **Auto-save:** every 5 minutes and when you close the app, to `Saved Progress` in the data folder above.
+- **Auto-save:** about 15 seconds after any change, every 5 minutes and when you close the app, to `Saved Progress` in the data folder above.
 - **Closing asks first**, and your progress is already saved by the time it asks. Turn the question off in Settings → General.
 
 ## Build from source
@@ -332,7 +337,7 @@ Design notes:
 - [ ] Controller combos on macOS
 - [ ] More presets (Hollow Knight / Silksong, Lies of P, Cuphead) and shareable preset files
 - [ ] Live detection score and sensitivity slider
-- [ ] Fullscreen capture via Windows Graphics Capture
+- [x] Exclusive-fullscreen capture on Windows (Desktop Duplication)
 
 Ideas and bug reports are welcome in [Issues](https://github.com/Jvn1604/UniversalDeathCounter/issues).
 

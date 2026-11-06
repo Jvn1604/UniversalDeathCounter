@@ -140,3 +140,44 @@ def test_minus_one_and_undo_explain_the_difference(window) -> None:
     assert "as if it never happened" in window._undo_btn.toolTip()
     heights = {b.height() for b in (window._plus_btn, window._minus_btn, window._undo_btn)}
     assert heights == {58}
+
+
+def test_bento_grid_packs_cards_of_different_widths() -> None:
+    from src.ui.widgets import BentoGrid
+
+    # Home: now playing (2), today, all-time / session, week (2), bosses / progress (3), detect.
+    spans = [2, 1, 1, 1, 2, 1, 3, 1]
+    assert BentoGrid.pack(spans, 4) == [
+        (0, 0, 2), (0, 2, 1), (0, 3, 1),
+        (1, 0, 1), (1, 1, 2), (1, 3, 1),
+        (2, 0, 3), (2, 3, 1),
+    ]
+    # Narrow: two columns, wide cards cut to two, gaps filled by later cards.
+    assert BentoGrid.pack(spans, 2) == [
+        (0, 0, 2), (1, 0, 1), (1, 1, 1),
+        (2, 0, 1), (3, 0, 2), (2, 1, 1),
+        (4, 0, 2), (5, 0, 1),
+    ]
+
+
+def test_home_without_a_game_shows_how_to_add_one(tmp_path, monkeypatch) -> None:
+    from PySide6.QtWidgets import QApplication
+
+    import src.ui.main_window as mw
+    import src.utils.profiles as profiles
+
+    monkeypatch.setattr(profiles, "SAVES_DIR", tmp_path)
+    monkeypatch.setattr(profiles, "DATABASE_PATH", tmp_path / "death_counter.db")
+    monkeypatch.setattr(mw.ProfileManager.__init__, "__defaults__", (tmp_path,))
+    monkeypatch.setattr(mw.UpdateChecker, "check_async", lambda self: None)
+    app = QApplication.instance() or QApplication([])
+    win = mw.MainWindow()
+    try:
+        win._refresh_home()
+        assert win._home_welcome.isVisibleTo(win) and not win._home_bento.isVisibleTo(win)
+        win._add_template_game("Elden Ring")
+        win._refresh_home()
+        assert win._home_bento.isVisibleTo(win) and not win._home_welcome.isVisibleTo(win)
+    finally:
+        win._quit_app()
+        app.processEvents()

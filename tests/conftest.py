@@ -72,3 +72,14 @@ def pytest_sessionfinish(session, exitstatus):
     QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
     QApplication.processEvents()
     gc.collect()
+
+
+@pytest.fixture(autouse=True)
+def _no_network_update_check(monkeypatch):
+    """
+    No real update check: it runs on a thread, and finishing after a test had
+    closed its window made a test fail now and then.
+    """
+    from src.utils.update_checker import UpdateChecker
+
+    monkeypatch.setattr(UpdateChecker, "check_async", lambda self: None)

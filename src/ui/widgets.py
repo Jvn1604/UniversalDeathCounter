@@ -12,11 +12,13 @@ from PySide6.QtCore import QEvent, QObject, QRectF, Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import (
     QColor,
     QDesktopServices,
+    QFont,
     QLinearGradient,
     QMouseEvent,
     QPainter,
     QPainterPath,
     QPixmap,
+    QRawFont,
 )
 from PySide6.QtWidgets import (
     QAbstractScrollArea,
@@ -537,6 +539,71 @@ class ResponsiveGrid(QWidget):
             grid.setColumnStretch(column, 1)
 
 
+class BentoGrid(QWidget):
+    """
+    Cards of different sizes fitted together like a bento box.
+
+    Each cell is ``(widget, column span)``. Cells are placed in order, each in
+    the first free spot it fits (row by row), on ``columns`` equal columns;
+    compact (a narrow window), on ``compact_columns``, with spans cut to fit.
+    Cards in a row share its height. The main window switches it from the
+    width it has (see ``MainWindow._fit_to_width``).
+    """
+
+    def __init__(
+        self,
+        cells: list[tuple[QWidget, int]],
+        columns: int = 4,
+        compact_columns: int = 2,
+        spacing: int = 14,
+        parent: QWidget | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self._cells = list(cells)
+        self._columns = max(1, columns)
+        self._compact_columns = max(1, compact_columns)
+        self._grid = QGridLayout(self)
+        self._grid.setContentsMargins(0, 0, 0, 0)
+        self._grid.setSpacing(spacing)
+        self.compact: bool | None = None
+        self.set_compact(False)
+
+    @staticmethod
+    def pack(spans: list[int], columns: int) -> list[tuple[int, int, int]]:
+        """``(row, column, span)`` per cell: each in the first free spot it fits."""
+        taken: set[tuple[int, int]] = set()
+        places = []
+        for span in spans:
+            span = max(1, min(span, columns))
+            row = 0
+            while True:
+                spot = next(
+                    (column for column in range(columns - span + 1)
+                     if all((row, column + i) not in taken for i in range(span))),
+                    None,
+                )
+                if spot is not None:
+                    break
+                row += 1
+            taken.update((row, spot + i) for i in range(span))
+            places.append((row, spot, span))
+        return places
+
+    def set_compact(self, compact: bool) -> None:
+        if compact == self.compact:
+            return
+        self.compact = compact
+        grid = self._grid
+        for widget, _span in self._cells:
+            grid.removeWidget(widget)
+        columns = self._compact_columns if compact else self._columns
+        for column in range(max(grid.columnCount(), columns)):
+            grid.setColumnStretch(column, 1 if column < columns else 0)
+        places = self.pack([span for _widget, span in self._cells], columns)
+        for (widget, _span), (row, column, span) in zip(self._cells, places, strict=True):
+            grid.addWidget(widget, row, column, 1, span)
+
+
 class _WheelGuard(QObject):
     """
     The mouse wheel scrolls the page, not the box under the pointer: a value
@@ -683,6 +750,29 @@ def field(label_text: str, widget: QWidget) -> QWidget:
     layout.addWidget(label)
     layout.addWidget(widget)
     return container
+
+
+_font_has: dict[str, bool] = {}
+
+
+def drawable(text: str) -> str:
+    """
+    ``text`` without the characters the app's font lacks (emoji in another
+    program's window title, say): showing one makes Qt load every fallback
+    font, about 45 MB. For text from outside the app.
+    """
+    raw = None
+    kept = []
+    for char in text:
+        if ord(char) > 127:
+            known = _font_has.get(char)
+            if known is None:
+                raw = raw or QRawFont.fromFont(QFont(QApplication.font().family()))
+                known = _font_has[char] = raw.supportsCharacter(ord(char))
+            if not known:
+                continue
+        kept.append(char)
+    return " ".join("".join(kept).split())  # no double spaces where emoji were
 
 
 def section_title(text: str) -> QLabel:

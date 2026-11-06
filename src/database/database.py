@@ -1046,6 +1046,13 @@ class Database:
         if self._settings_cache is not None:
             self._settings_cache[key] = str(value)
 
+    def delete_setting(self, key: str) -> None:
+        """Remove a setting, so its default applies again."""
+        with self._cursor() as cursor:
+            cursor.execute("DELETE FROM settings WHERE key = ?", (key,))
+        if self._settings_cache is not None:
+            self._settings_cache.pop(key, None)
+
     def get_all_settings(self) -> dict[str, str]:
         """Return all settings as a plain dict (a copy: changing it changes nothing)."""
         return dict(self._settings())

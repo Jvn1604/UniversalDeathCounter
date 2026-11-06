@@ -90,10 +90,10 @@ LESSONS: tuple[tuple[str, str, str, tuple[str, str, str] | None], ...] = (
         "<ul>"
         "<li><b>Sessions</b> (next to Undo) lists every session of the game. Pick one "
         "and click <b>Continue This Session</b> to keep counting in it.</li>"
-        "<li>Everything is saved the moment it happens. On top of that, <b>⋮ → Save "
+        "<li>Everything is saved the moment it happens. On top of that, <b>Menu (top right) → Save "
         "Progress</b> (Ctrl+S) writes one file with everything, including the "
         "session and speedrun run in progress: copy it to another PC or keep it "
-        "safe, and <b>⋮ → Load Save</b> carries on from it.</li>"
+        "safe, and <b>Menu → Load Save</b> carries on from it.</li>"
         "<li>It also auto-saves every 5 minutes and when you close the app (closing "
         "asks first; turn that off in Settings → General).</li>"
         "</ul>",
@@ -106,7 +106,7 @@ LESSONS: tuple[tuple[str, str, str, tuple[str, str, str] | None], ...] = (
         "list when adding a game.</li>"
         "<li>Choose the boss you're fighting in the Boss list: deaths now count "
         "against it too.</li>"
-        "<li>◀ ▶ switch bosses. The trophy marks the boss beaten and moves on.</li>"
+        "<li>The arrow buttons switch bosses. The trophy marks the boss beaten and moves on.</li>"
         "<li>Beaten automatically: after a boss, <b>Capture Screen</b> → \"A boss "
         "victory screen\". The next time that banner shows, the boss is marked "
         "beaten (and the timer can split).</li>"
@@ -120,8 +120,9 @@ LESSONS: tuple[tuple[str, str, str, tuple[str, str, str] | None], ...] = (
         "only reads the screen, so it's safe with anti-cheat.</p>"
         "<ol>"
         "<li>Add the game from its <b>.exe</b> (game list → + Add game from .exe).</li>"
-        "<li>Run the game in <b>borderless</b> or <b>windowed</b> mode (exclusive "
-        "fullscreen can capture as black).</li>"
+        "<li>Start the game. On Windows any mode works, exclusive fullscreen too (the "
+        "app switches to a capture that sees it). On a Mac or Linux, use "
+        "<b>borderless</b> or <b>windowed</b>.</li>"
         "<li>Die once. While the death screen shows, press <b>{calibrate}</b> and "
         "draw a box around the death text (e.g. YOU DIED). Or afterwards, Detection "
         "→ <b>Capture Screen</b> and pick the frame.</li>"
@@ -159,7 +160,11 @@ LESSONS: tuple[tuple[str, str, str, tuple[str, str, str] | None], ...] = (
         "you die. Test Text shows what it would find.</li>"
         "<li>Souls games (Elden Ring, Dark Souls, Sekiro…) are recognized without any "
         "setup.</li>"
-        "</ul>",
+        "</ul>"
+        "<p><b>The game's own count:</b> on the Detection page, <i>In-game death count "
+        "(save file)</i> reads the total the game keeps in your save, even deaths from "
+        "before you used this app and from earlier NG+ cycles. Pick the save and die "
+        "twice; then choose <b>Show as the Big Number</b>.</p>",
         ("Set Up Detection", "wand-sparkles", "detection"),
     ),
     (
@@ -233,14 +238,15 @@ LESSONS: tuple[tuple[str, str, str, tuple[str, str, str] | None], ...] = (
         "<ul>"
         "<li><b>Deaths not counted</b>: check the dot on the Detection page. Yellow "
         "\"Waiting for the game\" while you play → use <i>A whole display</i>. "
-        "\"Capture is black\" → run the game borderless or windowed.</li>"
+        "\"Capture is black\" → run the game borderless or windowed, or read it "
+        "from OBS (Console page).</li>"
         "<li><b>A key does nothing</b>: another program may own it (Settings → "
         "Controls warns you). Pick another key.</li>"
-        "<li><b>See what went wrong</b>: ⋮ → Error Log shows the warnings and "
+        "<li><b>See what went wrong</b>: Menu (top right) → Error Log shows the warnings and "
         "errors. The bug icon at the top turns red when an error happened.</li>"
         "<li><b>Report it</b>: the bug icon writes a ready-made report with your app "
         "version and the last errors (your user name is removed). Add it to the "
-        "<b>bug sheet</b> (⋮ → Bug Sheet also lists the known bugs) or open it on "
+        "<b>bug sheet</b> (Menu → Bug Sheet also lists the known bugs) or open it on "
         "GitHub.</li>"
         "</ul>",
         ("Report a Bug", "bug", "report"),
@@ -427,7 +433,7 @@ class GuideDialog(QDialog):
             "death": f"Die in game, then press <b>{keys.get('increment') or 'your +1 key'}</b>: "
             "it works in fullscreen. Or click +1 Death on the Death Counter page.",
             "bosses": "Pick the boss you're fighting so deaths count against it. "
-            "◀ ▶ switch bosses, the trophy marks one beaten.",
+            "The arrow buttons switch bosses, the trophy marks one beaten.",
             "detect": "Die once, then press "
             f"<b>{keys.get('calibrate') or 'the capture key'}</b> while the death screen "
             "shows. From then on, deaths count themselves.",

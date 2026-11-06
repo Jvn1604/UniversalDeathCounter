@@ -104,7 +104,7 @@ class StatisticsWindow(QDialog):
                 lines.append("")
                 lines.append("Victories (deaths until victory):")
                 for boss in defeated:
-                    lines.append(f"  ✓ {boss['name']} — {boss['deaths_at_defeat']} death(s)")
+                    lines.append(f"  • {boss['name']} — {boss['deaths_at_defeat']} death(s)")
 
         label = QLabel("\n".join(lines))
         label.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
