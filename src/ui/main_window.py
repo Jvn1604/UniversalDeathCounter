@@ -155,6 +155,7 @@ from src.ui.guide_dialog import (
     STEPS,
     GuideDialog,
 )
+from src.ui.library_window import Fetcher, LibraryDialog
 from src.ui.mini_window import MiniWindow
 from src.ui.obs_guide_window import ObsGuideWindow
 from src.ui.report_window import ErrorLogWindow, ProblemCounter, ReportBugDialog
@@ -186,7 +187,7 @@ from src.ui.widgets import (
     row,
     section_title,
 )
-from src.utils import artwork, save_files
+from src.utils import artwork, presets, save_files
 from src.utils.backgrounds import cover, load_background
 from src.utils.constants import (
     APP_BRAND,
@@ -1465,10 +1466,20 @@ class MainWindow(QMainWindow):
         self._pause_btn_detect = QPushButton(" Pause")
         icons.set_icon(self._pause_btn_detect, "pause", size=16)
         self._pause_btn_detect.clicked.connect(self._toggle_detection_pause)
-        for button in (setup_button, capture_button, self._pause_btn_detect):
+        library_button = QPushButton(" Setups Library")
+        icons.set_icon(library_button, "library", size=16)
+        library_button.setToolTip(
+            "Ready-made setups from other players: deaths count with no calibrating. "
+            "Share yours there too."
+        )
+        library_button.clicked.connect(self._open_library)
+        for button in (setup_button, capture_button, self._pause_btn_detect, library_button):
             button.setMinimumHeight(42)
-        self._needs_game += [setup_button, capture_button, self._pause_btn_detect]
-        layout.addLayout(row(setup_button, capture_button, self._pause_btn_detect))
+        self._needs_game += [setup_button, library_button, capture_button,
+                             self._pause_btn_detect]
+        layout.addLayout(
+            row(setup_button, library_button, capture_button, self._pause_btn_detect)
+        )
         layout.addWidget(self._build_save_card())
 
         tips, tips_layout = card(margins=18)
@@ -2885,8 +2896,63 @@ class MainWindow(QMainWindow):
         )
         self._reload_games(select_game_id=game_id)
         if not preset and not has_templates:
-            hotkey = self._database.get_setting(SETTING_HOTKEY_CALIBRATE, "f8").upper()
-            QMessageBox.information(self, "Teach It Your Death Screen", first_death_hint(hotkey))
+            self._suggest_library_setup(game_id, Path(path).name)
+
+    def _show_first_death_hint(self) -> None:
+        hotkey = self._database.get_setting(SETTING_HOTKEY_CALIBRATE, "f8").upper()
+        QMessageBox.information(self, "Teach It Your Death Screen", first_death_hint(hotkey))
+
+    def _suggest_library_setup(self, game_id: int, exe_name: str) -> None:
+        """
+        A new game: if the library has a setup for its .exe, offer it; else how
+        to teach it the death screen. The library is only asked when update
+        checks are allowed (the app's network switch).
+        """
+        if self._database.get_setting(SETTING_CHECK_UPDATES, "true") != "true":
+            self._show_first_death_hint()
+            return
+
+        def found(entries, error: str) -> None:
+            match = next((e for e in entries or [] if e.matches_exe(exe_name)), None)
+            if error or match is None:
+                self._show_first_death_hint()
+                return
+            self._toast.show_message(
+                f"The library has a ready-made setup for {match.game}", "Use It",
+                lambda: self._use_library_setup(game_id, match), seconds=15, icon="library",
+            )
+
+        fetcher = Fetcher(self)
+        fetcher.done.connect(found)
+        fetcher.run(presets.fetch_library)
+
+    def _use_library_setup(self, game_id: int, entry) -> None:
+        def got(preset, error: str) -> None:
+            if error or preset is None:
+                self._toast.say(f"Couldn't get the setup: {error}", icon="circle-alert")
+                return
+            presets.apply_preset(self._database, game_id, preset)
+            self._on_setup_applied(preset["game"])
+
+        fetcher = Fetcher(self)
+        fetcher.done.connect(got)
+        fetcher.run(lambda: presets.fetch_preset(entry))
+
+    def _open_library(self) -> None:
+        game_id = self._counter_manager.current_game_id
+        if game_id is None:
+            return
+        dialog = LibraryDialog(self._database, game_id, self._game_combo.currentText(), self)
+        dialog.applied.connect(self._on_setup_applied)
+        dialog.exec()
+
+    def _on_setup_applied(self, game: str) -> None:
+        self._reload_bosses(self._counter_manager.current_game_id)
+        self._configure_detection()
+        self._refresh_detection_page()
+        self._toast.show_message(
+            f"Using the {game} setup: deaths count by themselves now", seconds=6, icon="check"
+        )
 
     def _add_game_without_exe(self) -> None:
         """A game whose .exe isn't known (or isn't found): watch the display it's on."""
