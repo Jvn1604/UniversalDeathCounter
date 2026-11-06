@@ -22,6 +22,7 @@ import json
 import os
 import re
 import struct
+import zlib
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
@@ -87,12 +88,79 @@ def read_save(path: str | Path) -> list[bytes] | str:
         raise SaveReadError(f"Can't read {path.name}: {exc.strerror or exc}") from exc
     if data[:4] == b"BND4":
         return _bnd4_entries(data, _key_for(path))
+    unpacked = _unpack_whole(data)
+    if unpacked is not None:
+        data = unpacked  # a save compressed as a whole (gzip, xz, bzip2, zlib)
     if len(data) <= _MAX_TEXT_BYTES and b"\0" not in data[:4096]:
         try:
             return data.decode("utf-8-sig")
         except UnicodeDecodeError:
             pass
-    return [data]
+    # A save made of compressed chunks: each unpacked chunk is a part to read.
+    return [data, *_zlib_chunks(data)]
+
+
+# ---------------------------------------------------------------- compressed saves
+_MAX_UNPACKED = 256 * 1024 * 1024  # never unpack more than this from one save
+
+
+def _unpack_whole(data: bytes) -> bytes | None:
+    """The save unpacked, if it's one gzip, xz, bzip2 or zlib stream; else None."""
+    import bz2
+    import gzip
+    import lzma
+
+    try:
+        if data[:2] == b"\x1f\x8b":
+            return gzip.decompress(data)
+        if data[:6] == b"\xfd7zXZ\x00":
+            return lzma.decompress(data)
+        if data[:3] == b"BZh":
+            return bz2.decompress(data)
+        if _zlib_header(data, 0):
+            unpacker = zlib.decompressobj()
+            out = unpacker.decompress(data, _MAX_UNPACKED)
+            if unpacker.eof and not unpacker.unused_data.strip(b"\0"):
+                return out
+    except (OSError, EOFError, ValueError, lzma.LZMAError, zlib.error):
+        pass
+    return None
+
+
+def _zlib_header(data: bytes, at: int) -> bool:
+    if at + 2 > len(data):
+        return False
+    first, second = data[at], data[at + 1]
+    return first == 0x78 and second in (0x01, 0x5E, 0x9C, 0xDA) and (first * 256 + second) % 31 == 0
+
+
+def _zlib_chunks(data: bytes) -> list[bytes]:
+    """
+    zlib streams inside the save (many engines compress a save in chunks),
+    unpacked. Only for saves that don't compress any further themselves: a
+    plain save is read as it is.
+    """
+    sample = data[:262_144]
+    if len(sample) < 4096 or len(zlib.compress(sample, 1)) < 0.9 * len(sample):
+        return []
+    chunks, total, at = [], 0, 0
+    while total < _MAX_UNPACKED:
+        at = data.find(b"\x78", at)
+        if at < 0:
+            break
+        if _zlib_header(data, at):
+            unpacker = zlib.decompressobj()
+            try:
+                out = unpacker.decompress(data[at:], _MAX_UNPACKED - total)
+            except zlib.error:
+                out = b""
+            if unpacker.eof and len(out) >= 256:
+                chunks.append(out)
+                total += len(out)
+                at = len(data) - len(unpacker.unused_data)
+                continue
+        at += 1
+    return chunks
 
 
 def _bnd4_entries(data: bytes, key: bytes | None) -> list[bytes]:

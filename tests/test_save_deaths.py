@@ -334,3 +334,33 @@ def test_it_says_when_a_save_has_no_count_to_find(tmp_path, monkeypatch) -> None
         app.processEvents()
     assert "No death count found in this save after 6 deaths" in watcher.status
     watcher.stop()
+
+
+def test_compressed_saves_are_unpacked_and_read(tmp_path) -> None:
+    import gzip
+    import zlib
+
+    # A text save compressed as a whole (gzip).
+    path = tmp_path / "progress.sav"
+    learner = SaveLearner()
+    for deaths, app in ((57, 0), (58, 1), (59, 2)):
+        path.write_bytes(gzip.compress(json.dumps({"deaths": deaths, "gold": 3}).encode()))
+        location = learner.observe(read_save(path), app)
+    assert location is not None and location.read(read_save(path)) == 59
+
+    # A binary save in zlib chunks behind a header (how many engines save).
+    game = _Game(deaths=120)
+    chunked = tmp_path / "chunked.sav"
+
+    def save() -> list[bytes]:
+        body = b"".join(zlib.compress(bytes(slot)) for slot in game.slots)
+        chunked.write_bytes(b"MYSAVE" + random.Random(1).randbytes(8000) + body)
+        return read_save(chunked)
+
+    learner = SaveLearner()
+    learner.observe(save(), 0)
+    for app in (1, 2):
+        game.die()
+        location = learner.observe(save(), app)
+    assert location is not None and location.read(save()) == 122
+    assert not sw._looks_scrambled(save())  # the unpacked parts are readable

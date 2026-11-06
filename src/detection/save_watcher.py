@@ -207,8 +207,10 @@ class SaveWatcher(QObject):
             return
         if self._scrambled:
             self._set_status(
-                "This save looks compressed or encrypted, so its death count probably "
-                "can't be read. It will still try as you die (+1 or F9 for each death)."
+                "This save is compressed or encrypted in a way the app can't open "
+                "(standard compression is unpacked; a game's own encryption or "
+                "compression like Oodle isn't). It still tries as you die; auto-detect "
+                "works for any game."
             )
             return
         left = max(0, DEATHS_TO_LEARN - self._learner.deaths_seen)
@@ -236,8 +238,16 @@ class SaveWatcher(QObject):
 
 
 def _looks_scrambled(contents: object) -> bool:
-    """Compressed or encrypted data doesn't compress any further."""
+    """
+    No part of the save is readable: all still compressed or encrypted (data
+    like that doesn't compress any further). Standard compression has been
+    unpacked by then (see :func:`~src.detection.save_deaths.read_save`).
+    """
     if isinstance(contents, str) or not contents:
         return False
-    sample = max(contents, key=len)[:262_144]
-    return len(sample) > 4096 and len(zlib.compress(sample, 1)) > 0.95 * len(sample)
+
+    def scrambled(part: bytes) -> bool:
+        sample = part[:262_144]
+        return len(sample) > 4096 and len(zlib.compress(sample, 1)) > 0.95 * len(sample)
+
+    return all(scrambled(part) for part in contents)
