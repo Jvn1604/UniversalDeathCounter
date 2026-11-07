@@ -426,6 +426,34 @@ def is_foreground(hwnd: int) -> bool:
     return _user32.GetForegroundWindow() == hwnd
 
 
+def display_of_front_window() -> int | None:
+    """
+    The display (1 = the first, as in :func:`list_displays`) showing the window
+    in front, if it's another program's (the game, while F8 is pressed): with
+    two monitors, the one the game is actually on. None if unknown.
+    """
+    if not IS_WINDOWS or not detection_available():
+        return None
+    _user32.GetForegroundWindow.restype = wintypes.HWND
+    hwnd = _user32.GetForegroundWindow()
+    if not hwnd:
+        return None
+    pid = wintypes.DWORD()
+    _user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+    if pid.value == os.getpid():  # this app's own window: not the game
+        return None
+    rect = window_client_rect(hwnd)
+    if rect is None:
+        return None
+    center_x, center_y = rect[0] + rect[2] // 2, rect[1] + rect[3] // 2
+    with open_screen_capture() as sct:
+        for index, m in enumerate(sct.monitors[1:], start=1):
+            if (m["left"] <= center_x < m["left"] + m["width"]
+                    and m["top"] <= center_y < m["top"] + m["height"]):
+                return index
+    return None
+
+
 def window_client_rect(hwnd: int) -> Rect | None:
     """Screen rectangle of a window's client area, or None if gone/minimized."""
     if not IS_WINDOWS:

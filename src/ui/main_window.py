@@ -101,6 +101,7 @@ from src.detection.death_watcher import (
 from src.detection.game_window import (
     capture_game_frame,
     detection_available,
+    display_of_front_window,
     exe_display_name,
     list_displays,
     list_windows,
@@ -279,7 +280,7 @@ from src.utils.game_templates import add_template_bosses, get_template, get_temp
 from src.utils.logger import get_logger
 from src.utils.phone_remote import ACTIONS as PHONE_ACTIONS
 from src.utils.phone_remote import PhoneRemote, new_key
-from src.utils.platform_info import program_file_filter
+from src.utils.platform_info import IS_WINDOWS, program_file_filter
 from src.utils.profiles import DEFAULT_PROFILE_NAME, ProfileManager
 from src.utils.screens import display_name, fit_to_screens, screen_index_at
 from src.utils.stream_overlay import StreamOverlay
@@ -485,6 +486,12 @@ class MainWindow(QMainWindow):
         self._overlay_hidden_local = False
         self._stream = StreamOverlay(self)
         self._stream_skull_key: tuple = ()
+        self._wanted_places: dict = {}  # window -> its saved place, while that display is away
+        self._app_placed: dict = {}  # window -> geometry the app gave it (not the player)
+        self._place_save = QTimer(self)
+        self._place_save.setSingleShot(True)
+        self._place_save.setInterval(800)
+        self._place_save.timeout.connect(self._remember_window_places)
         self._stream_frame_key = ""  # the drawn design last sent to the stream page
         self._last_snapshot: CounterSnapshot | None = None
         self._overlay.settings_requested.connect(self._open_overlay_settings)
@@ -495,6 +502,7 @@ class MainWindow(QMainWindow):
         self._mini.action_requested.connect(self._on_mini_action)
         self._timer_window = TimerWindow()
         self._timer_window.action_requested.connect(self._on_timer_window_action)
+        self._timer_window.geometry_changed.connect(lambda: self._place_save.start())
         self._speedrun: SpeedrunController | None = None
         self._death_watcher = DeathWatcher(parent=self)
         self._save_watcher = SaveWatcher(self)
@@ -544,6 +552,7 @@ class MainWindow(QMainWindow):
         self._apply_saved_settings()
         self._restore_main_geometry()
         QGuiApplication.instance().screenRemoved.connect(self._on_screen_removed)
+        QGuiApplication.instance().screenAdded.connect(self._on_screen_added)
         self._reload_games()
         self._autosave_timer = QTimer(self)
         self._autosave_timer.setInterval(_AUTOSAVE_MS)
@@ -801,6 +810,7 @@ class MainWindow(QMainWindow):
         )
         self._overlay_nav.clicked.connect(self._toggle_overlay)
         self._overlay.visibility_changed.connect(self._on_overlay_shown)
+        self._overlay.geometry_changed.connect(lambda: self._place_save.start())
         layout.addWidget(self._overlay_nav)
         self._nav_texts[self._overlay_nav] = "Overlay"
         for text, icon_name, handler, tip in (
@@ -2490,6 +2500,7 @@ class MainWindow(QMainWindow):
         self._hotkey_manager.action_triggered.connect(
             lambda action: self._action_handlers[action]()
         )
+        self._hotkey_manager.action_triggered.connect(self._note_key_received)
         self._hotkey_manager.registration_failed.connect(self._on_hotkeys_failed)
         self._hotkey_manager.start()
 
@@ -2500,6 +2511,27 @@ class MainWindow(QMainWindow):
         )
         self._gamepad_manager.start()
         self._update_hotkey_labels(bindings, pads)
+
+    def _note_key_received(self, action: str) -> None:
+        """Log each key press, and show it on Settings → Controls (the key check)."""
+        label = next((name for key, name, _s, _d in CONTROL_ACTIONS if key == action), action)
+        logger.info("Hotkey received: %s", action)
+        if self._settings is not None:
+            self._settings.show_key_received(
+                f"Key check: received {label} at {datetime.now():%H:%M:%S}. "
+                "Your keys reach the app."
+            )
+
+    def nativeEvent(self, event_type, message):  # noqa: N802 - Qt override
+        """After the PC wakes from sleep, take the keys back (Windows may have dropped them)."""
+        if IS_WINDOWS and event_type == b"windows_generic_MSG":
+            from ctypes import wintypes  # Windows only
+
+            msg = wintypes.MSG.from_address(int(message))
+            if msg.message == 0x0218 and msg.wParam in (0x7, 0x12):  # WM_POWERBROADCAST, resume
+                logger.info("Woke from sleep: registering the hotkeys again")
+                QTimer.singleShot(3000, self._on_settings_changed_hotkeys)
+        return super().nativeEvent(event_type, message)
 
     def _on_hotkeys_failed(self, failures: list) -> None:
         labels = {action: label for action, label, _key, _default in CONTROL_ACTIONS}
@@ -2829,9 +2861,15 @@ class MainWindow(QMainWindow):
             finally:
                 client.close()
         else:
-            frame = capture_game_frame(
-                exe_path, self._capture_window_title(game_id), self._screen_display(game_id)
-            )
+            display = self._screen_display(game_id)
+            front = display_of_front_window() if display else None
+            if front is not None and front != display:
+                # Two monitors: watch the one the game is on, not the one picked before.
+                self._database.update_detection_options(game_id, **{OPTION_SCREEN_DISPLAY: front})
+                self._configure_detection()
+                self._toast.say(f"Watching Display {front}, where your game is", icon="monitor")
+                display = front
+            frame = capture_game_frame(exe_path, self._capture_window_title(game_id), display)
         if frame is None:
             return
         self.show()
@@ -3023,17 +3061,53 @@ class MainWindow(QMainWindow):
         )
         self._configure_detection()
 
+    def _window_places(self) -> dict:
+        return {self._overlay: SETTING_OVERLAY_GEOMETRY,
+                self._timer_window: SETTING_TIMER_GEOMETRY}
+
+    def _place_window(self, window, saved: str) -> None:
+        """
+        Put a stream window where the player left it. If its display isn't
+        there (yet: a second monitor waking up after the app started), it waits
+        on the main display, and its own place is kept and used once the
+        display shows up, never overwritten by the stand-in spot.
+        """
+        if window.restore_geometry_string(saved):
+            self._wanted_places.pop(window, None)
+        else:
+            self._wanted_places[window] = saved
+        self._app_placed[window] = window.geometry_string()  # not moved by the player
+
+    def _remember_window_places(self) -> None:
+        """Save where the player moved or sized the stream windows (soon after)."""
+        for window, key in self._window_places().items():
+            place = window.geometry_string()
+            if not window.isVisible() or place == self._app_placed.get(window):
+                continue  # where the app put it: the player's own place stays saved
+            self._wanted_places.pop(window, None)
+            self._app_placed.pop(window, None)
+            if self._database.get_setting(key, "") != place:
+                self._database.set_setting(key, place)
+
+    def _on_screen_added(self, _screen) -> None:
+        """A display came (back): windows waiting for it go to their own place."""
+        def retry() -> None:
+            for window, saved in list(self._wanted_places.items()):
+                self._place_window(window, saved)
+
+        QTimer.singleShot(500, retry)
+
     def _apply_saved_settings(self) -> None:
         """Startup and profile switch: the look, plus where the windows were."""
         self._apply_features()
         settings = self._database.get_all_settings()
         self._apply_appearance(settings)
-        self._timer_window.restore_geometry_string(settings.get(SETTING_TIMER_GEOMETRY, ""))
+        self._place_window(self._timer_window, settings.get(SETTING_TIMER_GEOMETRY, ""))
         self._timer_window.setVisible(
             settings.get(SETTING_TIMER_VISIBLE, "false") == "true"
             and settings.get(SETTING_FEATURE_TIMER, "true") == "true"
         )
-        self._overlay.restore_geometry_string(settings.get(SETTING_OVERLAY_GEOMETRY, ""))
+        self._place_window(self._overlay, settings.get(SETTING_OVERLAY_GEOMETRY, ""))
         # On, behind the windows, or off, as this profile left it.
         state = settings.get(SETTING_OVERLAY_STATE, "off")
         if state == "behind" and not self._overlay_hidden_local:
@@ -4925,14 +4999,38 @@ class MainWindow(QMainWindow):
         box.setCheckBox(never)
         close = box.addButton("Close", QMessageBox.ButtonRole.AcceptRole)
         close.setObjectName("AccentButton")
+        background = None
+        if self._tray is not None and not self._quitting:
+            # Closing stops the keys (F9 / F10) and auto-detect: offer to keep them.
+            background = box.addButton(
+                "Keep Counting in the Background", QMessageBox.ButtonRole.ActionRole
+            )
+            background.setToolTip(
+                "Hide to the tray: F9 / F10, the overlay and auto-detect keep working."
+            )
         box.addButton(QMessageBox.StandardButton.Cancel)
         box.setDefaultButton(close)
         box.exec()
+        if background is not None and box.clickedButton() is background:
+            self._go_to_background()
+            return False
         if box.clickedButton() is not close:
             return False
         if never.isChecked():
             self._database.set_setting(SETTING_CONFIRM_CLOSE, "false")
         return True
+
+    def _go_to_background(self) -> None:
+        """Hide to the tray; keys, the overlay and auto-detect keep working."""
+        self.hide()
+        if self._tray is not None:
+            self._tray.showMessage(
+                APP_BRAND,
+                "Still counting in the background: F9 / F10 work. Click the tray icon "
+                "to open, right-click to quit.",
+                QSystemTrayIcon.MessageIcon.Information,
+                4000,
+            )
 
     # ----------------------------------------------------------------
     # Multiple displays
@@ -5010,7 +5108,8 @@ class MainWindow(QMainWindow):
         self._database.set_setting(SETTING_LAST_PAGE, str(self._pages.currentIndex()))
         self._write_progress_autosave()  # covers quitting without the question too
         self._end_speedrun()
-        self._database.set_setting(SETTING_OVERLAY_GEOMETRY, self._overlay.geometry_string())
+        self._remember_window_places()
+        self._place_save.stop()
         self._database.set_setting(SETTING_MINI_GEOMETRY, self._mini.geometry_string())
         self._database.set_setting(
             SETTING_MAIN_WINDOW_GEOMETRY, bytes(self.saveGeometry().toBase64()).decode("ascii")

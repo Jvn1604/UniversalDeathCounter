@@ -25,6 +25,7 @@ global hotkeys; the in-app buttons, phone remote and controller still work.
 from __future__ import annotations
 
 import threading
+import time
 
 from PySide6.QtCore import QObject, Signal
 
@@ -139,13 +140,23 @@ class _HotkeyThread(threading.Thread):
     def run(self) -> None:
         self._thread_id = _kernel32.GetCurrentThreadId()
         registered: list[int] = []
-        failed: list[str] = []
-        for hotkey_id, (action, modifiers, vk) in enumerate(self._combos, start=1):
-            if _user32.RegisterHotKey(None, hotkey_id, modifiers | _MOD_NOREPEAT, vk):
-                registered.append(hotkey_id)
-                self.held_combos.add((modifiers, vk))
-            else:
-                failed.append(action)
+        pending = list(enumerate(self._combos, start=1))
+        # Windows may not have released a key the previous listener held yet
+        # (re-registering after a Settings change or waking from sleep): try a
+        # few times before calling it taken.
+        for attempt in range(5):
+            still = []
+            for hotkey_id, (action, modifiers, vk) in pending:
+                if _user32.RegisterHotKey(None, hotkey_id, modifiers | _MOD_NOREPEAT, vk):
+                    registered.append(hotkey_id)
+                    self.held_combos.add((modifiers, vk))
+                else:
+                    still.append((hotkey_id, (action, modifiers, vk)))
+            pending = still
+            if not pending or attempt == 4:
+                break
+            time.sleep(0.25)
+        failed = [action for _id, (action, _m, _vk) in pending]
         self.ready.set()
         if failed:
             self._on_failed(failed)
@@ -283,7 +294,7 @@ class HotkeyManager(QObject):
 
         self._thread = _make_listener(combos, self._emit_action, self._report_taken)
         self._thread.start()
-        self._thread.ready.wait(timeout=2.0)
+        self._thread.ready.wait(timeout=3.0)
         if unknown:
             logger.warning("Unrecognized hotkeys: %s", unknown)
             self.registration_failed.emit(unknown)

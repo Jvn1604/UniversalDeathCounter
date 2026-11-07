@@ -69,6 +69,7 @@ class CaptureWindow(QWidget):
     """
 
     visibility_changed = Signal(bool)
+    geometry_changed = Signal()  # moved or resized while shown (to remember its place)
 
     def __init__(self, title: str, parent: QWidget | None = None) -> None:
         # OBS's Window Capture list leaves out tool windows, so this is a
@@ -232,6 +233,13 @@ class CaptureWindow(QWidget):
         grip = self._size_grip
         grip.move(self.width() - grip.width(), self.height() - grip.height())
         super().resizeEvent(event)
+        if self.isVisible():
+            self.geometry_changed.emit()
+
+    def moveEvent(self, event) -> None:  # noqa: N802
+        super().moveEvent(event)
+        if self.isVisible():
+            self.geometry_changed.emit()
 
     def enterEvent(self, event: QEnterEvent) -> None:  # noqa: N802
         if self._grip_on_hover:
@@ -283,21 +291,25 @@ class CaptureWindow(QWidget):
         g = self.geometry()
         return f"{g.x()},{g.y()},{g.width()},{g.height()}"
 
-    def restore_geometry_string(self, value: str) -> None:
+    def restore_geometry_string(self, value: str) -> bool:
         """
         Restore geometry from a 'x,y,w,h' string, ignoring invalid input.
 
         If that spot is no longer on a connected display (monitor unplugged,
-        laptop undocked), the window is moved onto the primary display.
+        laptop undocked, or not awake yet at startup), the window is moved onto
+        the primary display. Returns whether it went exactly where asked.
         """
         if not value:
-            return
+            return True
         try:
             x, y, w, h = (int(part) for part in value.split(","))
         except (ValueError, TypeError):
             logger.warning("Could not parse window geometry string: %s", value)
-            return
-        self.setGeometry(fit_to_screens(QRect(x, y, w, h), available_screen_rects()))
+            return True
+        wanted = QRect(x, y, w, h)
+        fitted = fit_to_screens(wanted, available_screen_rects())
+        self.setGeometry(fitted)
+        return fitted == wanted
 
     def keep_on_screen(self) -> None:
         """Pull the window back onto a display if it ended up off every screen."""

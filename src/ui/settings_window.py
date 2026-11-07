@@ -987,7 +987,19 @@ class SettingsWindow(QDialog):
             note_label.setWordWrap(True)
             layout.addWidget(note_label)
 
+        self._last_key_label = QLabel(
+            "Key check: press one of your keys anywhere, even in a game. It shows here "
+            "when the app receives it."
+        )
+        self._last_key_label.setObjectName("Muted")
+        self._last_key_label.setWordWrap(True)
+        layout.addWidget(self._last_key_label)
+
         grid = QGridLayout()
+        grid.setVerticalSpacing(8)
+        grid.setHorizontalSpacing(10)
+        grid.setColumnStretch(1, 3)
+        grid.setColumnStretch(3, 2)
         for column, title in enumerate(("Action", "Keyboard", "", "Controller", "", "")):
             header = QLabel(title)
             header.setStyleSheet("font-weight: 600;")
@@ -1001,6 +1013,7 @@ class SettingsWindow(QDialog):
             grid.addWidget(QLabel(label), row, 0)
 
             key_edit = QKeySequenceEdit()
+            key_edit.setMinimumHeight(34)
             key_edit.setMaximumSequenceLength(1)
             key_edit.keySequenceChanged.connect(self._refresh_conflicts)
             self._key_edits[action] = key_edit
@@ -1008,7 +1021,7 @@ class SettingsWindow(QDialog):
             clear_key = QPushButton()
             icons.set_icon(clear_key, "x", size=14)
             clear_key.setToolTip("Clear keyboard binding")
-            clear_key.setFixedWidth(36)
+            clear_key.setFixedSize(36, 34)
             clear_key.setStyleSheet("padding: 0;")
             clear_key.clicked.connect(key_edit.clear)
             grid.addWidget(clear_key, row, 2)
@@ -1019,13 +1032,14 @@ class SettingsWindow(QDialog):
             self._pad_labels[action] = pad_label
             grid.addWidget(pad_label, row, 3)
             record = QPushButton("Record")
+            record.setMinimumHeight(34)
             record.clicked.connect(lambda _=False, a=action: self._start_recording(a))
             self._record_buttons[action] = record
             grid.addWidget(record, row, 4)
             clear_pad = QPushButton()
             icons.set_icon(clear_pad, "x", size=14)
             clear_pad.setToolTip("Clear controller binding")
-            clear_pad.setFixedWidth(36)
+            clear_pad.setFixedSize(36, 34)
             clear_pad.setStyleSheet("padding: 0;")
             clear_pad.clicked.connect(lambda _=False, a=action: self._set_pad(a, ""))
             grid.addWidget(clear_pad, row, 5)
@@ -1049,7 +1063,13 @@ class SettingsWindow(QDialog):
             self._gamepad.combo_recorded.connect(self._on_combo_recorded)
             self._gamepad.connection_changed.connect(self._update_pad_status)
         self._update_pad_status()
-        return page
+        # Scrolls like the other tabs: 14 rows squeezed into the window cut the
+        # key boxes in half.
+        return self._scrolling(page)
+
+    def show_key_received(self, text: str) -> None:
+        """The main window got a key press: proof the key reaches the app."""
+        self._last_key_label.setText(text)
 
     # ----------------------------------------------------------------
     # Controller binding helpers

@@ -61,7 +61,7 @@ def test_screen_index_at() -> None:
 
 def test_display_name() -> None:
     assert display_name(1, (1920, 1080), False) == "Display 2: 1920×1080"
-    assert display_name(0, (2560, 1600), True) == "Display 1: 2560×1600 (primary)"
+    assert display_name(0, (2560, 1600), True) == "Display 1: 2560×1600 (main)"
 
 
 # ----------------------------------------------------------------
