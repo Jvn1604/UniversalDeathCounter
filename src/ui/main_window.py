@@ -206,6 +206,7 @@ from src.utils.constants import (
     DETECTION_MODE_OFF,
     DETECTION_MODE_SOULS,
     DETECTION_MODE_TEMPLATE,
+    EDITIONS,
     FEATURES,
     ICONS_DIR,
     OPTION_OBS_SOURCE,
@@ -221,7 +222,9 @@ from src.utils.constants import (
     SETTING_DEATHS_TXT_PATH,
     SETTING_DEATHS_TXT_TEMPLATE,
     SETTING_DETECTION_COOLDOWN,
+    SETTING_EDITION_APPLIED,
     SETTING_FEATURE_CONSOLE,
+    SETTING_FEATURE_COUNTER,
     SETTING_FEATURE_MINI,
     SETTING_FEATURE_STATS,
     SETTING_FEATURE_TIMER,
@@ -292,6 +295,7 @@ from src.utils.updater import (
     ROLLBACK_ARGS,
     UpdateError,
     download_installer,
+    edition_file,
     is_installed_copy,
     launch_installer,
 )
@@ -318,6 +322,9 @@ _GAME_TIME_PAUSES = {
 # a registered hotkey is swallowed system-wide, and these default to number-
 # pad digits, which would otherwise stop typing in every other app.
 _RUN_ONLY_ACTIONS = ("timer_pause", "timer_reset", "timer_undo", "timer_skip")
+# Keys of the death counter (freed when it's switched off: a speedrun timer only).
+_COUNTER_ACTIONS = ("increment", "decrement", "undo", "toggle_overlay", "calibrate",
+                    "prev_boss", "next_boss", "boss_defeated")
 # Timer page buttons: (label, icon).
 _TIMER_BUTTONS = {
     "split": ("Start / Split", "flag"),
@@ -2052,31 +2059,61 @@ class MainWindow(QMainWindow):
         self._nav_buttons[index].setChecked(True)
         self._page_badge.setText(_PAGE_NAMES[index])
 
+    def _apply_edition(self) -> None:
+        """
+        The installer's choice (everything, death counter only, speedrun timer
+        only), applied once: changing the features in Settings afterwards sticks,
+        silent updates write the same choice again.
+        """
+        path = edition_file()
+        try:
+            edition = path.read_text(encoding="utf-8").strip() if path is not None else ""
+        except OSError:
+            return
+        if edition not in EDITIONS:
+            return
+        if self._database.get_setting(SETTING_EDITION_APPLIED, "") == edition:
+            return
+        for key, value in EDITIONS[edition].items():
+            self._database.set_setting(key, value)
+        self._database.set_setting(SETTING_EDITION_APPLIED, edition)
+        logger.info("Installed as %r: features set to match", edition)
+
     def _feature_on(self, key: str) -> bool:
         return self._database.get_setting(key, "true") == "true"
 
     def _show_feature_pages(self, states: dict[str, bool]) -> None:
         """Sidebar entries for the features ticked (live while ticking in Settings)."""
+        counter = states.get(SETTING_FEATURE_COUNTER, True)
         for key, index in ((SETTING_FEATURE_TIMER, _PAGE_TIMER),
                            (SETTING_FEATURE_STATS, _PAGE_STATS),
                            (SETTING_FEATURE_CONSOLE, _PAGE_CONSOLE)):
             self._nav_buttons[index].setVisible(states.get(key, True))
-        self._mini_nav.setVisible(states.get(SETTING_FEATURE_MINI, True))
+        # A speedrun timer only: no death counter pages, overlay or mini mode.
+        for index in (_PAGE_HOME, _PAGE_COUNTER):
+            self._nav_buttons[index].setVisible(counter)
+        if not counter:
+            self._nav_buttons[_PAGE_STATS].setVisible(False)
+        self._overlay_nav.setVisible(counter)
+        self._mini_nav.setVisible(counter and states.get(SETTING_FEATURE_MINI, True))
 
     def _apply_features(self) -> None:
         """Show what's switched on; hide what's off, free its keys, stop its work."""
         if not hasattr(self, "_mini_nav"):
             return
         timer = self._feature_on(SETTING_FEATURE_TIMER)
+        counter = self._feature_on(SETTING_FEATURE_COUNTER)
         console = self._feature_on(SETTING_FEATURE_CONSOLE)
-        mini = self._feature_on(SETTING_FEATURE_MINI)
+        mini = self._feature_on(SETTING_FEATURE_MINI) and counter
         states = {key: self._feature_on(key) for key, _label, _tip in FEATURES}
         self._show_feature_pages(states)
         if not self._nav_buttons[self._pages.currentIndex()].isVisibleTo(self):
-            self._show_page(_PAGE_HOME)
+            self._show_page(_PAGE_HOME if counter else _PAGE_TIMER)
         for key, actions in self._tray_feature_actions.items():
             for action in actions:
                 action.setVisible(self._feature_on(key))
+        if not counter and self._overlay_active():
+            self._turn_overlay_off()
         if not timer:
             self._timer_window.hide()
             source = self._database.get_setting(
@@ -2357,6 +2394,7 @@ class MainWindow(QMainWindow):
         self._tray_feature_actions = {
             SETTING_FEATURE_TIMER: (split_action, timer_window_action),
             SETTING_FEATURE_MINI: (mini_action,),
+            SETTING_FEATURE_COUNTER: (plus_action, minus_action, undo_action, defeated_action),
         }
         menu.addSeparator()
         overlay_action = menu.addAction("Overlay")
@@ -2419,6 +2457,9 @@ class MainWindow(QMainWindow):
             for action in list(bindings):
                 if action.startswith("timer_"):
                     bindings[action] = ""
+        if not self._feature_on(SETTING_FEATURE_COUNTER):
+            for action in _COUNTER_ACTIONS:
+                bindings[f"{action}_key"] = ""
         return bindings
 
     def _sync_run_hotkeys(self) -> None:
@@ -2433,9 +2474,11 @@ class MainWindow(QMainWindow):
         """Controller combos from settings, keyed by action ("" = unbound)."""
         settings = self._database.get_all_settings()
         timer = settings.get(SETTING_FEATURE_TIMER, "true") == "true"
+        counter = settings.get(SETTING_FEATURE_COUNTER, "true") == "true"
         return {
             action: settings.get(pad_setting(action), "")
-            if timer or not action.startswith("timer_") else ""
+            if (timer or not action.startswith("timer_"))
+            and (counter or action not in _COUNTER_ACTIONS) else ""
             for action, _label, _setting, _default in CONTROL_ACTIONS
         }
 
@@ -3102,6 +3145,7 @@ class MainWindow(QMainWindow):
 
     def _apply_saved_settings(self) -> None:
         """Startup and profile switch: the look, plus where the windows were."""
+        self._apply_edition()
         self._apply_features()
         settings = self._database.get_all_settings()
         self._apply_appearance(settings)

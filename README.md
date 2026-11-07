@@ -116,7 +116,7 @@ Every 10 deaths your skull earns something new: horns, a nose ring, blades, a cr
 - **Overlay designs:** besides the classic card, four complete looks drawn by the app: **Kanji Seal** (a red 死 seal), **Neon Sign** (glowing neon tubes and a neon skull), **Tombstone** (an R.I.P. gravestone with candles, a pumpkin and a ghost) and **Death Banner** (a gothic title with ornate swirls). Pick one in Settings → Overlay or the overlay's right-click menu; it shows the same in the OBS Browser Source. No image files: they stay sharp at any size.
 - **Backgrounds:** card, green screen (for OBS Chroma Key), **transparent** (just the text floating over your game) or your own image.
 - **Overlay settings** (Settings → Overlay): font, number size and colour, the **death word** (DEATH, TRIES, or none) with its **own colour and size**, before or after the number, what goes between them (-, :, ×, ·, | or nothing), bold, letter spacing, skull size, space inside the card, alignment, card border and roundness, which lines show, always on top, lock position, and click-through (turn it off from the tray menu).
-- **Multi-monitor:** move the overlay to any display. Windows come back on-screen if a monitor is unplugged.
+- **Multi-monitor:** move the overlay to any display. The overlay and timer window remember their place and size as soon as you move them; if their monitor isn't on yet when the app starts, they go back once it is. Watching a whole display, F8 on a death screen switches to the monitor the game is on.
 
 ### 📊 Tracking & stats
 - **The big number shows the game's all-time deaths** by default. Click the caption under it (or right-click the overlay) to show this session's, this boss's or **this speedrun run's** deaths instead; the counter, the overlay and mini mode follow.
@@ -152,11 +152,14 @@ The **Console** page (sidebar) makes DUDC work when the game runs on a console:
 - **You always see what happened:** adding, renaming or deleting games and bosses, resets, exact counts, saves, detection changes and more each show a short message in the window.
 - **Saving is automatic:** every death is saved the moment it happens, and a full save file follows shortly after any change and when you close (*✓ Auto-saved* at the top shows when). **Save Progress** only makes an extra copy.
 - **Found a bug?** The bug icon writes a report you can paste into the **[bug sheet](https://docs.google.com/spreadsheets/d/1pvzlu8mhHzvvKCHb-E5NDlmtqT-gW0ZHRZUMq2xmtaw/edit?usp=sharing)** (⋮ → Bug Sheet), or open it on GitHub.
-- **Only what you use:** switch off the speedrun timer, Stats, the Console page or mini mode in **Settings → General → Features**. They disappear from the sidebar, menus and tray, their keys are freed (the timer's number-pad keys go back to other apps) and their background work stops. Your data stays, and switching one back on brings it all back.
+- **Choose at install: everything, the death counter only, or the speedrun timer only.** Change it any time in Settings → General → Features (it's never asked again on updates).
+- **Only what you use:** switch off the death counter, the speedrun timer, Stats, the Console page or mini mode in **Settings → General → Features**. They disappear from the sidebar, menus and tray, their keys are freed (the timer's number-pad keys go back to other apps) and their background work stops. Your data stays, and switching one back on brings it all back.
 - **Mini mode:** a tiny always-on-top window with the count, +1 and Undo, for one-monitor setups. Sidebar or tray.
 - **Right-click the Game or Boss box** to rename it or mark the boss defeated, without opening Games & Bosses.
 - **Tray menu** has +1, Undo, Boss Defeated, pause detection, start/split the timer, the timer window, mini mode and the overlay.
 - **One place for everything:** pages and tools in the sidebar (Settings is a page too, not a separate window), profiles and saves at the top right. No duplicated menus.
+- **Keeps counting in the background:** closing asks whether to keep counting in the tray, so F9 / F10, the overlay and auto-detect keep working. Settings → Controls shows a key check: press a key anywhere (even in a game) and it shows when the app gets it.
+- **Roll back:** ⋮ → *Roll Back to an Earlier Version…* installs an older release if an update gave you trouble (your data stays).
 - **One-click updates:** the card at the bottom of the sidebar shows whether you are up to date (checked at startup, every 6 hours, or with its refresh button). When a new version is out, click **Update**: the installed app downloads it, updates itself and reopens. (Portable copies, Mac and Linux open the download page.)
 - Deleting a game tells you exactly what goes with it (deaths, bosses, sessions, runs).
 

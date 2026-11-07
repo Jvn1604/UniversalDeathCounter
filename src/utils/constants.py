@@ -216,11 +216,15 @@ SETTING_CONFIRM_CLOSE: str = "confirm_close"
 # Features the player can switch off (Settings → General → Features): hidden
 # from the sidebar, menus and tray, their keys freed and their work stopped.
 # Turning one back on brings it all back; no data is removed.
+SETTING_FEATURE_COUNTER: str = "feature_counter"  # off: a speedrun timer only
 SETTING_FEATURE_TIMER: str = "feature_timer"
 SETTING_FEATURE_STATS: str = "feature_stats"
 SETTING_FEATURE_CONSOLE: str = "feature_console"
 SETTING_FEATURE_MINI: str = "feature_mini"
 FEATURES: tuple[tuple[str, str, str], ...] = (
+    (SETTING_FEATURE_COUNTER, "Death counter",
+     "Death Counter page, Home dashboard, Stats, overlay, mini mode and the counting "
+     "keys. Switched off, DUDC is a speedrun timer."),
     (SETTING_FEATURE_TIMER, "Speedrun timer",
      "Timer page, timer window and the timer keys (Num 1 and others go back to "
      "other apps)."),
@@ -229,6 +233,14 @@ FEATURES: tuple[tuple[str, str, str], ...] = (
      "Console page: phone remote and reading a capture card from OBS."),
     (SETTING_FEATURE_MINI, "Mini mode", "The tiny always-on-top counter window."),
 )
+# The installer's choice (edition.txt next to the app): what to show, applied
+# once per choice. "all", "counter" (death counter only) or "speedrun".
+EDITIONS: dict[str, dict[str, str]] = {
+    "all": {SETTING_FEATURE_COUNTER: "true", SETTING_FEATURE_TIMER: "true"},
+    "counter": {SETTING_FEATURE_COUNTER: "true", SETTING_FEATURE_TIMER: "false"},
+    "speedrun": {SETTING_FEATURE_COUNTER: "false", SETTING_FEATURE_TIMER: "true"},
+}
+SETTING_EDITION_APPLIED: str = "edition_applied"
 SETTING_SIDEBAR_COLLAPSED: str = "sidebar_collapsed"
 SETTING_GAME_ARTWORK: str = "game_artwork"  # "true" = faded game banner behind the cards
 SETTING_CHECK_UPDATES: str = "check_updates"

@@ -123,3 +123,51 @@ def test_the_sidebar_follows_the_ticks_before_saving(window) -> None:
     assert not window._nav_buttons[_PAGE_TIMER].isVisibleTo(window)  # right away
     settings.reload()  # Discard Changes
     assert window._nav_buttons[_PAGE_TIMER].isVisibleTo(window)
+
+
+def test_speedrun_timer_only(window) -> None:
+    from src.ui.main_window import _PAGE_COUNTER, _PAGE_HOME, _PAGE_STATS, _PAGE_TIMER
+    from src.utils.constants import SETTING_FEATURE_COUNTER
+
+    window._toggle_overlay()
+    _switch(window, SETTING_FEATURE_COUNTER, False)
+    for page in (_PAGE_HOME, _PAGE_COUNTER, _PAGE_STATS):
+        assert not window._nav_buttons[page].isVisibleTo(window)
+    assert not window._overlay_nav.isVisibleTo(window) and not window._mini_nav.isVisibleTo(window)
+    assert not window._overlay_active()
+    assert window._pages.currentIndex() == _PAGE_TIMER
+    keys = window._registered_bindings()
+    assert keys["increment_key"] == "" and keys["undo_key"] == ""
+    assert keys["timer_split_key"]  # the timer's keys stay
+    _switch(window, SETTING_FEATURE_COUNTER, True)
+    assert window._nav_buttons[_PAGE_HOME].isVisibleTo(window)
+
+
+def test_the_installers_choice_is_applied_once(window, tmp_path, monkeypatch) -> None:
+    import src.ui.main_window as mw
+    from src.utils.constants import SETTING_FEATURE_COUNTER
+
+    edition = tmp_path / "edition.txt"
+    monkeypatch.setattr(mw, "edition_file", lambda: edition)
+    edition.write_text("speedrun")
+    window._apply_edition()
+    assert not window._feature_on(SETTING_FEATURE_COUNTER)
+    assert window._feature_on(SETTING_FEATURE_TIMER)
+    window._database.set_setting(SETTING_FEATURE_COUNTER, "true")  # changed in Settings later
+    window._apply_edition()  # an update writes the same choice again
+    assert window._feature_on(SETTING_FEATURE_COUNTER)  # the player's change sticks
+    edition.write_text("counter")  # installed again, choosing differently
+    window._apply_edition()
+    assert not window._feature_on(SETTING_FEATURE_TIMER)
+
+
+def test_counter_and_timer_cant_both_be_off(window) -> None:
+    from src.ui.main_window import _PAGE_SETTINGS
+    from src.utils.constants import SETTING_FEATURE_COUNTER
+
+    window._show_page(_PAGE_SETTINGS)
+    checks = window._settings._feature_checks
+    checks[SETTING_FEATURE_TIMER].setChecked(False)
+    checks[SETTING_FEATURE_COUNTER].setChecked(False)
+    assert checks[SETTING_FEATURE_TIMER].isChecked()  # turned back on
+    window._settings.reload()

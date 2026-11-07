@@ -64,6 +64,7 @@ from src.utils.constants import (
     SETTING_DEATHS_TXT_ENABLED,
     SETTING_DEATHS_TXT_PATH,
     SETTING_DEATHS_TXT_TEMPLATE,
+    SETTING_FEATURE_COUNTER,
     SETTING_FEATURE_TIMER,
     SETTING_GAME_ARTWORK,
     SETTING_MINIMIZE_TO_TRAY,
@@ -538,6 +539,11 @@ class SettingsWindow(QDialog):
 
         # --- Streaming (deaths.txt) ---
         self._feature_checks[SETTING_FEATURE_TIMER].toggled.connect(self._show_timer_settings)
+        # The death counter and the timer can't both be off: there'd be nothing left.
+        counter_check = self._feature_checks[SETTING_FEATURE_COUNTER]
+        timer_check = self._feature_checks[SETTING_FEATURE_TIMER]
+        counter_check.toggled.connect(lambda on: on or timer_check.setChecked(True))
+        timer_check.toggled.connect(lambda on: on or counter_check.setChecked(True))
         for check in self._feature_checks.values():
             check.toggled.connect(
                 lambda _on: self.features_previewed.emit(

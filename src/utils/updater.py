@@ -35,6 +35,13 @@ class UpdateError(Exception):
     """The update couldn't be downloaded or started."""
 
 
+def edition_file(executable: Path | None = None) -> Path | None:
+    """Where the installer writes its choice (everything / counter / speedrun), or None."""
+    if executable is None and not getattr(sys, "frozen", False):
+        return None
+    return (executable or Path(sys.executable)).resolve().parent / "edition.txt"
+
+
 def is_installed_copy(executable: Path | None = None) -> bool:
     """Whether this is the installed app (which has an uninstaller), not portable or source."""
     if executable is None:
