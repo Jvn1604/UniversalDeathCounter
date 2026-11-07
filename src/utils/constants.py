@@ -22,7 +22,7 @@ APP_BRAND: str = "DePhantom"  # big header text; APP_SUBTITLE goes underneath
 APP_SUBTITLE: str = "Universal Death Counter (DUDC)"
 # APP_ORG (below), the exe name and the data folder intentionally keep the
 # old internal name, so existing installs upgrade in place and keep data.
-APP_VERSION: str = "2.17.0"
+APP_VERSION: str = "2.19.0"
 APP_ORG: str = "UniversalDeathCounter"
 
 # GitHub repository ("owner/repo") used by the update checker. Edit this
@@ -159,7 +159,15 @@ SETTING_OVERLAY_CARD_COLOR: str = "overlay_card_color"  # "" = near-black
 SETTING_OVERLAY_SECONDARY_COLOR: str = "overlay_secondary_color"  # "" = automatic
 SETTING_OVERLAY_BG_IMAGE: str = "overlay_background_image"  # used by the "image" background
 SETTING_OVERLAY_CORNER_RADIUS: str = "overlay_corner_radius"
-SETTING_OVERLAY_TEXT_OUTLINE: str = "overlay_text_outline"  # "true" = shadow behind text
+# The text's edge: "outline" (solid black, readable on bright scenes), "true"
+# (a soft shadow, the older choice) or "false" (none).
+SETTING_OVERLAY_TEXT_OUTLINE: str = "overlay_text_outline"
+DEFAULT_TEXT_EDGE: str = "outline"
+TEXT_EDGES: tuple[tuple[str, str], ...] = (
+    ("outline", "Black outline (readable on bright scenes)"),
+    ("true", "Soft shadow"),
+    ("false", "None"),
+)
 SETTING_OVERLAY_COUNTER_SOURCE: str = "overlay_counter_source"  # session|boss|total
 # The big number shows the game's all-time deaths unless the player picks
 # otherwise: a session restarts at 0, which looked like lost deaths.
@@ -193,6 +201,11 @@ BUG_SHEET_URL: str = (
 SETTING_SAVE_DEATHS_PREFIX: str = "save_deaths_"
 # Overlay design: "classic" or one drawn in src/overlay/designs.py.
 SETTING_OVERLAY_DESIGN: str = "overlay_design"
+# A drawn design's own touches ("" = the design's own colour / font).
+SETTING_OVERLAY_DESIGN_ACCENT: str = "overlay_design_accent"
+SETTING_OVERLAY_DESIGN_NUMBER: str = "overlay_design_number"
+SETTING_OVERLAY_DESIGN_WORD: str = "overlay_design_word"
+SETTING_OVERLAY_DESIGN_FONT: str = "overlay_design_font"
 SETTING_STREAM_OVERLAY: str = "stream_overlay"  # "true" = OBS Browser Source page is served
 # Console players
 SETTING_PHONE_REMOTE: str = "phone_remote_enabled"  # "true" = serve the phone page
@@ -216,11 +229,15 @@ SETTING_CONFIRM_CLOSE: str = "confirm_close"
 # Features the player can switch off (Settings → General → Features): hidden
 # from the sidebar, menus and tray, their keys freed and their work stopped.
 # Turning one back on brings it all back; no data is removed.
+SETTING_FEATURE_COUNTER: str = "feature_counter"  # off: a speedrun timer only
 SETTING_FEATURE_TIMER: str = "feature_timer"
 SETTING_FEATURE_STATS: str = "feature_stats"
 SETTING_FEATURE_CONSOLE: str = "feature_console"
 SETTING_FEATURE_MINI: str = "feature_mini"
 FEATURES: tuple[tuple[str, str, str], ...] = (
+    (SETTING_FEATURE_COUNTER, "Death counter",
+     "Death Counter page, Home dashboard, Stats, overlay, mini mode and the counting "
+     "keys. Switched off, DUDC is a speedrun timer."),
     (SETTING_FEATURE_TIMER, "Speedrun timer",
      "Timer page, timer window and the timer keys (Num 1 and others go back to "
      "other apps)."),
@@ -229,6 +246,14 @@ FEATURES: tuple[tuple[str, str, str], ...] = (
      "Console page: phone remote and reading a capture card from OBS."),
     (SETTING_FEATURE_MINI, "Mini mode", "The tiny always-on-top counter window."),
 )
+# The installer's choice (edition.txt next to the app): what to show, applied
+# once per choice. "all", "counter" (death counter only) or "speedrun".
+EDITIONS: dict[str, dict[str, str]] = {
+    "all": {SETTING_FEATURE_COUNTER: "true", SETTING_FEATURE_TIMER: "true"},
+    "counter": {SETTING_FEATURE_COUNTER: "true", SETTING_FEATURE_TIMER: "false"},
+    "speedrun": {SETTING_FEATURE_COUNTER: "false", SETTING_FEATURE_TIMER: "true"},
+}
+SETTING_EDITION_APPLIED: str = "edition_applied"
 SETTING_SIDEBAR_COLLAPSED: str = "sidebar_collapsed"
 SETTING_GAME_ARTWORK: str = "game_artwork"  # "true" = faded game banner behind the cards
 SETTING_CHECK_UPDATES: str = "check_updates"

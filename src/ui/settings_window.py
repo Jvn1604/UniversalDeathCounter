@@ -55,6 +55,7 @@ from src.utils.backgrounds import IMAGE_FILTER, import_background
 from src.utils.constants import (
     CONTROL_ACTIONS,
     DEFAULT_COUNTER_SOURCE,
+    DEFAULT_TEXT_EDGE,
     FEATURES,
     SETTING_BOSS_AUTO_ADVANCE,
     SETTING_BOSS_AUTO_SPLIT,
@@ -64,6 +65,7 @@ from src.utils.constants import (
     SETTING_DEATHS_TXT_ENABLED,
     SETTING_DEATHS_TXT_PATH,
     SETTING_DEATHS_TXT_TEMPLATE,
+    SETTING_FEATURE_COUNTER,
     SETTING_FEATURE_TIMER,
     SETTING_GAME_ARTWORK,
     SETTING_MINIMIZE_TO_TRAY,
@@ -78,6 +80,10 @@ from src.utils.constants import (
     SETTING_OVERLAY_COUNT_LABEL,
     SETTING_OVERLAY_COUNTER_SOURCE,
     SETTING_OVERLAY_DESIGN,
+    SETTING_OVERLAY_DESIGN_ACCENT,
+    SETTING_OVERLAY_DESIGN_FONT,
+    SETTING_OVERLAY_DESIGN_NUMBER,
+    SETTING_OVERLAY_DESIGN_WORD,
     SETTING_OVERLAY_FONT,
     SETTING_OVERLAY_FONT_SIZE,
     SETTING_OVERLAY_LETTER_SPACING,
@@ -112,6 +118,7 @@ from src.utils.constants import (
     SETTING_UI_COUNTER_COLOR,
     SETTING_UI_FONT,
     SETTING_UI_TEXT_COLOR,
+    TEXT_EDGES,
     pad_setting,
 )
 from src.utils.logger import get_logger
@@ -383,13 +390,19 @@ class SettingsWindow(QDialog):
         self.setWindowTitle("Settings")
         if not embedded:
             self.setMinimumSize(720, 620)  # all five tabs fit side by side
+        # Save / Discard light up only once something differs from what's saved.
+        self._dirty_timer = QTimer(self)
+        self._dirty_timer.setSingleShot(True)
+        self._dirty_timer.setInterval(120)
+        self._dirty_timer.timeout.connect(self._update_save_buttons)
         self._build_ui()
         self._load_current_values()
         self._connect_preview()
+        self._watch_changes()
         self._tabs.setCurrentIndex(tab)
         self._space_out()
         guard_wheel(self)
-        self._baseline = self._state()
+        self._reset_baseline()
 
     # ----------------------------------------------------------------
     # Embedded page: unsaved changes
@@ -435,6 +448,38 @@ class SettingsWindow(QDialog):
     def has_changes(self) -> bool:
         return self._state() != self._baseline
 
+    def _reset_baseline(self) -> None:
+        """What the controls show now is what's saved."""
+        self._baseline = self._state()
+        self._update_save_buttons()
+
+    def _watch_changes(self) -> None:
+        """Every control: a change rechecks whether there's anything to save."""
+        later = self._dirty_timer.start
+        for widget in self.findChildren(QWidget):
+            if isinstance(widget, QCheckBox):
+                widget.toggled.connect(later)
+            elif isinstance(widget, QComboBox):
+                widget.currentIndexChanged.connect(later)
+            elif isinstance(widget, (QSpinBox, QDoubleSpinBox, QSlider)):
+                widget.valueChanged.connect(later)
+            elif isinstance(widget, QKeySequenceEdit):
+                widget.keySequenceChanged.connect(later)
+            elif isinstance(widget, QLineEdit) and not isinstance(
+                widget.parent(), (QSpinBox, QDoubleSpinBox, QComboBox, QKeySequenceEdit)
+            ):
+                widget.textChanged.connect(later)
+
+    def _update_save_buttons(self) -> None:
+        changed = self.has_changes()
+        self._save_button.setEnabled(changed)
+        self._apply_button.setEnabled(changed)
+        if self._embedded:  # in the dialog it's Cancel, which always closes it
+            self._cancel_button.setEnabled(changed)
+        tip = "" if changed else "Nothing changed yet."
+        for button in (self._save_button, self._apply_button):
+            button.setToolTip(tip or button.property("own_tip") or "")
+
     def reload(self) -> None:
         """Show what's saved (e.g. changed from the overlay menu meanwhile)."""
         self._preview_timer.stop()
@@ -443,7 +488,7 @@ class SettingsWindow(QDialog):
         if self.previewed:
             self.preview_changed.emit({})
             self.previewed = False
-        self._baseline = self._state()
+        self._reset_baseline()
 
     def reload_if_changed(self) -> None:
         """Reload only when a setting changed elsewhere (reloading every visit is slow)."""
@@ -538,6 +583,11 @@ class SettingsWindow(QDialog):
 
         # --- Streaming (deaths.txt) ---
         self._feature_checks[SETTING_FEATURE_TIMER].toggled.connect(self._show_timer_settings)
+        # The death counter and the timer can't both be off: there'd be nothing left.
+        counter_check = self._feature_checks[SETTING_FEATURE_COUNTER]
+        timer_check = self._feature_checks[SETTING_FEATURE_TIMER]
+        counter_check.toggled.connect(lambda on: on or timer_check.setChecked(True))
+        timer_check.toggled.connect(lambda on: on or counter_check.setChecked(True))
         for check in self._feature_checks.values():
             check.toggled.connect(
                 lambda _on: self.features_previewed.emit(
@@ -573,14 +623,16 @@ class SettingsWindow(QDialog):
         buttons = QHBoxLayout()
         hint = QLabel("Looks change live as you edit; nothing is kept until you save.")
         hint.setObjectName("Muted")
-        cancel_button = QPushButton("Discard Changes" if self._embedded else "Cancel")
+        cancel_button = self._cancel_button = QPushButton(
+            "Discard Changes" if self._embedded else "Cancel"
+        )
         cancel_button.setObjectName("GhostButton")
         cancel_button.clicked.connect(self.reject)
-        apply_button = QPushButton("Apply")
-        apply_button.setToolTip("Save without closing Settings.")
+        apply_button = self._apply_button = QPushButton("Apply")
+        apply_button.setProperty("own_tip", "Save without closing Settings.")
         apply_button.clicked.connect(self._apply)
         apply_button.setVisible(not self._embedded)  # Save already keeps the page open
-        save_button = QPushButton(" Save")
+        save_button = self._save_button = QPushButton(" Save")
         save_button.setObjectName("AccentButton")
         icons.set_icon(save_button, "check", icons.ACCENT, size=16)
         save_button.setMinimumWidth(120)
@@ -680,14 +732,32 @@ class SettingsWindow(QDialog):
         for value, label in DESIGNS:
             self._design_combo.addItem(label, userData=value)
         design_form.addRow("Design", self._design_combo)
+        # A drawn design's own touches (hidden for the Classic card, which uses
+        # the Background and Text settings below).
+        self._design_accent = _ColorChoice("Design Accent Color", default_label="Design's own")
+        self._design_accent.setToolTip(
+            "Seal, neon frame, gravestone or banner swirls and skull."
+        )
+        self._design_number = _ColorChoice("Design Number Color", default_label="Design's own")
+        self._design_word = _ColorChoice("Design Word Color", default_label="Design's own")
+        self._design_font_combo = _font_combo("Design's own font")
+        self._design_rows = []
+        for label, widget in (("Accent color", self._design_accent),
+                              ("Number color", self._design_number),
+                              ("Word color", self._design_word),
+                              ("Font", self._design_font_combo)):
+            design_form.addRow(label, widget)
+            self._design_rows.append((design_form.labelForField(widget), widget))
         design_note = QLabel(
             "Classic card uses everything below. The other designs are complete looks "
             "of their own: they show the count with your death word (DEATH shows as "
-            "\"Deaths\"), on the overlay and in the OBS Browser Source."
+            "\"Deaths\"), on the overlay and in the OBS Browser Source. Colour them "
+            "and pick their font above."
         )
         design_note.setObjectName("Muted")
         design_note.setWordWrap(True)
         design_form.addRow(design_note)
+        self._design_combo.currentIndexChanged.connect(self._show_design_rows)
         layout.addWidget(design_group)
 
         overlay_group = QGroupBox("Background")
@@ -740,8 +810,11 @@ class SettingsWindow(QDialog):
         text_form.addRow("Number color", color_row)
         self._secondary_color = _ColorChoice("Overlay Text Color", default_label="Auto")
         text_form.addRow("Other text color", self._secondary_color)
-        self._outline_check = QCheckBox("Shadow behind text (readable over images)")
-        text_form.addRow(self._outline_check)
+        self._text_edge_combo = QComboBox()
+        for value, label in TEXT_EDGES:
+            self._text_edge_combo.addItem(label, userData=value)
+        self._text_edge_combo.setToolTip("Keeps light text readable over bright game scenes.")
+        text_form.addRow("Text edge", self._text_edge_combo)
         self._count_label_edit = QLineEdit()
         self._count_label_edit.setPlaceholderText("Empty: just the number")
         self._count_label_edit.setMaxLength(24)
@@ -833,6 +906,8 @@ class SettingsWindow(QDialog):
             self._bg_mode_combo,
             self._overlay_font_combo,
             self._design_combo,
+            self._design_font_combo,
+            self._text_edge_combo,
         ):
             combo.currentIndexChanged.connect(self._schedule_preview)
         self._align_combo.currentIndexChanged.connect(self._schedule_preview)
@@ -852,6 +927,9 @@ class SettingsWindow(QDialog):
             self._secondary_color,
             self._ui_bg_image,
             self._overlay_image,
+            self._design_accent,
+            self._design_number,
+            self._design_word,
         ):
             choice.changed.connect(self._schedule_preview)
         self._ui_bg_dim.valueChanged.connect(self._schedule_preview)
@@ -860,7 +938,6 @@ class SettingsWindow(QDialog):
         self._radius_spin.valueChanged.connect(self._schedule_preview)
         self._font_size_spin.valueChanged.connect(self._schedule_preview)
         for check in (
-            self._outline_check,
             self._show_game_check,
             self._show_boss_check,
             self._show_stats_check,
@@ -871,7 +948,15 @@ class SettingsWindow(QDialog):
             check.toggled.connect(self._schedule_preview)
         self._update_overlay_preview()
 
+    def _show_design_rows(self, *_args) -> None:
+        """The design's colour and font rows: only for a drawn design."""
+        drawn = self._design_combo.currentData() != "classic"
+        for label, widget in self._design_rows:
+            label.setVisible(drawn)
+            widget.setVisible(drawn)
+
     def _schedule_preview(self, *_args) -> None:
+        self._dirty_timer.start()  # colours, images and themes change looks too
         self._update_overlay_preview()
         self._preview_timer.start()
 
@@ -903,9 +988,13 @@ class SettingsWindow(QDialog):
             SETTING_OVERLAY_CORNER_RADIUS: str(self._radius_spin.value()),
             SETTING_OVERLAY_FONT: self._overlay_font_combo.currentData() or "",
             SETTING_OVERLAY_SECONDARY_COLOR: self._secondary_color.color(),
-            SETTING_OVERLAY_TEXT_OUTLINE: flag(self._outline_check),
+            SETTING_OVERLAY_TEXT_OUTLINE: self._text_edge_combo.currentData(),
             SETTING_OVERLAY_BG_MODE: self._bg_mode_combo.currentData(),
             SETTING_OVERLAY_DESIGN: self._design_combo.currentData(),
+            SETTING_OVERLAY_DESIGN_ACCENT: self._design_accent.color(),
+            SETTING_OVERLAY_DESIGN_NUMBER: self._design_number.color(),
+            SETTING_OVERLAY_DESIGN_WORD: self._design_word.color(),
+            SETTING_OVERLAY_DESIGN_FONT: self._design_font_combo.currentData() or "",
             SETTING_OVERLAY_COUNTER_SOURCE: self._counter_source_combo.currentData(),
             SETTING_OVERLAY_TEXT_COLOR: self._text_color,
             SETTING_OVERLAY_FONT_SIZE: str(self._font_size_spin.value()),
@@ -987,7 +1076,20 @@ class SettingsWindow(QDialog):
             note_label.setWordWrap(True)
             layout.addWidget(note_label)
 
+        self._last_key_label = QLabel(
+            "Key check: press one of your keys anywhere, even in a game. It shows here "
+            "when the app receives it. Nothing shows on a laptop? Its F keys may be "
+            "brightness/volume keys: hold Fn with them (or turn on Fn Lock, often Fn+Esc)."
+        )
+        self._last_key_label.setObjectName("Muted")
+        self._last_key_label.setWordWrap(True)
+        layout.addWidget(self._last_key_label)
+
         grid = QGridLayout()
+        grid.setVerticalSpacing(8)
+        grid.setHorizontalSpacing(10)
+        grid.setColumnStretch(1, 3)
+        grid.setColumnStretch(3, 2)
         for column, title in enumerate(("Action", "Keyboard", "", "Controller", "", "")):
             header = QLabel(title)
             header.setStyleSheet("font-weight: 600;")
@@ -1001,6 +1103,7 @@ class SettingsWindow(QDialog):
             grid.addWidget(QLabel(label), row, 0)
 
             key_edit = QKeySequenceEdit()
+            key_edit.setMinimumHeight(34)
             key_edit.setMaximumSequenceLength(1)
             key_edit.keySequenceChanged.connect(self._refresh_conflicts)
             self._key_edits[action] = key_edit
@@ -1008,7 +1111,7 @@ class SettingsWindow(QDialog):
             clear_key = QPushButton()
             icons.set_icon(clear_key, "x", size=14)
             clear_key.setToolTip("Clear keyboard binding")
-            clear_key.setFixedWidth(36)
+            clear_key.setFixedSize(36, 34)
             clear_key.setStyleSheet("padding: 0;")
             clear_key.clicked.connect(key_edit.clear)
             grid.addWidget(clear_key, row, 2)
@@ -1019,13 +1122,14 @@ class SettingsWindow(QDialog):
             self._pad_labels[action] = pad_label
             grid.addWidget(pad_label, row, 3)
             record = QPushButton("Record")
+            record.setMinimumHeight(34)
             record.clicked.connect(lambda _=False, a=action: self._start_recording(a))
             self._record_buttons[action] = record
             grid.addWidget(record, row, 4)
             clear_pad = QPushButton()
             icons.set_icon(clear_pad, "x", size=14)
             clear_pad.setToolTip("Clear controller binding")
-            clear_pad.setFixedWidth(36)
+            clear_pad.setFixedSize(36, 34)
             clear_pad.setStyleSheet("padding: 0;")
             clear_pad.clicked.connect(lambda _=False, a=action: self._set_pad(a, ""))
             grid.addWidget(clear_pad, row, 5)
@@ -1049,7 +1153,13 @@ class SettingsWindow(QDialog):
             self._gamepad.combo_recorded.connect(self._on_combo_recorded)
             self._gamepad.connection_changed.connect(self._update_pad_status)
         self._update_pad_status()
-        return page
+        # Scrolls like the other tabs: 14 rows squeezed into the window cut the
+        # key boxes in half.
+        return self._scrolling(page)
+
+    def show_key_received(self, text: str) -> None:
+        """The main window got a key press: proof the key reaches the app."""
+        self._last_key_label.setText(text)
 
     # ----------------------------------------------------------------
     # Controller binding helpers
@@ -1068,6 +1178,7 @@ class SettingsWindow(QDialog):
         self._pad_labels[action].setText(combo_label(combo) or "Not set")
         self._pad_labels[action].setToolTip(combo_label(combo))
         self._refresh_conflicts()
+        self._dirty_timer.start()
 
     def _start_recording(self, action: str) -> None:
         if self._gamepad is None or not self._gamepad.connected:
@@ -1187,9 +1298,8 @@ class SettingsWindow(QDialog):
         self._radius_spin.setValue(int(settings.get(SETTING_OVERLAY_CORNER_RADIUS, "12") or 12))
         _select_data(self._overlay_font_combo, settings.get(SETTING_OVERLAY_FONT, ""))
         self._secondary_color.set_color(settings.get(SETTING_OVERLAY_SECONDARY_COLOR, ""))
-        self._outline_check.setChecked(
-            settings.get(SETTING_OVERLAY_TEXT_OUTLINE, "false") == "true"
-        )
+        edge = settings.get(SETTING_OVERLAY_TEXT_OUTLINE, DEFAULT_TEXT_EDGE)
+        _select_data(self._text_edge_combo, edge if edge in ("outline", "true") else "false")
         self._confirm_close_check.setChecked(
             settings.get(SETTING_CONFIRM_CLOSE, "true") == "true"
         )
@@ -1208,6 +1318,11 @@ class SettingsWindow(QDialog):
 
         _select_data(self._bg_mode_combo, settings.get(SETTING_OVERLAY_BG_MODE, "dark"))
         _select_data(self._design_combo, settings.get(SETTING_OVERLAY_DESIGN, "classic"))
+        self._design_accent.set_color(settings.get(SETTING_OVERLAY_DESIGN_ACCENT, ""))
+        self._design_number.set_color(settings.get(SETTING_OVERLAY_DESIGN_NUMBER, ""))
+        self._design_word.set_color(settings.get(SETTING_OVERLAY_DESIGN_WORD, ""))
+        _select_data(self._design_font_combo, settings.get(SETTING_OVERLAY_DESIGN_FONT, ""))
+        self._show_design_rows()
         _select_data(
             self._counter_source_combo,
             settings.get(SETTING_OVERLAY_COUNTER_SOURCE, DEFAULT_COUNTER_SOURCE),
@@ -1347,7 +1462,7 @@ class SettingsWindow(QDialog):
         self.settings_changed.emit()
         self.saved.emit(before)
         self.previewed = False  # what's shown is what's saved now
-        self._baseline = self._state()
+        self._reset_baseline()
         return True
 
     def reject(self) -> None:  # noqa: D102 - stop a pending preview first

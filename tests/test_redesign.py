@@ -110,7 +110,7 @@ def test_one_home_per_function(window) -> None:
     more = [a.text() for a in window._more_menu.actions() if a.text()]
     assert more == [
         "Save Progress…", "Load Save…", "Error Log…", "Bug Sheet (report or see known bugs)",
-        "About", "Clear All Data…", "Quit",
+        "About", "Roll Back to an Earlier Version…", "Clear All Data…", "Quit",
     ]
     assert window._credit._url == "https://www.youtube.com/@ImDePhantom"
 

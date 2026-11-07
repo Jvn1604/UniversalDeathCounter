@@ -54,6 +54,51 @@ Name: "{group}\{#AppName}"; Filename: "{app}\{#AppExeName}"
 Name: "{group}\Uninstall {#AppName}"; Filename: "{uninstallexe}"
 Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExeName}"; Tasks: desktopicon
 
+[Code]
+{ What to show: everything, the death counter only, or the speedrun timer only.
+  Written to edition.txt; the app applies it once (Settings changes it later).
+  Updates keep the previous answer. }
+var
+  EditionPage: TInputOptionWizardPage;
+
+procedure InitializeWizard;
+begin
+  EditionPage := CreateInputOptionPage(wpSelectTasks,
+    'What do you want to use?',
+    'You can change this any time in Settings, General, Features.',
+    'DUDC shows only what you pick:', True, False);
+  EditionPage.Add('Everything: death counter and speedrun timer');
+  EditionPage.Add('Death counter only');
+  EditionPage.Add('Speedrun timer only');
+  case GetPreviousData('Edition', 'all') of
+    'counter': EditionPage.SelectedValueIndex := 1;
+    'speedrun': EditionPage.SelectedValueIndex := 2;
+  else
+    EditionPage.SelectedValueIndex := 0;
+  end;
+end;
+
+function EditionValue: String;
+begin
+  case EditionPage.SelectedValueIndex of
+    1: Result := 'counter';
+    2: Result := 'speedrun';
+  else
+    Result := 'all';
+  end;
+end;
+
+procedure RegisterPreviousData(PreviousDataKey: Integer);
+begin
+  SetPreviousData(PreviousDataKey, 'Edition', EditionValue);
+end;
+
+procedure CurStepChanged(CurStep: TSetupStep);
+begin
+  if CurStep = ssPostInstall then
+    SaveStringToFile(ExpandConstant('{app}\edition.txt'), EditionValue, False);
+end;
+
 [Run]
 Filename: "{app}\{#AppExeName}"; Description: "Launch {#AppName}"; Flags: nowait postinstall skipifsilent
 ; In-app updates run the installer silently: reopen the app afterwards, as

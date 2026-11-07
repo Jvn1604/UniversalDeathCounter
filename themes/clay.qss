@@ -312,14 +312,14 @@ QLabel#StatusPill[state="warning"] {
 }
 
 QLabel#KeyCap {
-    background-color: rgba(46, 34, 120, 0.036);
-    border: 1px solid rgba(46, 34, 120, 0.084);
-    border-bottom: 2px solid rgba(46, 34, 120, 0.120);
+    background-color: #ffffff;
+    border: 1px solid #c9ccd6;
+    border-bottom: 3px solid #aeb2bf;
     border-radius: 6px;
-    padding: 1px 7px;
-    font-size: 11px;
-    font-weight: 700;
-    color: #4e4b73;
+    padding: 2px 9px;
+    font-size: 12px;
+    font-weight: 800;
+    color: #1e2145;
 }
 
 QLabel#GuideBadge {
@@ -383,27 +383,29 @@ QPushButton#AccentButton QLabel {
 }
 
 QPushButton#AccentButton QLabel#KeyCap {
-    background-color: rgba(0, 0, 0, 0.14);
-    border: 1px solid rgba(255, 255, 255, 0.35);
-    border-bottom: 2px solid rgba(255, 255, 255, 0.45);
-    color: #ffffff;
+    background-color: #ffffff;
+    border: 1px solid #ffd3d9;
+    border-bottom: 3px solid #ffb3be;
+    color: #cc1734;
 }
 
 /* Greyed out (e.g. no game yet): the accent and the big buttons too, whose
-   text and key are child labels. */
+   text and key are child labels (disabled with their button). The state is
+   on the label, not "a label in a disabled button": Qt doesn't recheck that
+   when the button turns back on, and the labels stayed grey. */
 QPushButton#AccentButton:disabled {
     background-color: #f3f0fd;
     color: #a5a9b4;
     border: 1px solid #e6e0f8;
 }
 
-QPushButton:disabled QLabel,
-QPushButton:disabled QLabel#KeyCap {
+QPushButton QLabel:disabled,
+QPushButton QLabel#KeyCap:disabled {
     color: #a5a9b4;
 }
 
-QPushButton#AccentButton:disabled QLabel,
-QPushButton#AccentButton:disabled QLabel#KeyCap,
+QPushButton#AccentButton QLabel:disabled,
+QPushButton#AccentButton QLabel#KeyCap:disabled,
 QPushButton#GhostButton:disabled,
 QPushButton#DangerButton:disabled {
     color: #a5a9b4;

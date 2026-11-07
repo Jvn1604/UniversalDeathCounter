@@ -80,9 +80,12 @@ def test_far_apart_regions_are_captured_separately() -> None:
 def test_matchers_report_what_they_read() -> None:
     frame = (np.random.default_rng(0).random((200, 300, 3)) * 255).astype(np.uint8)
     template = TemplateMatcher(DeathTemplate.from_frame(frame, REGION))
-    assert template.regions() == [REGION]
+    (x, y, w, h), = template.regions()  # the region and room to look around it
+    rx, ry, rw, rh = REGION
+    assert x < rx and y < ry and x + w > rx + rw and y + h > ry + rh
+    assert w < rw * 1.5 and h < rh * 2.5
     assert len(SoulsPresetMatcher().regions()) == 3
-    assert AnyMatcher([template, SoulsPresetMatcher()]).regions()[0] == REGION
+    assert AnyMatcher([template, SoulsPresetMatcher()]).regions()[0] == (x, y, w, h)
 
 
 @pytest.fixture()
@@ -131,9 +134,13 @@ def test_watcher_grabs_only_the_death_text_area_and_still_counts(fake_game) -> N
     assert deaths == [7]
 
     full = (w, h)
-    left, top, right, bottom = pixel_box([REGION], w, h)
+    left, top, right, bottom = pixel_box(matcher.regions(), w, h)
     small = (right - left, bottom - top)
     assert set(capture.sizes) == {full, small}
+    # The death text plus a little room to look around it, far less than the window.
+    text_left, text_top, text_right, text_bottom = pixel_box([REGION], w, h)
+    assert left <= text_left and top <= text_top and right >= text_right
+    assert bottom >= text_bottom and small[0] * small[1] < full[0] * full[1] / 4
     assert capture.sizes.count(small) > 4 * capture.sizes.count(full)
     assert len(watcher.recent_frames()) >= 1  # whole frames still kept for Capture Screen
 

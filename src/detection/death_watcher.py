@@ -426,7 +426,9 @@ class DeathWatcher(QObject):
                 and config.victory_matcher is None
                 and not config.watch_activity
             ):
+                frame = None  # a whole frame is ~15 MB at 1440p: don't hold it while waiting
                 self._stop_event.wait(_RECENT_FRAME_INTERVAL)  # buffer only, no matching
                 continue
 
+            frame = None
             self._stop_event.wait(1.0 / FRAMES_PER_SECOND)

@@ -61,3 +61,15 @@ def test_buttons_that_need_a_game_wait_for_one(window) -> None:
     window._add_template_game("Elden Ring")
     assert all(widget.isEnabled() for widget in window._needs_game)
     assert not window._minus_btn.toolTip().endswith("Add a game first.")
+
+
+def test_buttons_look_usable_again_once_a_game_is_added(window) -> None:
+    from PySide6.QtWidgets import QLabel
+
+    def colors() -> set[str]:
+        labels = [label for label in window._minus_btn.findChildren(QLabel) if label.text()]
+        return {label.palette().windowText().color().name() for label in labels}
+
+    greyed = colors()  # no game yet
+    window._add_template_game("Elden Ring")
+    assert colors() != greyed  # the labels left their greyed-out colour behind

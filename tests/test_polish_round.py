@@ -160,3 +160,48 @@ def test_a_second_copy_never_shares_the_stream_port() -> None:
     finally:
         first.stop()
         second.stop()
+
+
+def test_save_lights_up_only_when_something_changed(window) -> None:
+    from src.ui.main_window import _PAGE_SETTINGS
+
+    window._show_page(_PAGE_SETTINGS)
+    settings = window._settings
+    assert not settings._save_button.isEnabled()  # nothing to save yet
+    assert not settings._cancel_button.isEnabled()
+    check = settings._confirm_close_check
+    check.setChecked(not check.isChecked())
+    settings._update_save_buttons()  # what the short timer does
+    assert settings._save_button.isEnabled() and settings._cancel_button.isEnabled()
+    check.setChecked(not check.isChecked())  # changed back: nothing to save again
+    settings._update_save_buttons()
+    assert not settings._save_button.isEnabled()
+    check.setChecked(not check.isChecked())
+    settings._save()
+    assert not settings._save_button.isEnabled()  # saved
+    import time
+
+    from PySide6.QtWidgets import QApplication
+
+    end = time.monotonic() + 0.5  # the app reloads its settings: still nothing to save
+    while time.monotonic() < end:
+        QApplication.processEvents()
+    assert not settings._save_button.isEnabled() and not settings.has_changes()
+    check.setChecked(not check.isChecked())
+    settings.reject()  # Discard Changes
+    assert not settings._save_button.isEnabled()
+
+
+def test_detection_page_names_the_next_setup_step(window) -> None:
+    from src.utils.constants import DETECTION_MODE_TEMPLATE
+
+    game = window._counter_manager.current_game_id
+    window._refresh_detection_page()
+    assert "Step 1 of 3" in window._detect_page_info.text()
+    window._database.set_game_detection(game, "C:/Games/LOP.exe", DETECTION_MODE_TEMPLATE)
+    window._refresh_detection_page()
+    assert "Step 2 of 3" in window._detect_page_info.text()
+    assert "F8" in window._detect_page_info.text()
+    window._database.add_death_template(game, "[0.3, 0.4, 0.4, 0.15]", b"\x01\x00\x01\x00\x80")
+    window._refresh_detection_page()
+    assert "Step 3 of 3" in window._detect_page_info.text()

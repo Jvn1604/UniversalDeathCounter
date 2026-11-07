@@ -18,6 +18,7 @@ The same drawing makes the picture the OBS Browser Source page shows.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from functools import lru_cache
 
 from PySide6.QtCore import QBuffer, QByteArray, QIODevice, QPointF, QRectF, Qt
@@ -36,6 +37,12 @@ from PySide6.QtGui import (
 )
 
 from src.ui.skulls import draw_skull, skull_shape, tier_colors
+from src.utils.constants import (
+    SETTING_OVERLAY_DESIGN_ACCENT,
+    SETTING_OVERLAY_DESIGN_FONT,
+    SETTING_OVERLAY_DESIGN_NUMBER,
+    SETTING_OVERLAY_DESIGN_WORD,
+)
 
 DESIGNS: tuple[tuple[str, str], ...] = (
     ("classic", "Classic card"),
@@ -56,6 +63,37 @@ _SCRIPT = ["Segoe Script", "Brush Script MT", "Snell Roundhand", "URW Chancery L
 _GOTHIC = ["Old English Text MT", "UnifrakturMaguntia", "Blackadder ITC", "Georgia", "serif"]
 _KANJI = ["Yu Mincho", "MS Mincho", "Hiragino Mincho ProN", "Noto Serif CJK JP",
           "Yu Gothic", "Noto Sans CJK JP"]
+
+
+@dataclass(frozen=True)
+class DesignStyle:
+    """
+    The player's touches on a design (Settings → Overlay → Design). Empty
+    means the design's own: its accent (seal, neon frame, stone, swirls), the
+    number's and the word's colours, and the font (the overlay's font).
+    """
+
+    accent: str = ""
+    number: str = ""
+    word: str = ""
+    font: str = ""
+
+    def color(self, value: str, default: str) -> QColor:
+        color = QColor(value) if value else QColor()
+        return color if color.isValid() else QColor(default)
+
+    def families(self, default: list[str]) -> list[str]:
+        return [self.font] if self.font else default
+
+
+def style_from_settings(settings: dict[str, str]) -> DesignStyle:
+    """The player's design touches from the settings table."""
+    return DesignStyle(
+        accent=settings.get(SETTING_OVERLAY_DESIGN_ACCENT, ""),
+        number=settings.get(SETTING_OVERLAY_DESIGN_NUMBER, ""),
+        word=settings.get(SETTING_OVERLAY_DESIGN_WORD, ""),
+        font=settings.get(SETTING_OVERLAY_DESIGN_FONT, ""),
+    )
 
 
 def is_design(name: str) -> bool:
@@ -123,7 +161,8 @@ def _glow(painter: QPainter, path: QPainterPath, color: QColor, width: float,
 
 
 def paint_design(
-    painter: QPainter, rect: QRectF, design: str, word: str, number: int, skull: bool = True
+    painter: QPainter, rect: QRectF, design: str, word: str, number: int, skull: bool = True,
+    style: DesignStyle | None = None,
 ) -> None:
     """Draw ``design`` centered in ``rect``, as large as fits (``skull``: with the skull)."""
     width, height = _CANVAS[design]
@@ -135,20 +174,21 @@ def paint_design(
                       rect.center().y() - height * scale / 2)
     painter.scale(scale, scale)
     {"seal": _seal, "neon": _neon, "tombstone": _tombstone, "banner": _banner}[design](
-        painter, word_for(word), number, skull
+        painter, word_for(word), number, skull, style or DesignStyle()
     )
     painter.restore()
 
 
 def render_png(
-    design: str, word: str, number: int, width: int = 760, skull: bool = True
+    design: str, word: str, number: int, width: int = 760, skull: bool = True,
+    style: DesignStyle | None = None,
 ) -> bytes:
     """The design as a transparent PNG (for the OBS Browser Source page)."""
     canvas_w, canvas_h = _CANVAS[design]
     image = QImage(width, round(width * canvas_h / canvas_w), QImage.Format.Format_ARGB32)
     image.fill(Qt.GlobalColor.transparent)
     painter = QPainter(image)
-    paint_design(painter, QRectF(image.rect()), design, word, number, skull)
+    paint_design(painter, QRectF(image.rect()), design, word, number, skull, style)
     painter.end()
     data = QByteArray()
     buffer = QBuffer(data)
@@ -166,7 +206,8 @@ def _skull_at(deaths: int, rect: QRectF) -> QPainterPath:
 
 
 # ---------------------------------------------------------------- Kanji Seal
-def _seal(painter: QPainter, word: str, deaths: int, skull: bool) -> None:
+def _seal(painter: QPainter, word: str, deaths: int, skull: bool,
+          style: DesignStyle) -> None:
     number = str(deaths)
     strip = QLinearGradient(0, 0, 320, 0)
     strip.setColorAt(0, QColor(10, 10, 12, 215))
@@ -177,7 +218,8 @@ def _seal(painter: QPainter, word: str, deaths: int, skull: bool) -> None:
     painter.drawRect(QRectF(0, 6, 320, 88))
     # The seal: a red square with a thin inner frame, 死 in white.
     seal = QRectF(14, 13, 74, 74)
-    painter.setBrush(QColor("#c4161c"))
+    accent = style.color(style.accent, "#c4161c")
+    painter.setBrush(accent)
     painter.drawRect(seal)
     painter.setPen(QPen(QColor(255, 235, 230, 170), 1.6))
     painter.setBrush(Qt.BrushStyle.NoBrush)
@@ -191,31 +233,33 @@ def _seal(painter: QPainter, word: str, deaths: int, skull: bool) -> None:
         painter.setFont(_font(_SANS, 44, 800))
         painter.drawText(seal, Qt.AlignmentFlag.AlignCenter, "†")
     if word:
-        label = _font(_SANS, 15, 800)
+        label = _font(style.families(_SANS), 15, 800)
         label.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, 4.5)
         painter.setFont(label)
-        painter.setPen(QColor("#d9d4cf"))
+        painter.setPen(style.color(style.word, "#d9d4cf"))
         painter.drawText(QPointF(104, 36), word.upper())
-    painter.setFont(_fit_font(_SANS, number, 52, 128))
-    painter.setPen(QColor("#ffffff"))
+    painter.setFont(_fit_font(style.families(_SANS), number, 52, 128))
+    painter.setPen(style.color(style.number, "#ffffff"))
     painter.drawText(QPointF(102, 86), number)
     if skull:  # the evolving skull on the right, white with the seal's red
-        draw_skull(painter, deaths, QRectF(240, 17, 66, 66), "#f4efea", "#e0262e")
+        draw_skull(painter, deaths, QRectF(240, 17, 66, 66), "#f4efea",
+                   accent.name() if style.accent else "#e0262e")
 
 
 # ---------------------------------------------------------------- Neon Sign
-def _neon(painter: QPainter, word: str, deaths: int, skull: bool) -> None:
+def _neon(painter: QPainter, word: str, deaths: int, skull: bool,
+          style: DesignStyle) -> None:
     number = str(deaths)
     panel = QRectF(8, 26, 364, 168)
     painter.setPen(QPen(QColor(255, 255, 255, 30), 1.5))
     painter.setBrush(QColor(28, 14, 38, 225))
     painter.drawRoundedRect(panel, 24, 24)
-    pink = QColor("#ff4fd8")
+    pink = style.color(style.accent, "#ff4fd8")
     tube = QPainterPath()
     tube.addRoundedRect(QRectF(26, 50, 328, 124), 14, 14)
     _glow(painter, tube, pink, 2.4)
     if word:
-        script = _fit_font(_SCRIPT, word, 46, 230, 400)
+        script = _fit_font(style.families(_SCRIPT), word, 46, 230, 400)
         text = _text_path(script, word, 190, 64)
         gap = text.boundingRect().adjusted(-16, -4, 16, 4)
         painter.setPen(Qt.PenStyle.NoPen)
@@ -224,15 +268,16 @@ def _neon(painter: QPainter, word: str, deaths: int, skull: bool) -> None:
         for x in (gap.left(), gap.right()):  # the tube's mounts
             painter.setBrush(QColor("#0d0710"))
             painter.drawEllipse(QPointF(x, 50), 4.2, 4.2)
-        _glow(painter, text, QColor("#ff9ff0"), 1.0, fill=True)
-    cyan = QColor("#4ee6ff")
+        word_glow = pink.lighter(130) if style.accent else QColor("#ff9ff0")
+        _glow(painter, text, style.color(style.word, word_glow.name()), 1.0, fill=True)
+    cyan = style.color(style.number, "#4ee6ff")
     if skull:  # the evolving skull as neon tubes: cyan, or its tier's colour past 100
-        _body, tier = tier_colors(deaths, "#4ee6ff", "#4ee6ff")
+        _body, tier = tier_colors(deaths, cyan.name(), cyan.name())
         _glow(painter, _skull_at(deaths, QRectF(62, 72, 92, 92)), tier, 1.8)
-        digits = _fit_font(_SANS, number, 78, 190, 600)
+        digits = _fit_font(style.families(_SANS), number, 78, 190, 600)
         _glow(painter, _text_path(digits, number, 250, 150), cyan, 1.2, fill=True)
     else:  # the number alone, in the middle
-        digits = _fit_font(_SANS, number, 84, 290, 600)
+        digits = _fit_font(style.families(_SANS), number, 84, 290, 600)
         _glow(painter, _text_path(digits, number, 190, 150), cyan, 1.2, fill=True)
 
 
@@ -302,7 +347,8 @@ def _ghost(painter: QPainter, x: float, y: float) -> None:
     painter.drawEllipse(QPointF(x + 40, y + 36), 4, 2.6)
 
 
-def _tombstone(painter: QPainter, word: str, deaths: int, skull: bool) -> None:
+def _tombstone(painter: QPainter, word: str, deaths: int, skull: bool,
+               style: DesignStyle) -> None:
     number = str(deaths)
     _candle(painter, 48, 292)
     _candle(painter, 332, 292)
@@ -313,8 +359,13 @@ def _tombstone(painter: QPainter, word: str, deaths: int, skull: bool) -> None:
     stone.lineTo(282, 284)
     stone.closeSubpath()
     fill = QLinearGradient(0, 40, 0, 284)
-    fill.setColorAt(0, QColor("#8a7fae"))
-    fill.setColorAt(1, QColor("#5d527f"))
+    if style.accent:  # the player's stone colour, lit from above
+        stone_color = style.color(style.accent, "#7468a0")
+        fill.setColorAt(0, stone_color.lighter(118))
+        fill.setColorAt(1, stone_color.darker(125))
+    else:
+        fill.setColorAt(0, QColor("#8a7fae"))
+        fill.setColorAt(1, QColor("#5d527f"))
     painter.setPen(QPen(QColor("#f4ebe1"), 7, Qt.PenStyle.SolidLine,
                         Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
     painter.setBrush(fill)
@@ -328,7 +379,8 @@ def _tombstone(painter: QPainter, word: str, deaths: int, skull: bool) -> None:
     painter.drawPath(shine)
     painter.setPen(QPen(QColor("#f4ebe1"), 7, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
     painter.drawLine(QPointF(70, 290), QPointF(310, 290))  # the ground
-    ink = QColor("#2b2440")
+    ink = style.color(style.number, "#2b2440")
+    word_ink = style.color(style.word, ink.name())
     # The evolving skull, carved into the top of the stone: a light edge below
     # the dark cut, like a chiselled groove.
     if skull:
@@ -339,15 +391,16 @@ def _tombstone(painter: QPainter, word: str, deaths: int, skull: bool) -> None:
         _body, tier = tier_colors(deaths, "#3a3157", "#3a3157")
         painter.setBrush(tier)  # the stone's dark ink, or its tier's colour past 100
         painter.drawPath(carving)
-    painter.setPen(ink)
-    rip = _font(_SANS, 15, 800)
+    painter.setPen(word_ink)
+    rip = _font(style.families(_SANS), 15, 800)
     rip.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, 4)
     painter.setFont(rip)
     painter.drawText(QRectF(98, 92, 184, 22), Qt.AlignmentFlag.AlignCenter, "R.I.P.")
     if word:
-        painter.setFont(_fit_font(_SANS, word, 21, 160, 700))
+        painter.setFont(_fit_font(style.families(_SANS), word, 21, 160, 700))
         painter.drawText(QRectF(98, 118, 184, 30), Qt.AlignmentFlag.AlignCenter, word)
-    painter.setFont(_fit_font(_SANS, number, 60, 140, 900))
+    painter.setPen(ink)
+    painter.setFont(_fit_font(style.families(_SANS), number, 60, 140, 900))
     painter.drawText(QRectF(98, 150, 184, 80), Qt.AlignmentFlag.AlignCenter, number)
     painter.setBrush(Qt.BrushStyle.NoBrush)
     crack = QPainterPath()
@@ -378,10 +431,13 @@ def _scroll(x0: float, direction: int) -> QPainterPath:
     return path
 
 
-def _banner(painter: QPainter, word: str, deaths: int, skull: bool) -> None:
+def _banner(painter: QPainter, word: str, deaths: int, skull: bool,
+            style: DesignStyle) -> None:
     number = str(deaths)
-    white = QColor("#f7f2f2")
-    pen = QPen(white, 3.2, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap,
+    white = style.color(style.number, "#f7f2f2")
+    ornament = style.color(style.accent, "#f7f2f2")
+    title_color = style.color(style.word, "#f7f2f2")
+    pen = QPen(ornament, 3.2, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap,
                Qt.PenJoinStyle.RoundJoin)
     shadow = QColor(0, 0, 0, 120)
     for path in (_scroll(196, -1), _scroll(244, 1)):
@@ -405,24 +461,24 @@ def _banner(painter: QPainter, word: str, deaths: int, skull: bool) -> None:
     for dx, color in ((-2.5, QColor(230, 30, 60, 210)), (2.5, QColor(40, 120, 255, 200))):
         painter.setBrush(color)
         painter.drawPath(emblem.translated(dx, 0))
-    body, _tier = tier_colors(deaths, "#f7f2f2", "#f7f2f2")
+    body, _tier = tier_colors(deaths, ornament.name(), ornament.name())
     painter.setPen(QPen(QColor(0, 0, 0, 110), 2))
     painter.setBrush(body)
     painter.drawPath(emblem)
 
-    def chroma(path: QPainterPath) -> None:
-        """Red and blue edges, slightly apart, under white: a glitchy title."""
+    def chroma(path: QPainterPath, fill: QColor) -> None:
+        """Red and blue edges, slightly apart, under the fill: a glitchy title."""
         painter.setPen(Qt.PenStyle.NoPen)
         for dx, color in ((-3.5, QColor(230, 30, 60, 210)), (3.5, QColor(40, 120, 255, 200))):
             painter.setBrush(color)
             painter.drawPath(path.translated(dx, 0))
         painter.setPen(QPen(QColor(0, 0, 0, 90), 2))
-        painter.setBrush(white)
+        painter.setBrush(fill)
         painter.drawPath(path)
 
     if word:
-        title = _fit_font(_GOTHIC, word, 64, 400, 700, italic=True)
-        chroma(_text_path(title, word, 220, 142))
-    digits = _fit_font(_GOTHIC, number, 76, 320, 800)
-    chroma(_text_path(digits, number, 220, 222))
+        title = _fit_font(style.families(_GOTHIC), word, 64, 400, 700, italic=True)
+        chroma(_text_path(title, word, 220, 142), title_color)
+    digits = _fit_font(style.families(_GOTHIC), number, 76, 320, 800)
+    chroma(_text_path(digits, number, 220, 222), white)
 

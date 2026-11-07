@@ -157,6 +157,17 @@ def resize_area(image: np.ndarray, height: int, width: int) -> np.ndarray:
     return (total / area).astype(np.float32)
 
 
+def shrink_gray(pixels: np.ndarray, height: int, width: int) -> np.ndarray:
+    """
+    ``pixels`` (RGB) as a ``height`` x ``width`` grayscale image. Big areas are
+    first thinned to about 4 source pixels per output pixel (a 1440p crop
+    would otherwise cost ~40 ms per frame to convert and average).
+    """
+    step_y = max(1, pixels.shape[0] // (height * 4))
+    step_x = max(1, pixels.shape[1] // (width * 4))
+    return resize_area(to_gray(pixels[::step_y, ::step_x]), height, width)
+
+
 def crop_region(frame: np.ndarray, region: Region) -> np.ndarray:
     """Crop a fractional ``(x, y, w, h)`` region out of a frame (at least 1x1 px)."""
     height, width = frame.shape[:2]
@@ -231,26 +242,118 @@ class DeathTemplate:
         return cls(region=(x, y, w, h), patch=patch)
 
 
+# A death screen taught from an uploaded screenshot is often framed a little
+# differently from the live capture (whole monitor vs. the game window, a title
+# bar, another resolution): its text then sits slightly off the saved spot, or
+# is slightly bigger or smaller. When the exact spot doesn't match, the matcher
+# looks around it (this many template pixels each way, at these sizes).
+SEARCH_MARGIN: int = 12
+SEARCH_SCALES: tuple[float, ...] = (1.0, 0.92, 1.08)
+# A match found off the saved spot must be a bit surer (more places to look
+# means more chances of a lookalike).
+SHIFTED_MATCH_THRESHOLD: float = 0.82
+
+
+def _ncc_map(image: np.ndarray, template: np.ndarray, step: int = 1) -> np.ndarray:
+    """Normalized correlation of ``template`` at every ``step``-th spot of ``image``."""
+    th, tw = template.shape
+    if image.shape[0] < th or image.shape[1] < tw:
+        return np.zeros((0, 0), dtype=np.float32)
+    windows = np.lib.stride_tricks.sliding_window_view(image, (th, tw))[::step, ::step]
+    t0 = template - template.mean()
+    t_norm = float(np.sqrt((t0 * t0).sum()))
+    if t_norm == 0.0:
+        return np.zeros(windows.shape[:2], dtype=np.float32)
+    count = th * tw
+    sums = windows.sum(axis=(2, 3))
+    squares = np.einsum("ijkl,ijkl->ij", windows, windows)
+    variance = np.maximum(squares - sums * sums / count, 0.0)
+    numerator = np.einsum("ijkl,kl->ij", windows, t0)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        scores = numerator / (np.sqrt(variance) * t_norm)
+    scores[variance < (_MIN_PATCH_STD ** 2) * count] = 0.0  # flat: nothing to compare
+    return np.nan_to_num(scores).astype(np.float32)
+
+
 class TemplateMatcher:
-    """Compares the calibrated region of each frame with the reference patch."""
+    """
+    Compares the calibrated region of each frame with the reference patch,
+    and, when that misses, a little around it and at slightly other sizes.
+    """
 
     def __init__(
         self, template: DeathTemplate, threshold: float = TEMPLATE_MATCH_THRESHOLD
     ) -> None:
         self._template = template
         self._threshold = threshold
+        height, width = template.patch.shape
+        self._half = resize_area(template.patch, max(height // 2, 4), max(width // 2, 4))
+        # What's captured: the region plus the room the search needs.
+        x, y, w, h = template.region
+        grow = SEARCH_MARGIN / width * w + w * (max(SEARCH_SCALES) - 1) / 2
+        grow_y = SEARCH_MARGIN / height * h + h * (max(SEARCH_SCALES) - 1) / 2
+        left, top = max(x - grow, 0.0), max(y - grow_y, 0.0)
+        right, bottom = min(x + w + grow, 1.0), min(y + h + grow_y, 1.0)
+        self._search_region: Region = (left, top, right - left, bottom - top)
 
     def match(self, frame: np.ndarray) -> tuple[bool, float]:
-        crop = to_gray(crop_region(frame, self._template.region))
         height, width = self._template.patch.shape
-        patch = resize_area(crop, height, width)
+        patch = shrink_gray(crop_region(frame, self._template.region), height, width)
         if float(patch.std()) < _MIN_PATCH_STD:
             return False, 0.0  # black/loading screen: nothing to compare
         score = normalized_correlation(patch, self._template.patch)
-        return score >= self._threshold, score
+        if score >= self._threshold:
+            return True, score
+        shifted = self._search(frame)
+        if shifted >= SHIFTED_MATCH_THRESHOLD:
+            return True, shifted
+        return False, max(score, shifted)
+
+    def _search(self, frame: np.ndarray) -> float:
+        """Best score around the saved spot: coarse at half size, then exact where it peaks."""
+        frame_h, frame_w = frame.shape[:2]
+        x, y, w, h = self._template.region
+        th, tw = self._template.patch.shape
+        best = 0.0
+        for scale in SEARCH_SCALES:
+            # Frame pixels per template pixel, at this size.
+            px = w * scale * frame_w / tw
+            py = h * scale * frame_h / th
+            if px <= 0 or py <= 0:
+                continue
+            center_x, center_y = (x + w / 2) * frame_w, (y + h / 2) * frame_h
+            half_w = (tw / 2 + SEARCH_MARGIN) * px
+            half_h = (th / 2 + SEARCH_MARGIN) * py
+            left = max(int(round(center_x - half_w)), 0)
+            top = max(int(round(center_y - half_h)), 0)
+            right = min(int(round(center_x + half_w)), frame_w)
+            bottom = min(int(round(center_y + half_h)), frame_h)
+            out_w, out_h = round((right - left) / px), round((bottom - top) / py)
+            if out_w < tw or out_h < th:
+                continue
+            area = frame[top:bottom, left:right]
+            # Coarse: half-size template every half-size pixel (2 template pixels).
+            coarse = shrink_gray(area, max(out_h // 2, 1), max(out_w // 2, 1))
+            scores = _ncc_map(coarse, self._half)
+            if scores.size == 0:
+                continue
+            if float(scores.max()) < SHIFTED_MATCH_THRESHOLD - 0.1:
+                best = max(best, float(scores.max()))
+                continue
+            row, col = np.unravel_index(int(scores.argmax()), scores.shape)
+            # Exact: full-size template within a pixel or two of the peak.
+            fine = shrink_gray(area, out_h, out_w)
+            r0, c0 = max(row * 2 - 2, 0), max(col * 2 - 2, 0)
+            window = fine[r0: r0 + th + 4, c0: c0 + tw + 4]
+            exact = _ncc_map(window, self._template.patch)
+            if exact.size:
+                best = max(best, float(exact.max()))
+            if best >= SHIFTED_MATCH_THRESHOLD:
+                break
+        return best
 
     def regions(self) -> list[Region]:
-        return [self._template.region]
+        return [self._search_region]
 
 
 # ----------------------------------------------------------------

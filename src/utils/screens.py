@@ -55,6 +55,6 @@ def screen_index_at(rect: QRect, screens: list[QRect]) -> int | None:
 
 
 def display_name(index: int, size: tuple[int, int], primary: bool) -> str:
-    """Menu label such as "Display 2: 1920×1080 (primary)"."""
-    suffix = " (primary)" if primary else ""
+    """Menu label such as "Display 2: 1920×1080 (main)", named as on the Detection page."""
+    suffix = " (main)" if primary else ""
     return f"Display {index + 1}: {size[0]}×{size[1]}{suffix}"

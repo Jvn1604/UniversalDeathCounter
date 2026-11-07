@@ -312,14 +312,15 @@ QLabel#StatusPill[state="warning"] {
 }
 
 QLabel#KeyCap {
-    background-color: rgba(255, 255, 255, 0.06);
-    border: 1px solid rgba(255, 255, 255, 0.14);
-    border-bottom: 2px solid rgba(255, 255, 255, 0.20);
+    /* A light key, like a real keyboard's: stands out on the dark buttons. */
+    background-color: #e8e9ee;
+    border: 1px solid #ffffff;
+    border-bottom: 3px solid #9ea2af;
     border-radius: 6px;
-    padding: 1px 7px;
-    font-size: 11px;
-    font-weight: 700;
-    color: #c3c9c7;
+    padding: 2px 9px;
+    font-size: 12px;
+    font-weight: 800;
+    color: #15161b;
 }
 
 QLabel#GuideBadge {
@@ -383,27 +384,31 @@ QPushButton#AccentButton QLabel {
 }
 
 QPushButton#AccentButton QLabel#KeyCap {
-    background-color: rgba(0, 0, 0, 0.18);
-    border: 1px solid rgba(255, 255, 255, 0.30);
-    border-bottom: 2px solid rgba(255, 255, 255, 0.40);
-    color: #ffffff;
+    background-color: #ffffff;
+    border: 1px solid #ffd3d9;
+    border-bottom: 3px solid #ffb3be;
+    color: #d91f3c;
 }
 
 /* Greyed out (e.g. no game yet): the accent and the big buttons too, whose
-   text and key are child labels. */
+   text and key are child labels (disabled with their button). The state is
+   on the label, not "a label in a disabled button": Qt doesn't recheck that
+   when the button turns back on, and the labels stayed grey. */
 QPushButton#AccentButton:disabled {
     background-color: rgba(26, 29, 34, 0.55);
     color: #555a66;
     border: 1px solid rgba(255, 255, 255, 0.10);
 }
 
-QPushButton:disabled QLabel,
-QPushButton:disabled QLabel#KeyCap {
+QPushButton QLabel:disabled,
+QPushButton QLabel#KeyCap:disabled {
     color: #555a66;
+    background-color: #24262f;
+    border-color: #30333e;
 }
 
-QPushButton#AccentButton:disabled QLabel,
-QPushButton#AccentButton:disabled QLabel#KeyCap,
+QPushButton#AccentButton QLabel:disabled,
+QPushButton#AccentButton QLabel#KeyCap:disabled,
 QPushButton#GhostButton:disabled,
 QPushButton#DangerButton:disabled {
     color: #555a66;

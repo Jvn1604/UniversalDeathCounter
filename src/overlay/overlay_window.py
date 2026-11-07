@@ -38,7 +38,7 @@ from src.overlay.capture_window import (
     available_screen_rects,
 )
 from src.overlay.count_text import CountStyle
-from src.overlay.designs import is_design, paint_design
+from src.overlay.designs import DesignStyle, is_design, paint_design, style_from_settings
 from src.ui.skulls import TIERS, skull_pixmap, tier_index
 from src.utils.constants import (
     DEFAULT_COUNTER_SOURCE,
@@ -104,6 +104,9 @@ class OverlayWindow(CaptureWindow):
         self._skull_size = 150  # % of the number's size
         self._align = "left"
         self._design = "classic"  # or a drawn design (src/overlay/designs.py)
+        self._design_style = DesignStyle()
+        self._design_key: tuple = ()
+        self._design_art: QPixmap | None = None
         self._skull_art: QPixmap | None = None
 
         self._last_snapshot: CounterSnapshot | None = None
@@ -172,6 +175,7 @@ class OverlayWindow(CaptureWindow):
                 self._death_label,
                 self._caption_label,
                 self._stats_label,
+                self._skull_label,
             )
         )
 
@@ -204,15 +208,37 @@ class OverlayWindow(CaptureWindow):
             super().paintEvent(event)
             return
         painter = QPainter(self)
-        # Alpha 1, not 0: fully clear pixels would let clicks fall through.
-        painter.fillRect(self.rect(), QColor(0, 0, 0, 1))
-        paint_design(painter, QRectF(self.rect()), self._design, self._count_style.word,
-                     getattr(self, "_big_number", 0), skull=self._show_skull)
+        painter.drawPixmap(0, 0, self._design_pixmap())
         painter.end()
+
+    def _design_pixmap(self) -> QPixmap:
+        """
+        The drawn design, painted once per change (count, size, look) and then
+        only copied: repaints from moving or other windows cost next to nothing.
+        """
+        ratio = self.devicePixelRatioF()
+        key = (self._design, self._count_style.word, getattr(self, "_big_number", 0),
+               self._show_skull, self._design_style, self.width(), self.height(), ratio)
+        if key != self._design_key or self._design_art is None:
+            art = QPixmap(round(self.width() * ratio), round(self.height() * ratio))
+            art.setDevicePixelRatio(ratio)
+            # Alpha 1, not 0: fully clear pixels would let clicks fall through.
+            art.fill(QColor(0, 0, 0, 1))
+            painter = QPainter(art)
+            paint_design(painter, QRectF(0, 0, self.width(), self.height()), self._design,
+                         self._count_style.word, getattr(self, "_big_number", 0),
+                         skull=self._show_skull, style=self._design_style)
+            painter.end()
+            self._design_key, self._design_art = key, art
+        return self._design_art
 
     @property
     def design(self) -> str:
         return self._design
+
+    @property
+    def design_style(self) -> DesignStyle:
+        return self._design_style
 
     def contextMenuEvent(self, event: QContextMenuEvent) -> None:  # noqa: N802
         self.menu_requested.emit(event.globalPos())
@@ -250,6 +276,7 @@ class OverlayWindow(CaptureWindow):
             self._padding, self._skull_size = 16, 150
         self._align = settings.get(SETTING_OVERLAY_ALIGN, "left")
         self._design = settings.get(SETTING_OVERLAY_DESIGN, "classic")
+        self._design_style = style_from_settings(settings)
         self._restyle()
         if self._last_snapshot is not None:
             self.update_counters(self._last_snapshot)

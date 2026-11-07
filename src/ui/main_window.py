@@ -101,6 +101,7 @@ from src.detection.death_watcher import (
 from src.detection.game_window import (
     capture_game_frame,
     detection_available,
+    display_of_front_window,
     exe_display_name,
     list_displays,
     list_windows,
@@ -190,6 +191,7 @@ from src.ui.widgets import (
 from src.utils import artwork, presets, save_files
 from src.utils.backgrounds import cover, load_background
 from src.utils.constants import (
+    ACCENT_COLOR,
     APP_BRAND,
     APP_NAME,
     APP_SHORT_NAME,
@@ -205,6 +207,7 @@ from src.utils.constants import (
     DETECTION_MODE_OFF,
     DETECTION_MODE_SOULS,
     DETECTION_MODE_TEMPLATE,
+    EDITIONS,
     FEATURES,
     ICONS_DIR,
     OPTION_OBS_SOURCE,
@@ -220,7 +223,9 @@ from src.utils.constants import (
     SETTING_DEATHS_TXT_PATH,
     SETTING_DEATHS_TXT_TEMPLATE,
     SETTING_DETECTION_COOLDOWN,
+    SETTING_EDITION_APPLIED,
     SETTING_FEATURE_CONSOLE,
+    SETTING_FEATURE_COUNTER,
     SETTING_FEATURE_MINI,
     SETTING_FEATURE_STATS,
     SETTING_FEATURE_TIMER,
@@ -279,16 +284,19 @@ from src.utils.game_templates import add_template_bosses, get_template, get_temp
 from src.utils.logger import get_logger
 from src.utils.phone_remote import ACTIONS as PHONE_ACTIONS
 from src.utils.phone_remote import PhoneRemote, new_key
-from src.utils.platform_info import program_file_filter
+from src.utils.platform_info import IS_WINDOWS, program_file_filter
 from src.utils.profiles import DEFAULT_PROFILE_NAME, ProfileManager
 from src.utils.screens import display_name, fit_to_screens, screen_index_at
 from src.utils.stream_overlay import StreamOverlay
 from src.utils.stream_writer import render_template, write_deaths_file
-from src.utils.update_checker import UpdateChecker
+from src.utils.update_checker import UpdateChecker, earlier_releases
 from src.utils.updater import (
+    INSTALLER_ARGS,
     INSTALLER_NAME,
+    ROLLBACK_ARGS,
     UpdateError,
     download_installer,
+    edition_file,
     is_installed_copy,
     launch_installer,
 )
@@ -315,6 +323,9 @@ _GAME_TIME_PAUSES = {
 # a registered hotkey is swallowed system-wide, and these default to number-
 # pad digits, which would otherwise stop typing in every other app.
 _RUN_ONLY_ACTIONS = ("timer_pause", "timer_reset", "timer_undo", "timer_skip")
+# Keys of the death counter (freed when it's switched off: a speedrun timer only).
+_COUNTER_ACTIONS = ("increment", "decrement", "undo", "toggle_overlay", "calibrate",
+                    "prev_boss", "next_boss", "boss_defeated")
 # Timer page buttons: (label, icon).
 _TIMER_BUTTONS = {
     "split": ("Start / Split", "flag"),
@@ -485,6 +496,12 @@ class MainWindow(QMainWindow):
         self._overlay_hidden_local = False
         self._stream = StreamOverlay(self)
         self._stream_skull_key: tuple = ()
+        self._wanted_places: dict = {}  # window -> its saved place, while that display is away
+        self._app_placed: dict = {}  # window -> geometry the app gave it (not the player)
+        self._place_save = QTimer(self)
+        self._place_save.setSingleShot(True)
+        self._place_save.setInterval(800)
+        self._place_save.timeout.connect(self._remember_window_places)
         self._stream_frame_key = ""  # the drawn design last sent to the stream page
         self._last_snapshot: CounterSnapshot | None = None
         self._overlay.settings_requested.connect(self._open_overlay_settings)
@@ -495,6 +512,7 @@ class MainWindow(QMainWindow):
         self._mini.action_requested.connect(self._on_mini_action)
         self._timer_window = TimerWindow()
         self._timer_window.action_requested.connect(self._on_timer_window_action)
+        self._timer_window.geometry_changed.connect(lambda: self._place_save.start())
         self._speedrun: SpeedrunController | None = None
         self._death_watcher = DeathWatcher(parent=self)
         self._save_watcher = SaveWatcher(self)
@@ -544,6 +562,7 @@ class MainWindow(QMainWindow):
         self._apply_saved_settings()
         self._restore_main_geometry()
         QGuiApplication.instance().screenRemoved.connect(self._on_screen_removed)
+        QGuiApplication.instance().screenAdded.connect(self._on_screen_added)
         self._reload_games()
         self._autosave_timer = QTimer(self)
         self._autosave_timer.setInterval(_AUTOSAVE_MS)
@@ -603,6 +622,7 @@ class MainWindow(QMainWindow):
         )
         menu.addSeparator()
         self._menu_action(menu, "info", "About", self._open_about_window)
+        self._menu_action(menu, "rotate-ccw", "Roll Back to an Earlier Version…", self._roll_back)
         menu.addSeparator()
         self._menu_action(menu, "trash-2", "Clear All Data…", self._clear_all_data)
         self._menu_action(menu, "power", "Quit", self._quit_app)
@@ -801,6 +821,7 @@ class MainWindow(QMainWindow):
         )
         self._overlay_nav.clicked.connect(self._toggle_overlay)
         self._overlay.visibility_changed.connect(self._on_overlay_shown)
+        self._overlay.geometry_changed.connect(lambda: self._place_save.start())
         layout.addWidget(self._overlay_nav)
         self._nav_texts[self._overlay_nav] = "Overlay"
         for text, icon_name, handler, tip in (
@@ -2039,31 +2060,61 @@ class MainWindow(QMainWindow):
         self._nav_buttons[index].setChecked(True)
         self._page_badge.setText(_PAGE_NAMES[index])
 
+    def _apply_edition(self) -> None:
+        """
+        The installer's choice (everything, death counter only, speedrun timer
+        only), applied once: changing the features in Settings afterwards sticks,
+        silent updates write the same choice again.
+        """
+        path = edition_file()
+        try:
+            edition = path.read_text(encoding="utf-8").strip() if path is not None else ""
+        except OSError:
+            return
+        if edition not in EDITIONS:
+            return
+        if self._database.get_setting(SETTING_EDITION_APPLIED, "") == edition:
+            return
+        for key, value in EDITIONS[edition].items():
+            self._database.set_setting(key, value)
+        self._database.set_setting(SETTING_EDITION_APPLIED, edition)
+        logger.info("Installed as %r: features set to match", edition)
+
     def _feature_on(self, key: str) -> bool:
         return self._database.get_setting(key, "true") == "true"
 
     def _show_feature_pages(self, states: dict[str, bool]) -> None:
         """Sidebar entries for the features ticked (live while ticking in Settings)."""
+        counter = states.get(SETTING_FEATURE_COUNTER, True)
         for key, index in ((SETTING_FEATURE_TIMER, _PAGE_TIMER),
                            (SETTING_FEATURE_STATS, _PAGE_STATS),
                            (SETTING_FEATURE_CONSOLE, _PAGE_CONSOLE)):
             self._nav_buttons[index].setVisible(states.get(key, True))
-        self._mini_nav.setVisible(states.get(SETTING_FEATURE_MINI, True))
+        # A speedrun timer only: no death counter pages, overlay or mini mode.
+        for index in (_PAGE_HOME, _PAGE_COUNTER):
+            self._nav_buttons[index].setVisible(counter)
+        if not counter:
+            self._nav_buttons[_PAGE_STATS].setVisible(False)
+        self._overlay_nav.setVisible(counter)
+        self._mini_nav.setVisible(counter and states.get(SETTING_FEATURE_MINI, True))
 
     def _apply_features(self) -> None:
         """Show what's switched on; hide what's off, free its keys, stop its work."""
         if not hasattr(self, "_mini_nav"):
             return
         timer = self._feature_on(SETTING_FEATURE_TIMER)
+        counter = self._feature_on(SETTING_FEATURE_COUNTER)
         console = self._feature_on(SETTING_FEATURE_CONSOLE)
-        mini = self._feature_on(SETTING_FEATURE_MINI)
+        mini = self._feature_on(SETTING_FEATURE_MINI) and counter
         states = {key: self._feature_on(key) for key, _label, _tip in FEATURES}
         self._show_feature_pages(states)
         if not self._nav_buttons[self._pages.currentIndex()].isVisibleTo(self):
-            self._show_page(_PAGE_HOME)
+            self._show_page(_PAGE_HOME if counter else _PAGE_TIMER)
         for key, actions in self._tray_feature_actions.items():
             for action in actions:
                 action.setVisible(self._feature_on(key))
+        if not counter and self._overlay_active():
+            self._turn_overlay_off()
         if not timer:
             self._timer_window.hide()
             source = self._database.get_setting(
@@ -2299,11 +2350,34 @@ class MainWindow(QMainWindow):
             for kind in (SCREEN_DEATH, SCREEN_VICTORY, SCREEN_PAUSE)
         }
         self._detect_page_info.setText(
+            f"{self._detection_next_step(game_id, mode, counts[SCREEN_DEATH])}"
             f"<b>Method:</b> {_MODE_NAMES.get(mode, mode)} &nbsp; · &nbsp; "
             f"<b>Watching:</b> {watched}<br>"
             f"<b>Saved screens:</b> {counts[SCREEN_DEATH]} death · "
             f"{counts[SCREEN_VICTORY]} boss victory · {counts[SCREEN_PAUSE]} pause/loading"
         )
+
+    def _detection_next_step(self, game_id: int, mode: str, death_screens: int) -> str:
+        """Setting up auto-detect, in three steps: which one is next (a line of HTML)."""
+        row_ = self._database.get_game_detection(game_id)
+        source = (bool(row_ is not None and row_["exe_path"]) or bool(self._screen_display(game_id))
+                  or bool(self._obs_source(game_id)))
+        calibrate = self._database.get_setting(SETTING_HOTKEY_CALIBRATE, "f8").upper()
+        undo = self._database.get_setting(SETTING_HOTKEY_UNDO, "f11").upper()
+        reads_itself = mode in (DETECTION_MODE_SOULS, DETECTION_MODE_LOG, DETECTION_MODE_HEALTH)
+        if not source and mode != DETECTION_MODE_LOG:
+            step = ("Step 1 of 3: tell it what to watch. Pick the game's .exe below, or "
+                    "choose A whole display.")
+        elif not death_screens and not reads_itself:
+            step = (f"Step 2 of 3: teach it your death screen. In the game, when the death "
+                    f"screen shows, press <b>{calibrate}</b> and drag a box around the death "
+                    "text (or use Setups Library / Set Up Detection).")
+        elif mode == DETECTION_MODE_OFF:
+            step = "Last step: turn it on with Set Up Detection."
+        else:
+            step = (f"Step 3 of 3: ready. Die once: the count goes up by itself "
+                    f"(<b>{undo}</b> takes back a wrong one).")
+        return f"<span style='color: {ACCENT_COLOR}; font-weight: 600;'>{step}</span><br>"
 
     # ----------------------------------------------------------------
     # System tray
@@ -2344,6 +2418,7 @@ class MainWindow(QMainWindow):
         self._tray_feature_actions = {
             SETTING_FEATURE_TIMER: (split_action, timer_window_action),
             SETTING_FEATURE_MINI: (mini_action,),
+            SETTING_FEATURE_COUNTER: (plus_action, minus_action, undo_action, defeated_action),
         }
         menu.addSeparator()
         overlay_action = menu.addAction("Overlay")
@@ -2406,6 +2481,9 @@ class MainWindow(QMainWindow):
             for action in list(bindings):
                 if action.startswith("timer_"):
                     bindings[action] = ""
+        if not self._feature_on(SETTING_FEATURE_COUNTER):
+            for action in _COUNTER_ACTIONS:
+                bindings[f"{action}_key"] = ""
         return bindings
 
     def _sync_run_hotkeys(self) -> None:
@@ -2420,9 +2498,11 @@ class MainWindow(QMainWindow):
         """Controller combos from settings, keyed by action ("" = unbound)."""
         settings = self._database.get_all_settings()
         timer = settings.get(SETTING_FEATURE_TIMER, "true") == "true"
+        counter = settings.get(SETTING_FEATURE_COUNTER, "true") == "true"
         return {
             action: settings.get(pad_setting(action), "")
-            if timer or not action.startswith("timer_") else ""
+            if (timer or not action.startswith("timer_"))
+            and (counter or action not in _COUNTER_ACTIONS) else ""
             for action, _label, _setting, _default in CONTROL_ACTIONS
         }
 
@@ -2490,7 +2570,9 @@ class MainWindow(QMainWindow):
         self._hotkey_manager.action_triggered.connect(
             lambda action: self._action_handlers[action]()
         )
+        self._hotkey_manager.action_triggered.connect(self._note_key_received)
         self._hotkey_manager.registration_failed.connect(self._on_hotkeys_failed)
+        self._hotkey_manager.registration_recovered.connect(self._on_hotkeys_recovered)
         self._hotkey_manager.start()
 
         pads = self._pad_bindings()
@@ -2501,14 +2583,40 @@ class MainWindow(QMainWindow):
         self._gamepad_manager.start()
         self._update_hotkey_labels(bindings, pads)
 
+    def _note_key_received(self, action: str) -> None:
+        """Log each key press, and show it on Settings → Controls (the key check)."""
+        label = next((name for key, name, _s, _d in CONTROL_ACTIONS if key == action), action)
+        logger.info("Hotkey received: %s", action)
+        if self._settings is not None:
+            self._settings.show_key_received(
+                f"Key check: received {label} at {datetime.now():%H:%M:%S}. "
+                "Your keys reach the app."
+            )
+
+    def nativeEvent(self, event_type, message):  # noqa: N802 - Qt override
+        """After the PC wakes from sleep, take the keys back (Windows may have dropped them)."""
+        if IS_WINDOWS and event_type == b"windows_generic_MSG":
+            from ctypes import wintypes  # Windows only
+
+            msg = wintypes.MSG.from_address(int(message))
+            if msg.message == 0x0218 and msg.wParam in (0x7, 0x12):  # WM_POWERBROADCAST, resume
+                logger.info("Woke from sleep: registering the hotkeys again")
+                QTimer.singleShot(3000, self._on_settings_changed_hotkeys)
+        return super().nativeEvent(event_type, message)
+
+    def _on_hotkeys_recovered(self, freed: list) -> None:
+        keys = ", ".join(key.upper() for _action, key in freed)
+        self._toast.say(f"{keys} works now: the other program let go of it", icon="keyboard")
+
     def _on_hotkeys_failed(self, failures: list) -> None:
         labels = {action: label for action, label, _key, _default in CONTROL_ACTIONS}
         keys = ", ".join(
             f"{key.upper()} ({labels.get(action, action)})" for action, key in failures
         )
         message = (
-            f"Hotkey unavailable: {keys}. Another program is already using it, or the key "
-            "isn't supported. Pick a different key in Settings → Controls."
+            f"Hotkey unavailable: {keys}. Another program (an overlay, recorder or "
+            f"launcher) is using it. {APP_SHORT_NAME} keeps trying and tells you when it "
+            "works, or pick a different key in Settings → Controls."
         )
         if self._tray is not None:
             self._tray.showMessage(
@@ -2829,9 +2937,15 @@ class MainWindow(QMainWindow):
             finally:
                 client.close()
         else:
-            frame = capture_game_frame(
-                exe_path, self._capture_window_title(game_id), self._screen_display(game_id)
-            )
+            display = self._screen_display(game_id)
+            front = display_of_front_window() if display else None
+            if front is not None and front != display:
+                # Two monitors: watch the one the game is on, not the one picked before.
+                self._database.update_detection_options(game_id, **{OPTION_SCREEN_DISPLAY: front})
+                self._configure_detection()
+                self._toast.say(f"Watching Display {front}, where your game is", icon="monitor")
+                display = front
+            frame = capture_game_frame(exe_path, self._capture_window_title(game_id), display)
         if frame is None:
             return
         self.show()
@@ -3023,17 +3137,54 @@ class MainWindow(QMainWindow):
         )
         self._configure_detection()
 
+    def _window_places(self) -> dict:
+        return {self._overlay: SETTING_OVERLAY_GEOMETRY,
+                self._timer_window: SETTING_TIMER_GEOMETRY}
+
+    def _place_window(self, window, saved: str) -> None:
+        """
+        Put a stream window where the player left it. If its display isn't
+        there (yet: a second monitor waking up after the app started), it waits
+        on the main display, and its own place is kept and used once the
+        display shows up, never overwritten by the stand-in spot.
+        """
+        if window.restore_geometry_string(saved):
+            self._wanted_places.pop(window, None)
+        else:
+            self._wanted_places[window] = saved
+        self._app_placed[window] = window.geometry_string()  # not moved by the player
+
+    def _remember_window_places(self) -> None:
+        """Save where the player moved or sized the stream windows (soon after)."""
+        for window, key in self._window_places().items():
+            place = window.geometry_string()
+            if not window.isVisible() or place == self._app_placed.get(window):
+                continue  # where the app put it: the player's own place stays saved
+            self._wanted_places.pop(window, None)
+            self._app_placed.pop(window, None)
+            if self._database.get_setting(key, "") != place:
+                self._database.set_setting(key, place)
+
+    def _on_screen_added(self, _screen) -> None:
+        """A display came (back): windows waiting for it go to their own place."""
+        def retry() -> None:
+            for window, saved in list(self._wanted_places.items()):
+                self._place_window(window, saved)
+
+        QTimer.singleShot(500, retry)
+
     def _apply_saved_settings(self) -> None:
         """Startup and profile switch: the look, plus where the windows were."""
+        self._apply_edition()
         self._apply_features()
         settings = self._database.get_all_settings()
         self._apply_appearance(settings)
-        self._timer_window.restore_geometry_string(settings.get(SETTING_TIMER_GEOMETRY, ""))
+        self._place_window(self._timer_window, settings.get(SETTING_TIMER_GEOMETRY, ""))
         self._timer_window.setVisible(
             settings.get(SETTING_TIMER_VISIBLE, "false") == "true"
             and settings.get(SETTING_FEATURE_TIMER, "true") == "true"
         )
-        self._overlay.restore_geometry_string(settings.get(SETTING_OVERLAY_GEOMETRY, ""))
+        self._place_window(self._overlay, settings.get(SETTING_OVERLAY_GEOMETRY, ""))
         # On, behind the windows, or off, as this profile left it.
         state = settings.get(SETTING_OVERLAY_STATE, "off")
         if state == "behind" and not self._overlay_hidden_local:
@@ -3181,8 +3332,49 @@ class MainWindow(QMainWindow):
         )
         if confirm != QMessageBox.StandardButton.Yes:
             return
-        progress = QProgressDialog("Downloading the update…", "Cancel", 0, 100, self)
-        progress.setWindowTitle("Update")
+        self._download_and_install(url, size, "Update")
+
+    def _roll_back(self) -> None:
+        """Install an earlier version (e.g. if an update broke something for you)."""
+        try:
+            releases = earlier_releases()
+        except (OSError, ValueError) as exc:
+            QMessageBox.warning(self, "Roll Back", f"Couldn't list the earlier versions: {exc}")
+            return
+        if not releases:
+            QMessageBox.information(self, "Roll Back", "There's no earlier version to go back to.")
+            return
+        labels = [release.tag for release in releases]
+        choice, ok = QInputDialog.getItem(
+            self, "Roll Back to an Earlier Version",
+            f"You have v{APP_VERSION}. Go back to:", labels, 0, False,
+        )
+        if not ok:
+            return
+        release = releases[labels.index(choice)]
+        if not is_installed_copy() or not release.installer_url:
+            QDesktopServices.openUrl(QUrl(release.page_url))  # portable, Mac, Linux
+            return
+        confirm = QMessageBox.question(
+            self, "Roll Back",
+            f"Install {release.tag} instead of v{APP_VERSION}?\n\n"
+            "Your games, deaths and settings stay (they're saved first). The "
+            f"{release.tag} installer opens: click through it, then Launch. Newer "
+            "features won't be there, and the app will offer the update again "
+            "(turn off update checks in Settings if you want to stay).",
+        )
+        if confirm != QMessageBox.StandardButton.Yes:
+            return
+        self._write_progress_autosave()
+        self._download_and_install(
+            release.installer_url, release.installer_size, "Roll Back", ROLLBACK_ARGS
+        )
+
+    def _download_and_install(
+        self, url: str, size: int, title: str, args: tuple[str, ...] = INSTALLER_ARGS
+    ) -> None:
+        progress = QProgressDialog("Downloading the installer…", "Cancel", 0, 100, self)
+        progress.setWindowTitle(title)
         progress.setMinimumDuration(0)
         destination = Path(tempfile.gettempdir()) / "DUDC-update" / INSTALLER_NAME
         download = self._update_download = _UpdateDownload(url, size, destination)
@@ -3194,14 +3386,14 @@ class MainWindow(QMainWindow):
         def failed(message: str) -> None:
             progress.close()
             if not download.cancelled.is_set():
-                QMessageBox.warning(self, "Update Failed", message)
+                QMessageBox.warning(self, f"{title} Failed", message)
 
         def succeeded(path: str) -> None:
             progress.close()
             try:
-                launch_installer(Path(path))
+                launch_installer(Path(path), args)
             except OSError as exc:
-                QMessageBox.warning(self, "Update Failed", f"Couldn't start the installer: {exc}")
+                QMessageBox.warning(self, f"{title} Failed", f"Couldn't start the installer: {exc}")
                 return
             self._quit_app(confirm=False)  # the installer replaces the files and reopens the app
 
@@ -4077,13 +4269,13 @@ class MainWindow(QMainWindow):
             skull_png = bytes(data)
         frame, frame_png = "", None
         if is_design(overlay.design):
-            frame = (f"{overlay.design}-{number}-{int(overlay._show_skull)}-"
-                     f"{abs(hash(overlay._count_style.word))}")
+            look = abs(hash((overlay._count_style.word, overlay.design_style)))
+            frame = f"{overlay.design}-{number}-{int(overlay._show_skull)}-{look}"
             if frame != self._stream_frame_key:
                 self._stream_frame_key = frame
                 frame_png = render_design_png(
                     overlay.design, overlay._count_style.word, number,
-                    skull=overlay._show_skull,
+                    skull=overlay._show_skull, style=overlay.design_style,
                 )
         self._stream.set_state(
             {
@@ -4109,7 +4301,7 @@ class MainWindow(QMainWindow):
                 "card": card,
                 "radius": overlay._corner_radius,
                 "padding": overlay._padding,
-                "shadow": overlay._text_outline,
+                "shadow": overlay.text_edge,
                 "skull": f"{skull_key[0]}-{skull_px}-{overlay._text_color.lstrip('#')}",
                 "skull_px": skull_px,
                 "animate": True,
@@ -4925,14 +5117,38 @@ class MainWindow(QMainWindow):
         box.setCheckBox(never)
         close = box.addButton("Close", QMessageBox.ButtonRole.AcceptRole)
         close.setObjectName("AccentButton")
+        background = None
+        if self._tray is not None and not self._quitting:
+            # Closing stops the keys (F9 / F10) and auto-detect: offer to keep them.
+            background = box.addButton(
+                "Keep Counting in the Background", QMessageBox.ButtonRole.ActionRole
+            )
+            background.setToolTip(
+                "Hide to the tray: F9 / F10, the overlay and auto-detect keep working."
+            )
         box.addButton(QMessageBox.StandardButton.Cancel)
         box.setDefaultButton(close)
         box.exec()
+        if background is not None and box.clickedButton() is background:
+            self._go_to_background()
+            return False
         if box.clickedButton() is not close:
             return False
         if never.isChecked():
             self._database.set_setting(SETTING_CONFIRM_CLOSE, "false")
         return True
+
+    def _go_to_background(self) -> None:
+        """Hide to the tray; keys, the overlay and auto-detect keep working."""
+        self.hide()
+        if self._tray is not None:
+            self._tray.showMessage(
+                APP_BRAND,
+                "Still counting in the background: F9 / F10 work. Click the tray icon "
+                "to open, right-click to quit.",
+                QSystemTrayIcon.MessageIcon.Information,
+                4000,
+            )
 
     # ----------------------------------------------------------------
     # Multiple displays
@@ -5010,7 +5226,8 @@ class MainWindow(QMainWindow):
         self._database.set_setting(SETTING_LAST_PAGE, str(self._pages.currentIndex()))
         self._write_progress_autosave()  # covers quitting without the question too
         self._end_speedrun()
-        self._database.set_setting(SETTING_OVERLAY_GEOMETRY, self._overlay.geometry_string())
+        self._remember_window_places()
+        self._place_save.stop()
         self._database.set_setting(SETTING_MINI_GEOMETRY, self._mini.geometry_string())
         self._database.set_setting(
             SETTING_MAIN_WINDOW_GEOMETRY, bytes(self.saveGeometry().toBase64()).decode("ascii")

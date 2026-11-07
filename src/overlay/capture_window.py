@@ -13,7 +13,9 @@ It owns everything the two share:
 
 from __future__ import annotations
 
-from PySide6.QtCore import QEvent, QPoint, QRect, QRectF, QSize, Qt, Signal
+import math
+
+from PySide6.QtCore import QEvent, QPoint, QPointF, QRect, QRectF, QSize, Qt, Signal
 from PySide6.QtGui import (
     QColor,
     QCursor,
@@ -33,6 +35,7 @@ from PySide6.QtGui import (
 from PySide6.QtWidgets import (
     QApplication,
     QGraphicsDropShadowEffect,
+    QGraphicsEffect,
     QLabel,
     QWidget,
 )
@@ -40,6 +43,7 @@ from PySide6.QtWidgets import (
 from src.utils.backgrounds import cover, load_background
 from src.utils.constants import (
     ACCENT_COLOR,
+    DEFAULT_TEXT_EDGE,
     SETTING_OVERLAY_BG_IMAGE,
     SETTING_OVERLAY_BG_MODE,
     SETTING_OVERLAY_BORDER,
@@ -69,6 +73,7 @@ class CaptureWindow(QWidget):
     """
 
     visibility_changed = Signal(bool)
+    geometry_changed = Signal()  # moved or resized while shown (to remember its place)
 
     def __init__(self, title: str, parent: QWidget | None = None) -> None:
         # OBS's Window Capture list leaves out tool windows, so this is a
@@ -93,7 +98,8 @@ class CaptureWindow(QWidget):
         self._bg_image: QPixmap | None = None
         self._bg_scaled: QPixmap | None = None  # cache, rescaled only on resize
         self._corner_radius = 12
-        self._text_outline = False
+        self._text_outline = False  # any edge at all (the stream page's "shadow")
+        self._text_edge = "false"  # "outline", "true" (soft shadow) or "false"
         self._border = True
 
         self.setWindowFlags(
@@ -133,7 +139,9 @@ class CaptureWindow(QWidget):
         except ValueError:
             radius = 12
         self._corner_radius = min(max(radius, 0), 60)
-        self._text_outline = settings.get(SETTING_OVERLAY_TEXT_OUTLINE, "false") == "true"
+        edge = settings.get(SETTING_OVERLAY_TEXT_OUTLINE, DEFAULT_TEXT_EDGE)
+        self._text_edge = edge if edge in ("outline", "true") else "false"
+        self._text_outline = self._text_edge != "false"
         self._border = settings.get(SETTING_OVERLAY_BORDER, "true") == "true"
         self.update()
 
@@ -147,13 +155,22 @@ class CaptureWindow(QWidget):
         family = self._font_family.replace('"', "")
         return f'font-family: "{family}";' if family else ""
 
+    @property
+    def text_edge(self) -> str:
+        return self._text_edge
+
     def apply_outline(self, labels: tuple[QLabel, ...]) -> None:
-        """Add or remove the soft text shadow (readable over images or footage)."""
+        """Add or remove the text's edge: a black outline or a soft shadow."""
         for label in labels:
-            if not self._text_outline:
+            effect = label.graphicsEffect()
+            if self._text_edge == "outline":
+                if not isinstance(effect, OutlineEffect):
+                    label.setGraphicsEffect(OutlineEffect(label))
+            elif self._text_edge == "true":
+                if not isinstance(effect, QGraphicsDropShadowEffect):
+                    label.setGraphicsEffect(_make_outline(label))
+            else:
                 label.setGraphicsEffect(None)
-            elif label.graphicsEffect() is None:
-                label.setGraphicsEffect(_make_outline(label))
 
     def paintEvent(self, event: QPaintEvent) -> None:  # noqa: N802
         """Draw the background: chroma green, the player's image, or the translucent card."""
@@ -232,6 +249,13 @@ class CaptureWindow(QWidget):
         grip = self._size_grip
         grip.move(self.width() - grip.width(), self.height() - grip.height())
         super().resizeEvent(event)
+        if self.isVisible():
+            self.geometry_changed.emit()
+
+    def moveEvent(self, event) -> None:  # noqa: N802
+        super().moveEvent(event)
+        if self.isVisible():
+            self.geometry_changed.emit()
 
     def enterEvent(self, event: QEnterEvent) -> None:  # noqa: N802
         if self._grip_on_hover:
@@ -283,21 +307,25 @@ class CaptureWindow(QWidget):
         g = self.geometry()
         return f"{g.x()},{g.y()},{g.width()},{g.height()}"
 
-    def restore_geometry_string(self, value: str) -> None:
+    def restore_geometry_string(self, value: str) -> bool:
         """
         Restore geometry from a 'x,y,w,h' string, ignoring invalid input.
 
         If that spot is no longer on a connected display (monitor unplugged,
-        laptop undocked), the window is moved onto the primary display.
+        laptop undocked, or not awake yet at startup), the window is moved onto
+        the primary display. Returns whether it went exactly where asked.
         """
         if not value:
-            return
+            return True
         try:
             x, y, w, h = (int(part) for part in value.split(","))
         except (ValueError, TypeError):
             logger.warning("Could not parse window geometry string: %s", value)
-            return
-        self.setGeometry(fit_to_screens(QRect(x, y, w, h), available_screen_rects()))
+            return True
+        wanted = QRect(x, y, w, h)
+        fitted = fit_to_screens(wanted, available_screen_rects())
+        self.setGeometry(fitted)
+        return fitted == wanted
 
     def keep_on_screen(self) -> None:
         """Pull the window back onto a display if it ended up off every screen."""
@@ -362,6 +390,54 @@ class _HoverGrip(QWidget):
         # A resize can end with the cursor outside (no leave event comes then).
         if not window.rect().contains(window.mapFromGlobal(QCursor.pos())):
             self.hide()
+
+
+class OutlineEffect(QGraphicsEffect):
+    """
+    A solid black edge around each letter, so light text stays readable on a
+    bright game scene (a soft shadow washes out there). The text is drawn in
+    black a little offset all the way round, then itself on top.
+    """
+
+    _DIRECTIONS = 12
+
+    def __init__(self, label: QLabel) -> None:
+        super().__init__(label)  # parented: Python would free it otherwise
+        self._label = label
+
+    def _width(self) -> float:
+        font = self._label.font()
+        size = font.pixelSize() if font.pixelSize() > 0 else font.pointSizeF() * 1.33
+        return max(1.5, min(size * 0.06, 4.0))
+
+    def boundingRectFor(self, rect: QRectF) -> QRectF:  # noqa: N802 - Qt override
+        width = self._width() + 1
+        return rect.adjusted(-width, -width, width, width)
+
+    def draw(self, painter: QPainter) -> None:
+        offset = QPoint()  # filled in with where the padded pixmap goes
+        pixmap = self.sourcePixmap(
+            Qt.CoordinateSystem.LogicalCoordinates, offset,
+            QGraphicsEffect.PixmapPadMode.PadToEffectiveBoundingRect,
+        )
+        if pixmap.isNull():
+            return
+        edge = QPixmap(pixmap.size())
+        edge.setDevicePixelRatio(pixmap.devicePixelRatio())
+        edge.fill(Qt.GlobalColor.transparent)
+        tint = QPainter(edge)
+        tint.drawPixmap(0, 0, pixmap)
+        tint.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceIn)
+        tint.fillRect(edge.rect(), QColor(0, 0, 0))
+        tint.end()
+        width = self._width()
+        for step in range(self._DIRECTIONS):
+            angle = 2 * math.pi * step / self._DIRECTIONS
+            painter.drawPixmap(
+                QPointF(offset.x() + width * math.cos(angle), offset.y() + width * math.sin(angle)),
+                edge,
+            )
+        painter.drawPixmap(offset, pixmap)
 
 
 def _make_outline(label: QLabel) -> QGraphicsDropShadowEffect:
