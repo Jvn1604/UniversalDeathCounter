@@ -160,3 +160,25 @@ def test_a_second_copy_never_shares_the_stream_port() -> None:
     finally:
         first.stop()
         second.stop()
+
+
+def test_save_lights_up_only_when_something_changed(window) -> None:
+    from src.ui.main_window import _PAGE_SETTINGS
+
+    window._show_page(_PAGE_SETTINGS)
+    settings = window._settings
+    assert not settings._save_button.isEnabled()  # nothing to save yet
+    assert not settings._cancel_button.isEnabled()
+    check = settings._confirm_close_check
+    check.setChecked(not check.isChecked())
+    settings._update_save_buttons()  # what the short timer does
+    assert settings._save_button.isEnabled() and settings._cancel_button.isEnabled()
+    check.setChecked(not check.isChecked())  # changed back: nothing to save again
+    settings._update_save_buttons()
+    assert not settings._save_button.isEnabled()
+    check.setChecked(not check.isChecked())
+    settings._save()
+    assert not settings._save_button.isEnabled()  # saved
+    check.setChecked(not check.isChecked())
+    settings.reject()  # Discard Changes
+    assert not settings._save_button.isEnabled()

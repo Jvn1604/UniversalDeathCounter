@@ -384,13 +384,19 @@ class SettingsWindow(QDialog):
         self.setWindowTitle("Settings")
         if not embedded:
             self.setMinimumSize(720, 620)  # all five tabs fit side by side
+        # Save / Discard light up only once something differs from what's saved.
+        self._dirty_timer = QTimer(self)
+        self._dirty_timer.setSingleShot(True)
+        self._dirty_timer.setInterval(120)
+        self._dirty_timer.timeout.connect(self._update_save_buttons)
         self._build_ui()
         self._load_current_values()
         self._connect_preview()
+        self._watch_changes()
         self._tabs.setCurrentIndex(tab)
         self._space_out()
         guard_wheel(self)
-        self._baseline = self._state()
+        self._reset_baseline()
 
     # ----------------------------------------------------------------
     # Embedded page: unsaved changes
@@ -436,6 +442,38 @@ class SettingsWindow(QDialog):
     def has_changes(self) -> bool:
         return self._state() != self._baseline
 
+    def _reset_baseline(self) -> None:
+        """What the controls show now is what's saved."""
+        self._baseline = self._state()
+        self._update_save_buttons()
+
+    def _watch_changes(self) -> None:
+        """Every control: a change rechecks whether there's anything to save."""
+        later = self._dirty_timer.start
+        for widget in self.findChildren(QWidget):
+            if isinstance(widget, QCheckBox):
+                widget.toggled.connect(later)
+            elif isinstance(widget, QComboBox):
+                widget.currentIndexChanged.connect(later)
+            elif isinstance(widget, (QSpinBox, QDoubleSpinBox, QSlider)):
+                widget.valueChanged.connect(later)
+            elif isinstance(widget, QKeySequenceEdit):
+                widget.keySequenceChanged.connect(later)
+            elif isinstance(widget, QLineEdit) and not isinstance(
+                widget.parent(), (QSpinBox, QDoubleSpinBox, QComboBox, QKeySequenceEdit)
+            ):
+                widget.textChanged.connect(later)
+
+    def _update_save_buttons(self) -> None:
+        changed = self.has_changes()
+        self._save_button.setEnabled(changed)
+        self._apply_button.setEnabled(changed)
+        if self._embedded:  # in the dialog it's Cancel, which always closes it
+            self._cancel_button.setEnabled(changed)
+        tip = "" if changed else "Nothing changed yet."
+        for button in (self._save_button, self._apply_button):
+            button.setToolTip(tip or button.property("own_tip") or "")
+
     def reload(self) -> None:
         """Show what's saved (e.g. changed from the overlay menu meanwhile)."""
         self._preview_timer.stop()
@@ -444,7 +482,7 @@ class SettingsWindow(QDialog):
         if self.previewed:
             self.preview_changed.emit({})
             self.previewed = False
-        self._baseline = self._state()
+        self._reset_baseline()
 
     def reload_if_changed(self) -> None:
         """Reload only when a setting changed elsewhere (reloading every visit is slow)."""
@@ -579,14 +617,16 @@ class SettingsWindow(QDialog):
         buttons = QHBoxLayout()
         hint = QLabel("Looks change live as you edit; nothing is kept until you save.")
         hint.setObjectName("Muted")
-        cancel_button = QPushButton("Discard Changes" if self._embedded else "Cancel")
+        cancel_button = self._cancel_button = QPushButton(
+            "Discard Changes" if self._embedded else "Cancel"
+        )
         cancel_button.setObjectName("GhostButton")
         cancel_button.clicked.connect(self.reject)
-        apply_button = QPushButton("Apply")
-        apply_button.setToolTip("Save without closing Settings.")
+        apply_button = self._apply_button = QPushButton("Apply")
+        apply_button.setProperty("own_tip", "Save without closing Settings.")
         apply_button.clicked.connect(self._apply)
         apply_button.setVisible(not self._embedded)  # Save already keeps the page open
-        save_button = QPushButton(" Save")
+        save_button = self._save_button = QPushButton(" Save")
         save_button.setObjectName("AccentButton")
         icons.set_icon(save_button, "check", icons.ACCENT, size=16)
         save_button.setMinimumWidth(120)
@@ -878,6 +918,7 @@ class SettingsWindow(QDialog):
         self._update_overlay_preview()
 
     def _schedule_preview(self, *_args) -> None:
+        self._dirty_timer.start()  # colours, images and themes change looks too
         self._update_overlay_preview()
         self._preview_timer.start()
 
@@ -1094,6 +1135,7 @@ class SettingsWindow(QDialog):
         self._pad_labels[action].setText(combo_label(combo) or "Not set")
         self._pad_labels[action].setToolTip(combo_label(combo))
         self._refresh_conflicts()
+        self._dirty_timer.start()
 
     def _start_recording(self, action: str) -> None:
         if self._gamepad is None or not self._gamepad.connected:
@@ -1373,7 +1415,7 @@ class SettingsWindow(QDialog):
         self.settings_changed.emit()
         self.saved.emit(before)
         self.previewed = False  # what's shown is what's saved now
-        self._baseline = self._state()
+        self._reset_baseline()
         return True
 
     def reject(self) -> None:  # noqa: D102 - stop a pending preview first
