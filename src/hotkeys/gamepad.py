@@ -174,6 +174,10 @@ class ComboTracker:
             ((a, c) for a, c in combos.items() if c), key=lambda item: -len(item[1])
         )
 
+    @property
+    def has_bindings(self) -> bool:
+        return bool(self._combos)
+
     def update(self, held: set[str] | frozenset[str]) -> list[str]:
         """Return the actions whose combo was just completed."""
         held = frozenset(held)
@@ -500,6 +504,9 @@ class GamepadManager(QObject):
         self._tracker = ComboTracker(bindings)
         self._recorder: ComboRecorder | None = None
         self._stop_event = threading.Event()
+        # Wakes the poll early (stop, new bindings, recording): with nothing bound
+        # it only checks once a second whether a controller is plugged in.
+        self._wake = threading.Event()
         self._thread: threading.Thread | None = None
         self.connected = False
 
@@ -512,6 +519,7 @@ class GamepadManager(QObject):
 
     def stop(self) -> None:
         self._stop_event.set()
+        self._wake.set()
         if self._thread is not None:
             self._thread.join(timeout=2.0)
             self._thread = None
@@ -519,11 +527,13 @@ class GamepadManager(QObject):
     def update_bindings(self, bindings: dict[str, str]) -> None:
         with self._lock:
             self._tracker.set_bindings(bindings)
+        self._wake.set()
 
     def start_recording(self) -> None:
         """Next combo pressed and released is emitted via combo_recorded (no actions)."""
         with self._lock:
             self._recorder = ComboRecorder()
+        self._wake.set()
 
     def cancel_recording(self) -> None:
         with self._lock:
@@ -550,6 +560,7 @@ class GamepadManager(QObject):
 
             with self._lock:
                 recorder = self._recorder
+                listening = recorder is not None or self._tracker.has_bindings
                 if recorder is not None:
                     recorded = recorder.update(held)
                     if recorded:
@@ -564,4 +575,5 @@ class GamepadManager(QObject):
             for action in fired:
                 self.action_triggered.emit(action)
 
-            self._stop_event.wait(self._POLL_SECONDS if connected else self._IDLE_SECONDS)
+            self._wake.wait(self._POLL_SECONDS if connected and listening else self._IDLE_SECONDS)
+            self._wake.clear()

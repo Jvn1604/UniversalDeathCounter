@@ -71,3 +71,17 @@ def test_overlay_draws_the_design_once_per_change() -> None:
     assert overlay.design_style.accent == "#2f7bff"
     assert overlay._design_pixmap() is not first
     overlay.deleteLater()
+
+
+def test_controller_poll_rests_with_nothing_bound() -> None:
+    from src.hotkeys.gamepad import ComboTracker, GamepadManager
+
+    assert not ComboTracker({"increment": ""}).has_bindings
+    assert ComboTracker({"increment": "back+dpad_up"}).has_bindings
+    listener = GamepadManager({})
+    listener._wake.clear()
+    listener.update_bindings({"increment": "back+dpad_up"})  # wakes the poll to start listening
+    assert listener._wake.is_set()
+    listener._wake.clear()
+    listener.start_recording()
+    assert listener._wake.is_set()
