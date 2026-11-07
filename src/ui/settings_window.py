@@ -79,6 +79,10 @@ from src.utils.constants import (
     SETTING_OVERLAY_COUNT_LABEL,
     SETTING_OVERLAY_COUNTER_SOURCE,
     SETTING_OVERLAY_DESIGN,
+    SETTING_OVERLAY_DESIGN_ACCENT,
+    SETTING_OVERLAY_DESIGN_FONT,
+    SETTING_OVERLAY_DESIGN_NUMBER,
+    SETTING_OVERLAY_DESIGN_WORD,
     SETTING_OVERLAY_FONT,
     SETTING_OVERLAY_FONT_SIZE,
     SETTING_OVERLAY_LETTER_SPACING,
@@ -726,14 +730,32 @@ class SettingsWindow(QDialog):
         for value, label in DESIGNS:
             self._design_combo.addItem(label, userData=value)
         design_form.addRow("Design", self._design_combo)
+        # A drawn design's own touches (hidden for the Classic card, which uses
+        # the Background and Text settings below).
+        self._design_accent = _ColorChoice("Design Accent Color", default_label="Design's own")
+        self._design_accent.setToolTip(
+            "Seal, neon frame, gravestone or banner swirls and skull."
+        )
+        self._design_number = _ColorChoice("Design Number Color", default_label="Design's own")
+        self._design_word = _ColorChoice("Design Word Color", default_label="Design's own")
+        self._design_font_combo = _font_combo("Design's own font")
+        self._design_rows = []
+        for label, widget in (("Accent color", self._design_accent),
+                              ("Number color", self._design_number),
+                              ("Word color", self._design_word),
+                              ("Font", self._design_font_combo)):
+            design_form.addRow(label, widget)
+            self._design_rows.append((design_form.labelForField(widget), widget))
         design_note = QLabel(
             "Classic card uses everything below. The other designs are complete looks "
             "of their own: they show the count with your death word (DEATH shows as "
-            "\"Deaths\"), on the overlay and in the OBS Browser Source."
+            "\"Deaths\"), on the overlay and in the OBS Browser Source. Colour them "
+            "and pick their font above."
         )
         design_note.setObjectName("Muted")
         design_note.setWordWrap(True)
         design_form.addRow(design_note)
+        self._design_combo.currentIndexChanged.connect(self._show_design_rows)
         layout.addWidget(design_group)
 
         overlay_group = QGroupBox("Background")
@@ -879,6 +901,7 @@ class SettingsWindow(QDialog):
             self._bg_mode_combo,
             self._overlay_font_combo,
             self._design_combo,
+            self._design_font_combo,
         ):
             combo.currentIndexChanged.connect(self._schedule_preview)
         self._align_combo.currentIndexChanged.connect(self._schedule_preview)
@@ -898,6 +921,9 @@ class SettingsWindow(QDialog):
             self._secondary_color,
             self._ui_bg_image,
             self._overlay_image,
+            self._design_accent,
+            self._design_number,
+            self._design_word,
         ):
             choice.changed.connect(self._schedule_preview)
         self._ui_bg_dim.valueChanged.connect(self._schedule_preview)
@@ -916,6 +942,13 @@ class SettingsWindow(QDialog):
         ):
             check.toggled.connect(self._schedule_preview)
         self._update_overlay_preview()
+
+    def _show_design_rows(self, *_args) -> None:
+        """The design's colour and font rows: only for a drawn design."""
+        drawn = self._design_combo.currentData() != "classic"
+        for label, widget in self._design_rows:
+            label.setVisible(drawn)
+            widget.setVisible(drawn)
 
     def _schedule_preview(self, *_args) -> None:
         self._dirty_timer.start()  # colours, images and themes change looks too
@@ -953,6 +986,10 @@ class SettingsWindow(QDialog):
             SETTING_OVERLAY_TEXT_OUTLINE: flag(self._outline_check),
             SETTING_OVERLAY_BG_MODE: self._bg_mode_combo.currentData(),
             SETTING_OVERLAY_DESIGN: self._design_combo.currentData(),
+            SETTING_OVERLAY_DESIGN_ACCENT: self._design_accent.color(),
+            SETTING_OVERLAY_DESIGN_NUMBER: self._design_number.color(),
+            SETTING_OVERLAY_DESIGN_WORD: self._design_word.color(),
+            SETTING_OVERLAY_DESIGN_FONT: self._design_font_combo.currentData() or "",
             SETTING_OVERLAY_COUNTER_SOURCE: self._counter_source_combo.currentData(),
             SETTING_OVERLAY_TEXT_COLOR: self._text_color,
             SETTING_OVERLAY_FONT_SIZE: str(self._font_size_spin.value()),
@@ -1276,6 +1313,11 @@ class SettingsWindow(QDialog):
 
         _select_data(self._bg_mode_combo, settings.get(SETTING_OVERLAY_BG_MODE, "dark"))
         _select_data(self._design_combo, settings.get(SETTING_OVERLAY_DESIGN, "classic"))
+        self._design_accent.set_color(settings.get(SETTING_OVERLAY_DESIGN_ACCENT, ""))
+        self._design_number.set_color(settings.get(SETTING_OVERLAY_DESIGN_NUMBER, ""))
+        self._design_word.set_color(settings.get(SETTING_OVERLAY_DESIGN_WORD, ""))
+        _select_data(self._design_font_combo, settings.get(SETTING_OVERLAY_DESIGN_FONT, ""))
+        self._show_design_rows()
         _select_data(
             self._counter_source_combo,
             settings.get(SETTING_OVERLAY_COUNTER_SOURCE, DEFAULT_COUNTER_SOURCE),

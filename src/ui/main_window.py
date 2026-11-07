@@ -4239,13 +4239,13 @@ class MainWindow(QMainWindow):
             skull_png = bytes(data)
         frame, frame_png = "", None
         if is_design(overlay.design):
-            frame = (f"{overlay.design}-{number}-{int(overlay._show_skull)}-"
-                     f"{abs(hash(overlay._count_style.word))}")
+            look = abs(hash((overlay._count_style.word, overlay.design_style)))
+            frame = f"{overlay.design}-{number}-{int(overlay._show_skull)}-{look}"
             if frame != self._stream_frame_key:
                 self._stream_frame_key = frame
                 frame_png = render_design_png(
                     overlay.design, overlay._count_style.word, number,
-                    skull=overlay._show_skull,
+                    skull=overlay._show_skull, style=overlay.design_style,
                 )
         self._stream.set_state(
             {

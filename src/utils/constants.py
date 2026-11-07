@@ -193,6 +193,11 @@ BUG_SHEET_URL: str = (
 SETTING_SAVE_DEATHS_PREFIX: str = "save_deaths_"
 # Overlay design: "classic" or one drawn in src/overlay/designs.py.
 SETTING_OVERLAY_DESIGN: str = "overlay_design"
+# A drawn design's own touches ("" = the design's own colour / font).
+SETTING_OVERLAY_DESIGN_ACCENT: str = "overlay_design_accent"
+SETTING_OVERLAY_DESIGN_NUMBER: str = "overlay_design_number"
+SETTING_OVERLAY_DESIGN_WORD: str = "overlay_design_word"
+SETTING_OVERLAY_DESIGN_FONT: str = "overlay_design_font"
 SETTING_STREAM_OVERLAY: str = "stream_overlay"  # "true" = OBS Browser Source page is served
 # Console players
 SETTING_PHONE_REMOTE: str = "phone_remote_enabled"  # "true" = serve the phone page
