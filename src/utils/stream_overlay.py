@@ -89,7 +89,12 @@ function render(s) {
   card.style.padding = s.padding + "px " + Math.round(s.padding * 1.2) + "px";
   card.style.textAlign = s.align;
   card.style.fontFamily = s.font || "Segoe UI, sans-serif";
-  card.style.textShadow = s.shadow ? "0 0 6px rgba(0,0,0,.9), 0 0 2px #000" : "none";
+  // "outline": a solid black edge (8 directions); "true": a soft shadow.
+  const edge = [[2,0],[-2,0],[0,2],[0,-2],[1.5,1.5],[-1.5,1.5],[1.5,-1.5],[-1.5,-1.5]]
+    .map(([x, y]) => `${x}px ${y}px 0 #000`).join(", ");
+  card.style.textShadow = s.shadow === "outline" ? edge
+    : (s.shadow === true || s.shadow === "true") ? "0 0 6px rgba(0,0,0,.9), 0 0 2px #000"
+    : "none";
   const small = {color: s.secondary};
   for (const [id, text, size] of [["game", s.game, 13], ["boss", s.boss, 12],
                                   ["caption", s.caption, 10], ["stats", s.stats, 11]]) {

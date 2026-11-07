@@ -191,6 +191,7 @@ from src.ui.widgets import (
 from src.utils import artwork, presets, save_files
 from src.utils.backgrounds import cover, load_background
 from src.utils.constants import (
+    ACCENT_COLOR,
     APP_BRAND,
     APP_NAME,
     APP_SHORT_NAME,
@@ -2349,11 +2350,34 @@ class MainWindow(QMainWindow):
             for kind in (SCREEN_DEATH, SCREEN_VICTORY, SCREEN_PAUSE)
         }
         self._detect_page_info.setText(
+            f"{self._detection_next_step(game_id, mode, counts[SCREEN_DEATH])}"
             f"<b>Method:</b> {_MODE_NAMES.get(mode, mode)} &nbsp; · &nbsp; "
             f"<b>Watching:</b> {watched}<br>"
             f"<b>Saved screens:</b> {counts[SCREEN_DEATH]} death · "
             f"{counts[SCREEN_VICTORY]} boss victory · {counts[SCREEN_PAUSE]} pause/loading"
         )
+
+    def _detection_next_step(self, game_id: int, mode: str, death_screens: int) -> str:
+        """Setting up auto-detect, in three steps: which one is next (a line of HTML)."""
+        row_ = self._database.get_game_detection(game_id)
+        source = (bool(row_ is not None and row_["exe_path"]) or bool(self._screen_display(game_id))
+                  or bool(self._obs_source(game_id)))
+        calibrate = self._database.get_setting(SETTING_HOTKEY_CALIBRATE, "f8").upper()
+        undo = self._database.get_setting(SETTING_HOTKEY_UNDO, "f11").upper()
+        reads_itself = mode in (DETECTION_MODE_SOULS, DETECTION_MODE_LOG, DETECTION_MODE_HEALTH)
+        if not source and mode != DETECTION_MODE_LOG:
+            step = ("Step 1 of 3: tell it what to watch. Pick the game's .exe below, or "
+                    "choose A whole display.")
+        elif not death_screens and not reads_itself:
+            step = (f"Step 2 of 3: teach it your death screen. In the game, when the death "
+                    f"screen shows, press <b>{calibrate}</b> and drag a box around the death "
+                    "text (or use Setups Library / Set Up Detection).")
+        elif mode == DETECTION_MODE_OFF:
+            step = "Last step: turn it on with Set Up Detection."
+        else:
+            step = (f"Step 3 of 3: ready. Die once: the count goes up by itself "
+                    f"(<b>{undo}</b> takes back a wrong one).")
+        return f"<span style='color: {ACCENT_COLOR}; font-weight: 600;'>{step}</span><br>"
 
     # ----------------------------------------------------------------
     # System tray
@@ -2548,6 +2572,7 @@ class MainWindow(QMainWindow):
         )
         self._hotkey_manager.action_triggered.connect(self._note_key_received)
         self._hotkey_manager.registration_failed.connect(self._on_hotkeys_failed)
+        self._hotkey_manager.registration_recovered.connect(self._on_hotkeys_recovered)
         self._hotkey_manager.start()
 
         pads = self._pad_bindings()
@@ -2579,14 +2604,19 @@ class MainWindow(QMainWindow):
                 QTimer.singleShot(3000, self._on_settings_changed_hotkeys)
         return super().nativeEvent(event_type, message)
 
+    def _on_hotkeys_recovered(self, freed: list) -> None:
+        keys = ", ".join(key.upper() for _action, key in freed)
+        self._toast.say(f"{keys} works now: the other program let go of it", icon="keyboard")
+
     def _on_hotkeys_failed(self, failures: list) -> None:
         labels = {action: label for action, label, _key, _default in CONTROL_ACTIONS}
         keys = ", ".join(
             f"{key.upper()} ({labels.get(action, action)})" for action, key in failures
         )
         message = (
-            f"Hotkey unavailable: {keys}. Another program is already using it, or the key "
-            "isn't supported. Pick a different key in Settings → Controls."
+            f"Hotkey unavailable: {keys}. Another program (an overlay, recorder or "
+            f"launcher) is using it. {APP_SHORT_NAME} keeps trying and tells you when it "
+            "works, or pick a different key in Settings → Controls."
         )
         if self._tray is not None:
             self._tray.showMessage(
@@ -4271,7 +4301,7 @@ class MainWindow(QMainWindow):
                 "card": card,
                 "radius": overlay._corner_radius,
                 "padding": overlay._padding,
-                "shadow": overlay._text_outline,
+                "shadow": overlay.text_edge,
                 "skull": f"{skull_key[0]}-{skull_px}-{overlay._text_color.lstrip('#')}",
                 "skull_px": skull_px,
                 "animate": True,

@@ -159,7 +159,15 @@ SETTING_OVERLAY_CARD_COLOR: str = "overlay_card_color"  # "" = near-black
 SETTING_OVERLAY_SECONDARY_COLOR: str = "overlay_secondary_color"  # "" = automatic
 SETTING_OVERLAY_BG_IMAGE: str = "overlay_background_image"  # used by the "image" background
 SETTING_OVERLAY_CORNER_RADIUS: str = "overlay_corner_radius"
-SETTING_OVERLAY_TEXT_OUTLINE: str = "overlay_text_outline"  # "true" = shadow behind text
+# The text's edge: "outline" (solid black, readable on bright scenes), "true"
+# (a soft shadow, the older choice) or "false" (none).
+SETTING_OVERLAY_TEXT_OUTLINE: str = "overlay_text_outline"
+DEFAULT_TEXT_EDGE: str = "outline"
+TEXT_EDGES: tuple[tuple[str, str], ...] = (
+    ("outline", "Black outline (readable on bright scenes)"),
+    ("true", "Soft shadow"),
+    ("false", "None"),
+)
 SETTING_OVERLAY_COUNTER_SOURCE: str = "overlay_counter_source"  # session|boss|total
 # The big number shows the game's all-time deaths unless the player picks
 # otherwise: a session restarts at 0, which looked like lost deaths.

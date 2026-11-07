@@ -132,7 +132,7 @@ def test_settings_appearance_round_trip(tmp_path) -> None:
         assert dialog._ui_bg_image.path() == str(image)
         dialog._ui_bg_dim.setValue(35)
         dialog._radius_spin.setValue(4)
-        dialog._outline_check.setChecked(True)
+        dialog._text_edge_combo.setCurrentIndex(dialog._text_edge_combo.findData("true"))
         font_index = dialog._overlay_font_combo.count() - 1
         dialog._overlay_font_combo.setCurrentIndex(font_index)
         changed: list[bool] = []

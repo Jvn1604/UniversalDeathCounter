@@ -312,14 +312,15 @@ QLabel#StatusPill[state="warning"] {
 }
 
 QLabel#KeyCap {
-    background-color: #2b2e3a;
-    border: 1px solid #4c5162;
-    border-bottom: 3px solid #5d6275;
+    /* A light key, like a real keyboard's: stands out on the dark buttons. */
+    background-color: #e8e9ee;
+    border: 1px solid #ffffff;
+    border-bottom: 3px solid #9ea2af;
     border-radius: 6px;
     padding: 2px 9px;
     font-size: 12px;
     font-weight: 800;
-    color: #ffffff;
+    color: #15161b;
 }
 
 QLabel#GuideBadge {
@@ -402,6 +403,8 @@ QPushButton#AccentButton:disabled {
 QPushButton QLabel:disabled,
 QPushButton QLabel#KeyCap:disabled {
     color: #555a66;
+    background-color: #24262f;
+    border-color: #30333e;
 }
 
 QPushButton#AccentButton QLabel:disabled,

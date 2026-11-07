@@ -109,7 +109,7 @@ Every 10 deaths your skull earns something new: horns, a nose ring, blades, a cr
 
 ### 📺 Made for streaming
 - **The overlay reads `DEATH - 12`** with your skull beside it and its name underneath (`THIS SESSION · BRUISED`). Turn the skull off from the overlay's right-click menu or its settings.
-- **OBS-ready overlay, styled your way:** a card in any color, your own picture as the background, or green-screen mode for OBS's Chroma Key. Choose the font, number and text colors, size, corner roundness, opacity, a shadow that keeps text readable, and which lines show.
+- **OBS-ready overlay, styled your way:** a card in any color, your own picture as the background, or green-screen mode for OBS's Chroma Key. Choose the font, number and text colors, size, corner roundness, opacity, a solid black outline (or a soft shadow) that keeps text readable on bright scenes, and which lines show.
 - **`deaths.txt`** for OBS Text sources, with your own template, e.g. `{game} - {boss}: {deaths}`.
 - **OBS Setup** (sidebar) walks you through every method, with one-click setup buttons. Best: the **Browser Source**. OBS shows the counter straight from the app, truly transparent (no green screen), and the number pops on every death. Only this PC can open its link.
 - **Right-click the overlay** to count from it, switch what the big number shows, change the background or number size, lock it in place, keep it on top, make it click-through, or move it to another display. **Hide From My Screen** moves it behind your other windows (your game covers it) and lets clicks through, while it keeps counting live for OBS (Window Capture or the Browser Source); the overlay key, the sidebar or *Bring Back* puts it in front again. **Turn Overlay Off** turns it off everywhere. It comes back the way you left it next time you start the app. Double-click it for all its settings.
@@ -159,6 +159,7 @@ The **Console** page (sidebar) makes DUDC work when the game runs on a console:
 - **Tray menu** has +1, Undo, Boss Defeated, pause detection, start/split the timer, the timer window, mini mode and the overlay.
 - **One place for everything:** pages and tools in the sidebar (Settings is a page too, not a separate window), profiles and saves at the top right. No duplicated menus.
 - **Keeps counting in the background:** closing asks whether to keep counting in the tray, so F9 / F10, the overlay and auto-detect keep working. Settings → Controls shows a key check: press a key anywhere (even in a game) and it shows when the app gets it.
+- **Death screens from screenshots match anyway:** a death screen taught from an uploaded screenshot framed a little differently from the game (whole monitor, title bar, another resolution) is still found. The Detection page names the next setup step.
 - **Roll back:** ⋮ → *Roll Back to an Earlier Version…* installs an older release if an update gave you trouble (your data stays).
 - **One-click updates:** the card at the bottom of the sidebar shows whether you are up to date (checked at startup, every 6 hours, or with its refresh button). When a new version is out, click **Update**: the installed app downloads it, updates itself and reopens. (Portable copies, Mac and Linux open the download page.)
 - Deleting a game tells you exactly what goes with it (deaths, bosses, sessions, runs).
@@ -238,7 +239,7 @@ To keep the count accurate:
 ## Troubleshooting
 
 **A hotkey doesn't work / "Hotkey unavailable"**
-Another program has already registered that key. On many PCs plain `F12` is taken. Pick another key in **Settings → Controls**; the editor warns you as you type.
+Another program has already registered that key. On many PCs plain `F12` is taken. The app keeps trying and tells you once the key is free; or pick another key in **Settings → Controls** (the editor warns you as you type). On a laptop, the F keys may be brightness/volume keys: hold **Fn** with them, or turn on Fn Lock.
 - **Mac:** F-keys need **fn** unless you turn on standard function keys (System Settings → Keyboard).
 - **Linux:** a pure Wayland session doesn't allow global keys; see the Mac and Linux notes under Download.
 

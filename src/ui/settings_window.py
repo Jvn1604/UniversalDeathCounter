@@ -55,6 +55,7 @@ from src.utils.backgrounds import IMAGE_FILTER, import_background
 from src.utils.constants import (
     CONTROL_ACTIONS,
     DEFAULT_COUNTER_SOURCE,
+    DEFAULT_TEXT_EDGE,
     FEATURES,
     SETTING_BOSS_AUTO_ADVANCE,
     SETTING_BOSS_AUTO_SPLIT,
@@ -117,6 +118,7 @@ from src.utils.constants import (
     SETTING_UI_COUNTER_COLOR,
     SETTING_UI_FONT,
     SETTING_UI_TEXT_COLOR,
+    TEXT_EDGES,
     pad_setting,
 )
 from src.utils.logger import get_logger
@@ -808,8 +810,11 @@ class SettingsWindow(QDialog):
         text_form.addRow("Number color", color_row)
         self._secondary_color = _ColorChoice("Overlay Text Color", default_label="Auto")
         text_form.addRow("Other text color", self._secondary_color)
-        self._outline_check = QCheckBox("Shadow behind text (readable over images)")
-        text_form.addRow(self._outline_check)
+        self._text_edge_combo = QComboBox()
+        for value, label in TEXT_EDGES:
+            self._text_edge_combo.addItem(label, userData=value)
+        self._text_edge_combo.setToolTip("Keeps light text readable over bright game scenes.")
+        text_form.addRow("Text edge", self._text_edge_combo)
         self._count_label_edit = QLineEdit()
         self._count_label_edit.setPlaceholderText("Empty: just the number")
         self._count_label_edit.setMaxLength(24)
@@ -902,6 +907,7 @@ class SettingsWindow(QDialog):
             self._overlay_font_combo,
             self._design_combo,
             self._design_font_combo,
+            self._text_edge_combo,
         ):
             combo.currentIndexChanged.connect(self._schedule_preview)
         self._align_combo.currentIndexChanged.connect(self._schedule_preview)
@@ -932,7 +938,6 @@ class SettingsWindow(QDialog):
         self._radius_spin.valueChanged.connect(self._schedule_preview)
         self._font_size_spin.valueChanged.connect(self._schedule_preview)
         for check in (
-            self._outline_check,
             self._show_game_check,
             self._show_boss_check,
             self._show_stats_check,
@@ -983,7 +988,7 @@ class SettingsWindow(QDialog):
             SETTING_OVERLAY_CORNER_RADIUS: str(self._radius_spin.value()),
             SETTING_OVERLAY_FONT: self._overlay_font_combo.currentData() or "",
             SETTING_OVERLAY_SECONDARY_COLOR: self._secondary_color.color(),
-            SETTING_OVERLAY_TEXT_OUTLINE: flag(self._outline_check),
+            SETTING_OVERLAY_TEXT_OUTLINE: self._text_edge_combo.currentData(),
             SETTING_OVERLAY_BG_MODE: self._bg_mode_combo.currentData(),
             SETTING_OVERLAY_DESIGN: self._design_combo.currentData(),
             SETTING_OVERLAY_DESIGN_ACCENT: self._design_accent.color(),
@@ -1073,7 +1078,8 @@ class SettingsWindow(QDialog):
 
         self._last_key_label = QLabel(
             "Key check: press one of your keys anywhere, even in a game. It shows here "
-            "when the app receives it."
+            "when the app receives it. Nothing shows on a laptop? Its F keys may be "
+            "brightness/volume keys: hold Fn with them (or turn on Fn Lock, often Fn+Esc)."
         )
         self._last_key_label.setObjectName("Muted")
         self._last_key_label.setWordWrap(True)
@@ -1292,9 +1298,8 @@ class SettingsWindow(QDialog):
         self._radius_spin.setValue(int(settings.get(SETTING_OVERLAY_CORNER_RADIUS, "12") or 12))
         _select_data(self._overlay_font_combo, settings.get(SETTING_OVERLAY_FONT, ""))
         self._secondary_color.set_color(settings.get(SETTING_OVERLAY_SECONDARY_COLOR, ""))
-        self._outline_check.setChecked(
-            settings.get(SETTING_OVERLAY_TEXT_OUTLINE, "false") == "true"
-        )
+        edge = settings.get(SETTING_OVERLAY_TEXT_OUTLINE, DEFAULT_TEXT_EDGE)
+        _select_data(self._text_edge_combo, edge if edge in ("outline", "true") else "false")
         self._confirm_close_check.setChecked(
             settings.get(SETTING_CONFIRM_CLOSE, "true") == "true"
         )

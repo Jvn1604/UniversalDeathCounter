@@ -175,6 +175,7 @@ class OverlayWindow(CaptureWindow):
                 self._death_label,
                 self._caption_label,
                 self._stats_label,
+                self._skull_label,
             )
         )
 

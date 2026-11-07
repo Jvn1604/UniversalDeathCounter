@@ -43,6 +43,10 @@ logger = get_logger(__name__)
 
 _WM_HOTKEY = 0x0312
 _WM_QUIT = 0x0012
+_WM_TIMER = 0x0113
+# A key another program holds (an overlay, a recorder, a launcher) is tried
+# again this often, so it starts working once that program lets go of it.
+RETRY_TAKEN_MS: int = 5000
 _MOD_NOREPEAT = 0x4000
 
 _MODIFIERS: dict[str, int] = {
@@ -128,11 +132,13 @@ def parse_hotkey(text: str) -> tuple[int, int] | None:
 class _HotkeyThread(threading.Thread):
     """Owns the Windows hotkey registrations and pumps WM_HOTKEY messages."""
 
-    def __init__(self, combos: list[tuple[str, int, int]], on_hotkey, on_failed) -> None:
+    def __init__(self, combos: list[tuple[str, int, int]], on_hotkey, on_failed,
+                 on_recovered=None) -> None:
         super().__init__(name="HotkeyListener", daemon=True)
         self._combos = combos  # (action, modifiers, vk)
         self._on_hotkey = on_hotkey
         self._on_failed = on_failed
+        self._on_recovered = on_recovered
         self._thread_id = 0
         self.ready = threading.Event()
         self.held_combos: set[tuple[int, int]] = set()  # (modifiers, vk) we registered
@@ -158,13 +164,30 @@ class _HotkeyThread(threading.Thread):
             time.sleep(0.25)
         failed = [action for _id, (action, _m, _vk) in pending]
         self.ready.set()
+        timer = 0
         if failed:
             self._on_failed(failed)
+            timer = _user32.SetTimer(None, 0, RETRY_TAKEN_MS, None)
 
         msg = wintypes.MSG()
         while _user32.GetMessageW(ctypes.byref(msg), None, 0, 0) > 0:
             if msg.message == _WM_HOTKEY and 1 <= msg.wParam <= len(self._combos):
                 self._on_hotkey(self._combos[msg.wParam - 1][0])
+            elif msg.message == _WM_TIMER and pending:
+                freed = []
+                for hotkey_id, (action, modifiers, vk) in list(pending):
+                    if _user32.RegisterHotKey(None, hotkey_id, modifiers | _MOD_NOREPEAT, vk):
+                        registered.append(hotkey_id)
+                        self.held_combos.add((modifiers, vk))
+                        pending.remove((hotkey_id, (action, modifiers, vk)))
+                        freed.append(action)
+                if freed and self._on_recovered is not None:
+                    self._on_recovered(freed)
+                if not pending and timer:
+                    _user32.KillTimer(None, timer)
+                    timer = 0
+        if timer:
+            _user32.KillTimer(None, timer)
 
         for hotkey_id in registered:
             _user32.UnregisterHotKey(None, hotkey_id)
@@ -191,7 +214,7 @@ def global_hotkeys_available() -> bool:
     return False
 
 
-def _make_listener(combos, on_hotkey, on_failed):
+def _make_listener(combos, on_hotkey, on_failed, on_recovered=None):
     """This OS's listener: has start(), stop(), ready and held_combos."""
     if IS_MAC:
         from src.hotkeys.mac_hotkeys import MacHotkeys
@@ -201,7 +224,7 @@ def _make_listener(combos, on_hotkey, on_failed):
         from src.hotkeys.x11_hotkeys import X11HotkeyThread
 
         return X11HotkeyThread(combos, on_hotkey, on_failed)
-    return _HotkeyThread(combos, on_hotkey, on_failed)
+    return _HotkeyThread(combos, on_hotkey, on_failed, on_recovered)
 
 
 def _probe(modifiers: int, vk: int) -> bool:
@@ -251,6 +274,8 @@ class HotkeyManager(QObject):
     next_boss_triggered = Signal()
     action_triggered = Signal(str)
     registration_failed = Signal(list)
+    # [(action, key), ...] that were taken and now work (the other program let go).
+    registration_recovered = Signal(list)
 
     def __init__(self, parent: QObject | None = None, **keys: str) -> None:
         """
@@ -292,7 +317,9 @@ class HotkeyManager(QObject):
             else:
                 combos.append((action, *parsed))
 
-        self._thread = _make_listener(combos, self._emit_action, self._report_taken)
+        self._thread = _make_listener(
+            combos, self._emit_action, self._report_taken, self._report_recovered
+        )
         self._thread.start()
         self._thread.ready.wait(timeout=3.0)
         if unknown:
@@ -345,6 +372,11 @@ class HotkeyManager(QObject):
         if self._thread is not None and parsed in self._thread.held_combos:
             return True
         return _probe(*parsed)
+
+    def _report_recovered(self, actions: list[str]) -> None:
+        freed = [(action, self._bindings[action]) for action in actions]
+        logger.info("Hotkeys free again and now registered: %s", freed)
+        self.registration_recovered.emit(freed)
 
     def _report_taken(self, actions: list[str]) -> None:
         taken = [(action, self._bindings[action]) for action in actions]
