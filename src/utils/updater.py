@@ -98,12 +98,18 @@ def download_installer(
     return destination
 
 
-def launch_installer(installer: Path) -> None:
-    """Start the installer silently, detached, so the app can quit right after."""
+# A rollback runs the older installer's own window (its Launch button opens the
+# app as the player). Silent, versions before 2.17.0 reopened the app as
+# administrator, which then showed an empty count until the next start.
+ROLLBACK_ARGS = ("/SP-", "/CLOSEAPPLICATIONS")
+
+
+def launch_installer(installer: Path, args: tuple[str, ...] = INSTALLER_ARGS) -> None:
+    """Start the installer (silently, by default), detached, so the app can quit right after."""
     flags = 0
     if sys.platform == "win32":
         flags = subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
     subprocess.Popen(  # noqa: S603 - our own downloaded, size-checked installer
-        [str(installer), *INSTALLER_ARGS], creationflags=flags, close_fds=True
+        [str(installer), *args], creationflags=flags, close_fds=True
     )
-    logger.info("Started the update installer: %s", installer)
+    logger.info("Started the installer: %s %s", installer, " ".join(args))

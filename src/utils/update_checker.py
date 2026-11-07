@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import threading
 import urllib.request
+from dataclasses import dataclass
 
 from PySide6.QtCore import QObject, Signal
 
@@ -28,6 +29,44 @@ _API_URL = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
 _LATEST_PAGE = f"https://github.com/{GITHUB_REPO}/releases/latest"
 _DOWNLOAD_URL = f"https://github.com/{GITHUB_REPO}/releases/download/{{tag}}/{INSTALLER_NAME}"
 _TIMEOUT_SECONDS = 6
+
+
+_RELEASES_URL = f"https://api.github.com/repos/{GITHUB_REPO}/releases?per_page=30"
+
+
+@dataclass(frozen=True)
+class Release:
+    """One published version (for rolling back)."""
+
+    tag: str
+    page_url: str
+    installer_url: str  # "" if it has no Windows installer
+    installer_size: int
+
+
+def earlier_releases() -> list[Release]:
+    """Published versions older than this one, newest first (raises OSError offline)."""
+    request = urllib.request.Request(
+        _RELEASES_URL, headers={"Accept": "application/vnd.github+json"}
+    )
+    with urllib.request.urlopen(request, timeout=_TIMEOUT_SECONDS) as response:
+        payload = json.loads(response.read().decode("utf-8"))
+    current = _parse_version(APP_VERSION)
+    releases = []
+    for item in payload if isinstance(payload, list) else []:
+        tag = str(item.get("tag_name", ""))
+        if item.get("draft") or item.get("prerelease") or not tag:
+            continue
+        if _parse_version(tag) >= current:
+            continue
+        installer = next((a for a in item.get("assets") or []
+                          if a.get("name") == INSTALLER_NAME), {})
+        releases.append(Release(
+            tag=tag, page_url=str(item.get("html_url", "")),
+            installer_url=str(installer.get("browser_download_url", "")),
+            installer_size=int(installer.get("size") or 0),
+        ))
+    return sorted(releases, key=lambda r: _parse_version(r.tag), reverse=True)
 
 
 def _parse_version(text: str) -> tuple[int, ...]:

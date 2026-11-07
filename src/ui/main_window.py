@@ -285,9 +285,11 @@ from src.utils.profiles import DEFAULT_PROFILE_NAME, ProfileManager
 from src.utils.screens import display_name, fit_to_screens, screen_index_at
 from src.utils.stream_overlay import StreamOverlay
 from src.utils.stream_writer import render_template, write_deaths_file
-from src.utils.update_checker import UpdateChecker
+from src.utils.update_checker import UpdateChecker, earlier_releases
 from src.utils.updater import (
+    INSTALLER_ARGS,
     INSTALLER_NAME,
+    ROLLBACK_ARGS,
     UpdateError,
     download_installer,
     is_installed_copy,
@@ -612,6 +614,7 @@ class MainWindow(QMainWindow):
         )
         menu.addSeparator()
         self._menu_action(menu, "info", "About", self._open_about_window)
+        self._menu_action(menu, "rotate-ccw", "Roll Back to an Earlier Version…", self._roll_back)
         menu.addSeparator()
         self._menu_action(menu, "trash-2", "Clear All Data…", self._clear_all_data)
         self._menu_action(menu, "power", "Quit", self._quit_app)
@@ -3255,8 +3258,49 @@ class MainWindow(QMainWindow):
         )
         if confirm != QMessageBox.StandardButton.Yes:
             return
-        progress = QProgressDialog("Downloading the update…", "Cancel", 0, 100, self)
-        progress.setWindowTitle("Update")
+        self._download_and_install(url, size, "Update")
+
+    def _roll_back(self) -> None:
+        """Install an earlier version (e.g. if an update broke something for you)."""
+        try:
+            releases = earlier_releases()
+        except (OSError, ValueError) as exc:
+            QMessageBox.warning(self, "Roll Back", f"Couldn't list the earlier versions: {exc}")
+            return
+        if not releases:
+            QMessageBox.information(self, "Roll Back", "There's no earlier version to go back to.")
+            return
+        labels = [release.tag for release in releases]
+        choice, ok = QInputDialog.getItem(
+            self, "Roll Back to an Earlier Version",
+            f"You have v{APP_VERSION}. Go back to:", labels, 0, False,
+        )
+        if not ok:
+            return
+        release = releases[labels.index(choice)]
+        if not is_installed_copy() or not release.installer_url:
+            QDesktopServices.openUrl(QUrl(release.page_url))  # portable, Mac, Linux
+            return
+        confirm = QMessageBox.question(
+            self, "Roll Back",
+            f"Install {release.tag} instead of v{APP_VERSION}?\n\n"
+            "Your games, deaths and settings stay (they're saved first). The "
+            f"{release.tag} installer opens: click through it, then Launch. Newer "
+            "features won't be there, and the app will offer the update again "
+            "(turn off update checks in Settings if you want to stay).",
+        )
+        if confirm != QMessageBox.StandardButton.Yes:
+            return
+        self._write_progress_autosave()
+        self._download_and_install(
+            release.installer_url, release.installer_size, "Roll Back", ROLLBACK_ARGS
+        )
+
+    def _download_and_install(
+        self, url: str, size: int, title: str, args: tuple[str, ...] = INSTALLER_ARGS
+    ) -> None:
+        progress = QProgressDialog("Downloading the installer…", "Cancel", 0, 100, self)
+        progress.setWindowTitle(title)
         progress.setMinimumDuration(0)
         destination = Path(tempfile.gettempdir()) / "DUDC-update" / INSTALLER_NAME
         download = self._update_download = _UpdateDownload(url, size, destination)
@@ -3268,14 +3312,14 @@ class MainWindow(QMainWindow):
         def failed(message: str) -> None:
             progress.close()
             if not download.cancelled.is_set():
-                QMessageBox.warning(self, "Update Failed", message)
+                QMessageBox.warning(self, f"{title} Failed", message)
 
         def succeeded(path: str) -> None:
             progress.close()
             try:
-                launch_installer(Path(path))
+                launch_installer(Path(path), args)
             except OSError as exc:
-                QMessageBox.warning(self, "Update Failed", f"Couldn't start the installer: {exc}")
+                QMessageBox.warning(self, f"{title} Failed", f"Couldn't start the installer: {exc}")
                 return
             self._quit_app(confirm=False)  # the installer replaces the files and reopens the app
 
