@@ -4063,6 +4063,9 @@ class MainWindow(QMainWindow):
 
     def _apply_counted(self, action: Callable[[], CounterSnapshot]) -> None:
         """Run a +1/-1/undo and pass the change on to a speedrun in progress."""
+        if self._counter_manager.current_game_id is None:
+            self._say_no_game()
+            return
         # Only a speedrun needs the count from before (a full snapshot is 3 queries).
         before = self._session_manager.get_session_deaths() if self._speedrun is not None else 0
         snapshot = action()
@@ -4074,6 +4077,27 @@ class MainWindow(QMainWindow):
                 self._autosave()
             self._timer_window.refresh()
         self._apply_snapshot(snapshot)
+
+    def _say_no_game(self) -> None:
+        """A death key with no game picked: say so, where the player will see it."""
+        now = time.monotonic()
+        if now - getattr(self, "_no_game_said_at", -1e9) < 20:
+            return  # once in a while, not on every press
+        self._no_game_said_at = now
+        logger.info("Death key pressed with no game picked")
+        has_games = bool(self._database.get_games())
+        message = (
+            "No game is picked, so that death wasn't counted. Pick your game on the "
+            "Death Counter page." if has_games else
+            "There's no game yet, so that death wasn't counted. Add your game first "
+            "(Home → Add Your First Game)."
+        )
+        if self.isActiveWindow():
+            self._toast.say(message, icon="gamepad-2")
+        elif self._tray is not None:
+            self._tray.showMessage(APP_NAME, message, QSystemTrayIcon.MessageIcon.Warning, 6000)
+        else:
+            self._toast.say(message, icon="gamepad-2")
 
     def _on_reset_session(self) -> None:
         confirm = QMessageBox.question(
@@ -4536,16 +4560,31 @@ class MainWindow(QMainWindow):
             "Clear All Data",
             "This will permanently delete every game, boss, session, and death event\n"
             "in the CURRENT profile.\n\n"
-            "This cannot be undone. Consider Save Progress (Ctrl+S) first.\n\n"
-            "Are you absolutely sure?",
+            "A copy is saved first in the Saved Progress folder (Load Progress\n"
+            "brings it back).\n\n"
+            "Are you sure?",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
         )
         if confirm != QMessageBox.StandardButton.Yes:
             return
+        # A copy first, in Saved Progress: Load Progress brings it all back.
+        backup = None
+        if self._database.get_games():
+            folder = save_files.saves_folder(self._database.path)
+            backup = folder / f"Before clearing {datetime.now():%Y-%m-%d %H%M%S}.json"
+            try:
+                save_files.write_save(backup, self._save_data())
+            except OSError as exc:
+                logger.warning("Couldn't back up before clearing: %s", exc)
+                backup = None
         self._database.clear_all_data()
         self._reload_games()
-        self._toast.say("All games, bosses and deaths of this profile deleted", icon="trash-2")
+        self._toast.say(
+            "All games, bosses and deaths of this profile deleted"
+            + (". A copy is in Saved Progress (Load Progress brings it back)" if backup else ""),
+            icon="trash-2",
+        )
 
     # ----------------------------------------------------------------
     # Window / dialog actions

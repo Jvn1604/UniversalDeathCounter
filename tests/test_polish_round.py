@@ -205,3 +205,32 @@ def test_detection_page_names_the_next_setup_step(window) -> None:
     window._database.add_death_template(game, "[0.3, 0.4, 0.4, 0.15]", b"\x01\x00\x01\x00\x80")
     window._refresh_detection_page()
     assert "Step 3 of 3" in window._detect_page_info.text()
+
+
+def test_a_death_key_with_no_game_says_so_once_in_a_while(window, monkeypatch) -> None:
+    said: list[str] = []
+    monkeypatch.setattr(window._toast, "say", lambda text, **_k: said.append(text))
+    monkeypatch.setattr(window, "isActiveWindow", lambda: True)
+    window._counter_manager.set_current_game(None, None)
+    for _ in range(10):
+        window._on_increment()
+    assert len(said) == 1 and "wasn't counted" in said[0]
+    assert window._database.get_total_deaths() == 0
+
+
+def test_clear_all_data_keeps_a_copy_to_load_back(window, monkeypatch) -> None:
+    from PySide6.QtWidgets import QMessageBox
+
+    from src.utils import save_files
+
+    window._on_increment()
+    monkeypatch.setattr(QMessageBox, "warning",
+                        staticmethod(lambda *a, **k: QMessageBox.StandardButton.Yes))
+    window._clear_all_data()
+    assert window._database.get_games() == []
+    folder = save_files.saves_folder(window._database.path)
+    backups = list(folder.glob("Before clearing *.json"))
+    assert len(backups) == 1
+    data = save_files.read_save(backups[0])
+    assert [g["name"] for g in data["games"]] == ["Lies of P"]
+    assert len(data["death_events"]) == 1

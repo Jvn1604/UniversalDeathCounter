@@ -153,7 +153,7 @@ class CounterManager:
     def _apply_delta(self, delta: int) -> CounterSnapshot:
         """Persist a +1/-1 death event for the current selection."""
         if self._current_game_id is None:
-            logger.warning("Cannot record death: no game selected")
+            logger.debug("Cannot record death: no game selected")
             return self.get_snapshot()
         session_id = self._session_manager.ensure_session(self._current_game_id)
         self._database.add_death_event(
