@@ -126,7 +126,7 @@ Every 10 deaths your skull earns something new: horns, a nose ring, blades, a cr
 - **Boss kills are detected too.** After your first boss of a game, use **Capture Screen** (Detection page) to teach it that game's victory banner (e.g. *GREAT ENEMY FELLED*). Every later kill of the selected boss then marks it **Defeated ✓**, keeps your "deaths until victory", selects the next boss, and can split the speedrun timer. There's also a **Boss Defeated** key (`Ctrl+F11`) for doing it by hand.
 - Notes on individual deaths, session history, and graphs: per boss, over time, and per session.
 - Ready-made boss lists for Elden Ring, Dark Souls III, Sekiro, Bloodborne, Hollow Knight and Cuphead.
-- **Multiple profiles** (switch from the box at the top), JSON backup and restore, and CSV export.
+- **Every game has its own profile** (pick it from the box at the top): adding a game makes one, and launching a game switches to it. Your keys and look are the same in all of them. JSON backup and restore (loading a save of a game you have combines it, never doubles it), auto-saves, and CSV export.
 - **Make the main window yours** in **Settings → Appearance**: any installed font (each shown in its own style), text and death-number colors, a background image with adjustable dimming, and **game artwork**: a faded banner of the selected game behind the counter cards (off by default; found on Steam, or right-click the game → *Choose Artwork…*). **Changes preview live** as you edit, on the main window and the overlay; Discard Changes puts everything back.
 
 ### 🎮 PlayStation & Xbox

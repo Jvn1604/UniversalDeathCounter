@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -21,8 +22,14 @@ RESUME_KEY = "resume"
 
 
 def saves_folder(database_path: Path) -> Path:
-    """Where saves go by default: next to the profile's database."""
-    return database_path.parent / "Saved Progress"
+    """
+    Where saves go by default: one folder for every profile (next to the
+    Default profile's database), so a backup made in one shows up in all.
+    """
+    folder = database_path.parent
+    if folder.name == "profiles":  # saves/profiles/<name>.db
+        folder = folder.parent
+    return folder / "Saved Progress"
 
 
 def autosave_path(database_path: Path) -> Path:
@@ -39,7 +46,15 @@ def write_save(path: Path, data: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temp = path.with_name(path.name + ".tmp")
     temp.write_text(json.dumps(data, indent=1), encoding="utf-8")
-    os.replace(temp, path)
+    # OneDrive or an antivirus may hold the old file for a moment: try again.
+    for attempt in range(5):
+        try:
+            os.replace(temp, path)
+            return
+        except PermissionError:
+            if attempt == 4:
+                raise
+            time.sleep(0.2)
 
 
 def read_save(path: Path) -> dict[str, Any]:

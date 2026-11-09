@@ -115,16 +115,33 @@ def test_replace_saves_your_data_first(windows, tmp_path) -> None:
     assert kept == {"Phantom Blade Zero", "Hollow Knight"}
 
 
-def test_add_alongside_resumes_the_imported_copy(windows) -> None:
+def test_adding_a_save_of_the_same_game_never_doubles_it(windows) -> None:
     window = windows("pc")
     _play(window)
+    before = window._counter_manager.get_snapshot()
     data = window._save_data()
-    window._apply_save(data, "merge")
-    names = sorted(g["name"] for g in window._database.get_games())
-    assert names == ["Phantom Blade Zero", "Phantom Blade Zero (Imported)"]
-    current = window._database.get_game(window._counter_manager.current_game_id)
-    assert current["name"] == "Phantom Blade Zero (Imported)"
-    assert window._counter_manager.get_snapshot().session_deaths == 3
+    for _ in range(2):  # the session still running, then again: nothing doubles
+        window._apply_save(data, "merge")
+        names = [g["name"] for g in window._database.get_games()]
+        assert names == ["Phantom Blade Zero"]
+        snapshot = window._counter_manager.get_snapshot()
+        assert (snapshot.session_deaths, snapshot.total_deaths) == (
+            before.session_deaths, before.total_deaths)
+    window._on_increment()  # carries on in the same session
+    assert window._counter_manager.get_snapshot().session_deaths == before.session_deaths + 1
+
+
+def test_adding_a_save_with_more_deaths_adds_only_the_new_ones(windows) -> None:
+    pc = windows("pc")
+    _play(pc)
+    data = pc._save_data()
+    laptop = windows("laptop")
+    laptop._apply_save(data, "replace")
+    laptop._on_increment()  # one more death on the laptop
+    pc._apply_save(laptop._save_data(), "merge")
+    assert [g["name"] for g in pc._database.get_games()] == ["Phantom Blade Zero"]
+    assert pc._counter_manager.get_snapshot().total_deaths == (
+        laptop._counter_manager.get_snapshot().total_deaths)
 
 
 def test_older_backups_still_load(windows) -> None:

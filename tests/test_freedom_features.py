@@ -129,15 +129,13 @@ def test_export_import_round_trip(db: Database, tmp_path) -> None:
     other_db.close()
 
 
-def test_import_merge_renames_on_collision(db: Database, tmp_path) -> None:
+def test_import_merge_combines_the_same_game(db: Database, tmp_path) -> None:
     db.create_game("Sekiro")
     exported = db.export_data()
 
-    # Importing into a db that already has "Sekiro" should rename, not fail.
+    # Importing into a db that already has "Sekiro" combines it: no duplicate game.
     db.import_data(exported, mode="merge")
-    names = {g["name"] for g in db.get_games()}
-    assert "Sekiro" in names
-    assert any("Imported" in name for name in names)
+    assert [g["name"] for g in db.get_games()] == ["Sekiro"]
 
 
 def test_import_replace_wipes_existing(db: Database, tmp_path) -> None:

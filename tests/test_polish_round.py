@@ -234,3 +234,34 @@ def test_clear_all_data_keeps_a_copy_to_load_back(window, monkeypatch) -> None:
     data = save_files.read_save(backups[0])
     assert [g["name"] for g in data["games"]] == ["Lies of P"]
     assert len(data["death_events"]) == 1
+
+
+def test_quick_autosave_isnt_put_off_by_every_death(window) -> None:
+    window._progress_soon.stop()
+    window._on_increment()
+    assert window._progress_soon.isActive()
+    first = window._progress_soon.remainingTime()
+    import time
+
+    time.sleep(0.05)
+    window._on_increment()  # another death: the save still comes 15 s after the first
+    assert window._progress_soon.remainingTime() < first
+
+
+def test_a_save_file_held_for_a_moment_is_written_anyway(tmp_path, monkeypatch) -> None:
+    import os
+
+    from src.utils import save_files
+
+    real_replace, calls = os.replace, []
+
+    def busy_then_free(src, dst):
+        calls.append(dst)
+        if len(calls) < 3:
+            raise PermissionError("held by OneDrive")
+        real_replace(src, dst)
+
+    monkeypatch.setattr(save_files.os, "replace", busy_then_free)
+    monkeypatch.setattr(save_files.time, "sleep", lambda s: None)
+    save_files.write_save(tmp_path / "a.json", {"games": []})
+    assert save_files.read_save(tmp_path / "a.json") == {"games": []} and len(calls) == 3
