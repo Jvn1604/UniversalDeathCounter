@@ -18,7 +18,7 @@
 
 ## Download
 
-**[⬇ Download the latest release](https://github.com/Jvn1604/UniversalDeathCounter/releases/latest)**
+**[⬇ Download the latest release](https://github.com/Jvn1604/UniversalDeathCounter/releases/latest)** · [What's new (changelog)](CHANGELOG.md)
 
 | File | What it is |
 |---|---|
