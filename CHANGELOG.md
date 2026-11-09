@@ -21,6 +21,8 @@ newest first. Downloads are on the
   are moved there (never over a file of the same name).
 - Clear All Data saves a copy in Saved Progress first, so Load Progress can
   bring it back.
+- **What's New** inside the app (menu, top right, or About): every version's
+  changes. It opens by itself once after an update, showing what it brought.
 
 ### Fixed
 - **Loading a save no longer doubles your deaths.** *Add Alongside* with a game
@@ -45,7 +47,7 @@ newest first. Downloads are on the
 ### New
 - **Choose what to install:** everything, the death counter only, or the
   speedrun timer only. Change it later in Settings → General → Features.
-- **Roll back to an earlier version** from the ⋮ menu, if an update causes
+- **Roll back to an earlier version** from the menu (top right, the three dots), if an update causes
   trouble. Your games, deaths and settings stay.
 - **Overlay designs can be coloured:** accent, number and word colours and the
   font, for Kanji Seal, Neon Sign, Tombstone and Death Banner, on the overlay

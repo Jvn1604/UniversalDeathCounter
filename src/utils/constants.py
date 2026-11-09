@@ -107,6 +107,7 @@ LOG_FILE: Path = LOG_DIR / "app.log"
 # inside the (temporary but valid-for-this-run) extraction directory.
 THEMES_DIR: Path = PROJECT_ROOT / "src" / "themes"
 ICONS_DIR: Path = PROJECT_ROOT / "assets" / "icons"
+CHANGELOG_PATH: Path = PROJECT_ROOT / "CHANGELOG.md"  # the What's New window reads it
 
 # --------------------------------------------------------------------------
 # Default hotkeys (lower-cased QKeySequence text, e.g. "ctrl+f12")
@@ -276,6 +277,8 @@ SETTING_HOTKEY_TIMER_SKIP: str = "hotkey_timer_skip"
 SETTING_TIMER_GEOMETRY: str = "timer_geometry"
 SETTING_TIMER_VISIBLE: str = "timer_visible"
 SETTING_MINI_GEOMETRY: str = "mini_geometry"  # compact mini mode window
+# The version whose What's New was last shown (it opens once after an update).
+SETTING_LAST_SEEN_VERSION: str = "last_seen_version"
 SETTING_WELCOME_SHOWN: str = "welcome_shown"  # "true" once the first-run guide closed
 SETTING_QUICK_START_HIDDEN: str = "quick_start_hidden"  # Home's "getting started" banner
 SETTING_OVERLAY_EVER_SHOWN: str = "overlay_ever_shown"  # ticks the guide's stream step

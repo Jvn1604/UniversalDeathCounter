@@ -167,6 +167,7 @@ from src.ui.skulls import skull_pixmap, tier_index
 from src.ui.statistics_window import StatisticsWindow
 from src.ui.theme_picker import ThemeDownload
 from src.ui.timer_window import RunHistoryDialog, SplitsDialog, TimerWindow
+from src.ui.whats_new_window import WhatsNewWindow
 from src.ui.widgets import (
     ActionButton,
     AutoHideLabel,
@@ -189,7 +190,7 @@ from src.ui.widgets import (
     row,
     section_title,
 )
-from src.utils import artwork, presets, save_files
+from src.utils import artwork, changelog, presets, save_files
 from src.utils.backgrounds import cover, load_background
 from src.utils.constants import (
     ACCENT_COLOR,
@@ -236,6 +237,7 @@ from src.utils.constants import (
     SETTING_LAST_BOSS_ID,
     SETTING_LAST_GAME_ID,
     SETTING_LAST_PAGE,
+    SETTING_LAST_SEEN_VERSION,
     SETTING_MAIN_WINDOW_GEOMETRY,
     SETTING_MINI_GEOMETRY,
     SETTING_MINIMIZE_TO_TRAY,
@@ -589,6 +591,7 @@ class MainWindow(QMainWindow):
         self._recovery_timer = QTimer(self)
         self._recovery_timer.setSingleShot(True)
         self._recovery_timer.timeout.connect(self._offer_run_recovery)
+        QTimer.singleShot(2500, self._whats_new_after_update)
         if self._moved_on_start:
             QTimer.singleShot(1500, lambda: self._toast.show_message(
                 "Each game has its own profile now: pick a game top right. A copy of your "
@@ -645,6 +648,7 @@ class MainWindow(QMainWindow):
             lambda: QDesktopServices.openUrl(QUrl(BUG_SHEET_URL)),
         )
         menu.addSeparator()
+        self._menu_action(menu, "sparkles", "What's New", self._open_whats_new)
         self._menu_action(menu, "info", "About", self._open_about_window)
         self._menu_action(menu, "rotate-ccw", "Roll Back to an Earlier Version…", self._roll_back)
         menu.addSeparator()
@@ -4850,7 +4854,29 @@ class MainWindow(QMainWindow):
         dialog.exec()
 
     def _open_about_window(self) -> None:
-        AboutWindow(parent=self).exec()
+        about = AboutWindow(parent=self)
+        about.whats_new_requested.connect(lambda: (about.accept(), self._open_whats_new()))
+        about.exec()
+
+    def _open_whats_new(self, since: str = "") -> None:
+        window = WhatsNewWindow(since=since, parent=self)
+        window.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+        window.show()  # not modal: the app keeps working beside it
+
+    def _whats_new_after_update(self) -> None:
+        """Once after an update: what it brought (a fresh install just remembers the version)."""
+        seen = self._database.get_setting(SETTING_LAST_SEEN_VERSION, "")
+        self._database.set_setting(SETTING_LAST_SEEN_VERSION, APP_VERSION)
+        if seen == APP_VERSION:
+            return
+        if not seen:
+            # Before this window existed nothing was remembered: a player with
+            # games has updated, a fresh install hasn't.
+            if not self._database.get_games():
+                return
+            seen = "0"
+        if changelog.newer_than(changelog.load(), seen, APP_VERSION):
+            self._open_whats_new(since="" if seen == "0" else seen)
 
     def _open_obs_guide(self) -> None:
         key = self._hotkey_bindings()["toggle_overlay_key"]

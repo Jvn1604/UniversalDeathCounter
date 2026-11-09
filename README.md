@@ -160,6 +160,7 @@ The **Console** page (sidebar) makes DUDC work when the game runs on a console:
 - **One place for everything:** pages and tools in the sidebar (Settings is a page too, not a separate window), profiles and saves at the top right. No duplicated menus.
 - **Keeps counting in the background:** closing asks whether to keep counting in the tray, so F9 / F10, the overlay and auto-detect keep working. Settings → Controls shows a key check: press a key anywhere (even in a game) and it shows when the app gets it.
 - **Death screens from screenshots match anyway:** a death screen taught from an uploaded screenshot framed a little differently from the game (whole monitor, title bar, another resolution) is still found. The Detection page names the next setup step.
+- **What's New:** the changelog inside the app (⋮ → *What's New*, or About). It opens once after an update with what changed.
 - **Roll back:** ⋮ → *Roll Back to an Earlier Version…* installs an older release if an update gave you trouble (your data stays).
 - **One-click updates:** the card at the bottom of the sidebar shows whether you are up to date (checked at startup, every 6 hours, or with its refresh button). When a new version is out, click **Update**: the installed app downloads it, updates itself and reopens. (Portable copies, Mac and Linux open the download page.)
 - Deleting a game tells you exactly what goes with it (deaths, bosses, sessions, runs).
