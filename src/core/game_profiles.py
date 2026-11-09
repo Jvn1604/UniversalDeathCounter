@@ -22,11 +22,16 @@ from __future__ import annotations
 
 import json
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 from src.database.database import Database
 from src.utils import save_files
-from src.utils.constants import SETTING_LAST_GAME_ID, SETTING_TIMER_AUTOSAVE
+from src.utils.constants import (
+    SETTING_LAST_BOSS_ID,
+    SETTING_LAST_GAME_ID,
+    SETTING_TIMER_AUTOSAVE,
+)
 from src.utils.logger import get_logger
 from src.utils.profiles import DEFAULT_PROFILE_NAME, ProfileManager
 
@@ -35,7 +40,7 @@ logger = get_logger(__name__)
 # Settings that belong to one game (their key ends with its id).
 _PER_GAME_PREFIXES = ("save_deaths_", "artwork_path_", "artwork_missing_")
 # Settings about what this profile was doing: never carried to another one.
-_PROFILE_STATE = {SETTING_LAST_GAME_ID, SETTING_TIMER_AUTOSAVE}
+_PROFILE_STATE = {SETTING_LAST_GAME_ID, SETTING_LAST_BOSS_ID, SETTING_TIMER_AUTOSAVE}
 
 _GAME_TABLES = ("bosses", "sessions", "death_events", "game_detection", "screens",
                 "speedrun_splits", "speedrun_runs")
@@ -61,6 +66,39 @@ def game_export(database: Database, game_id: int) -> dict[str, Any]:
     for table in _GAME_TABLES:
         data[table] = [row for row in data.get(table, []) if row["game_id"] == game_id]
     return data
+
+
+def gather_saves(saves_dir: Path) -> int:
+    """
+    Saves made in a profile before all profiles shared one Saved Progress
+    folder (they were in profiles/Saved Progress): moved to the shared one,
+    never over a file of the same name. Returns how many moved.
+    """
+    old = saves_dir / "profiles" / "Saved Progress"
+    if not old.is_dir():
+        return 0
+    new = saves_dir / "Saved Progress"
+    new.mkdir(parents=True, exist_ok=True)
+    moved = 0
+    for file in sorted(old.iterdir()):
+        if not file.is_file() or file.suffix == ".tmp":
+            continue
+        target, number = new / file.name, 2
+        while target.exists():
+            target = new / f"{file.stem} ({number}){file.suffix}"
+            number += 1
+        try:
+            file.replace(target)
+            moved += 1
+        except OSError:
+            logger.exception("Couldn't move the save %s", file)
+    try:
+        old.rmdir()  # only if it's empty now
+    except OSError:
+        pass
+    if moved:
+        logger.info("Moved %d save(s) to the shared Saved Progress folder", moved)
+    return moved
 
 
 def _run_snapshot_of(database: Database, game_id: int) -> dict[str, Any] | None:
@@ -123,6 +161,16 @@ def move_game(
                 if key == f"{prefix}{game_id}" and not target.get_setting(f"{prefix}{new_id}", ""):
                     target.set_setting(f"{prefix}{new_id}", value)
         target.set_setting(SETTING_LAST_GAME_ID, str(new_id))
+        # The boss picked last, if it's this game's (bosses get new ids too).
+        try:
+            last_boss = int(source.get_setting(SETTING_LAST_BOSS_ID, "") or 0)
+        except ValueError:
+            last_boss = 0
+        new_boss = ids["bosses"].get(last_boss)
+        if new_boss is not None:
+            target.set_setting(SETTING_LAST_BOSS_ID, str(new_boss))
+        elif created:
+            target.set_setting(SETTING_LAST_BOSS_ID, "")
         run = _run_snapshot_of(source, game_id)
         if run is not None:  # a run in progress (crash recovery) goes with its game
             target.set_setting(SETTING_TIMER_AUTOSAVE, json.dumps({**run, "game_id": new_id}))

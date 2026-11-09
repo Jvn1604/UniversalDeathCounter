@@ -56,6 +56,11 @@ def test_upgrading_moves_each_game_and_opens_the_last_one(start) -> None:
     assert window._counter_manager.get_snapshot().game_name == "Hollow Knight"
     assert window._counter_manager.get_snapshot().total_deaths == 4
     assert window._database.get_setting("hotkey_increment", "") == "f7"
+    # Which game's profile is open: in the game box and the window title.
+    box = window._profile_combo
+    assert box.currentData() == "Hollow Knight" and box.currentText() == "Hollow Knight"
+    assert box.itemText(box.findData("Default")) == "Default (no game)"
+    assert window.windowTitle().endswith("Hollow Knight")
 
 
 def test_a_new_game_gets_its_own_profile_and_settings_follow(start) -> None:

@@ -77,6 +77,11 @@ class ProfileManager:
             active = DEFAULT_PROFILE_NAME
         return active
 
+    @property
+    def saves_dir(self) -> Path:
+        """The folder holding profiles.json, the Default database and profiles/."""
+        return self._saves_dir
+
     def active_db_path(self) -> Path:
         """Absolute path of the active profile's database file."""
         return self.db_path(self.active_profile)

@@ -75,3 +75,42 @@ def test_shared_settings_leave_out_each_games_own(tmp_path) -> None:
     assert "save_deaths_4" not in shared_settings(db)
     assert "last_game_id" not in shared_settings(db)
     db.close()
+
+
+def test_the_boss_picked_last_comes_along(tmp_path) -> None:
+    profiles = ProfileManager(tmp_path)
+    db = Database(profiles.db_path(DEFAULT_PROFILE_NAME))
+    db.create_game("Hollow Knight")  # so the moved game's ids change
+    game = db.create_game("Elden Ring")
+    db.create_boss(game, "Margit")
+    godrick = db.create_boss(game, "Godrick")
+    db.set_setting("last_game_id", str(game))
+    db.set_setting("last_boss_id", str(godrick))
+    db.close()
+    split_all(profiles)
+    elden = Database(profiles.db_path("Elden Ring"))
+    boss_id = int(elden.get_setting("last_boss_id", "") or 0)
+    assert {b["id"]: b["name"] for b in elden.get_bosses(int(elden.get_games()[0]["id"]))}[
+        boss_id] == "Godrick"
+    elden.close()
+    hollow = Database(profiles.db_path("Hollow Knight"))
+    assert hollow.get_setting("last_boss_id", "") == ""  # not another game's boss
+    hollow.close()
+
+
+def test_old_profile_saves_join_the_shared_folder(tmp_path) -> None:
+    from src.core.game_profiles import gather_saves
+
+    old = tmp_path / "profiles" / "Saved Progress"
+    old.mkdir(parents=True)
+    (old / "DUDC save 1.json").write_text("{}", encoding="utf-8")
+    (old / "same.json").write_text('{"old": 1}', encoding="utf-8")
+    shared = tmp_path / "Saved Progress"
+    shared.mkdir()
+    (shared / "same.json").write_text('{"new": 1}', encoding="utf-8")
+    assert gather_saves(tmp_path) == 2
+    assert sorted(p.name for p in shared.iterdir()) == [
+        "DUDC save 1.json", "same (2).json", "same.json"]
+    assert (shared / "same.json").read_text(encoding="utf-8") == '{"new": 1}'  # kept
+    assert not old.exists()
+    assert gather_saves(tmp_path) == 0

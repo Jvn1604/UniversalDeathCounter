@@ -606,8 +606,20 @@ class MainWindow(QMainWindow):
 
     def _update_window_title(self) -> None:
         profile = self._profile_manager.active_profile
-        suffix = "" if profile == DEFAULT_PROFILE_NAME else f"  [{profile}]"
+        suffix = "" if profile == DEFAULT_PROFILE_NAME else f"  —  {profile}"
         self.setWindowTitle(f"{APP_NAME}{suffix}")
+
+    def _profile_has_games(self, name: str) -> bool:
+        if name == self._profile_manager.active_profile and hasattr(self, "_database"):
+            return bool(self._database.get_games())
+        try:
+            database = Database(self._profile_manager.db_path(name))
+            try:
+                return bool(database.get_games())
+            finally:
+                database.close()
+        except Exception:  # noqa: BLE001 - a broken profile file: call it empty
+            return False
 
     # ----------------------------------------------------------------
     # Menu
@@ -655,8 +667,13 @@ class MainWindow(QMainWindow):
         if combo is not None:
             combo.blockSignals(True)
             combo.clear()
-            combo.addItems(self._profile_manager.list_profiles())
-            combo.setCurrentText(active)
+            game_icon = icons.icon("gamepad-2", icons.color(icons.NORMAL), size=16)
+            for name in self._profile_manager.list_profiles():
+                label = name
+                if name == DEFAULT_PROFILE_NAME and not self._profile_has_games(name):
+                    label = f"{name} (no game)"
+                combo.addItem(game_icon, label, userData=name)
+            combo.setCurrentIndex(max(combo.findData(active), 0))
             combo.blockSignals(False)
         for name in self._profile_manager.list_profiles():
             action = self._profile_menu.addAction(name)
@@ -758,11 +775,18 @@ class MainWindow(QMainWindow):
         layout.addWidget(self._saved_label)
         layout.addStretch(1)
 
+        # The game being played: each game has a profile of its own.
+        game_caption = QLabel("GAME")
+        game_caption.setObjectName("ProfileCaption")
         self._profile_combo = QComboBox()
-        self._profile_combo.setToolTip("Profile: each one keeps its own games and counts.")
-        self._profile_combo.setMinimumWidth(150)
+        self._profile_combo.setObjectName("ProfileCombo")
+        self._profile_combo.setToolTip(
+            "The game you're playing. Each game has its own profile: its deaths, bosses "
+            "and detection setup. Your keys and look are the same in all of them."
+        )
+        self._profile_combo.setMinimumWidth(210)
         self._profile_combo.activated.connect(
-            lambda index: self._switch_profile(self._profile_combo.itemText(index))
+            lambda index: self._switch_profile(self._profile_combo.itemData(index))
         )
         profile_button = self._top_button("users", "Profiles: switch, add or delete")
         profile_button.setMenu(self._profile_menu)
@@ -772,6 +796,8 @@ class MainWindow(QMainWindow):
         help_button.clicked.connect(lambda: self.maybe_show_welcome(force=True))
         more_button = self._top_button("ellipsis-vertical", "Backups, About, Quit")
         more_button.setMenu(self._more_menu)
+        layout.addWidget(game_caption)
+        layout.addSpacing(6)
         layout.addWidget(self._profile_combo)
         layout.addWidget(profile_button)
         layout.addSpacing(4)
@@ -1537,8 +1563,10 @@ class MainWindow(QMainWindow):
     def _build_save_card(self) -> QWidget:
         """The game's own death count, read from its save file."""
         save, save_layout = card(margins=18)
-        save_layout.addWidget(section_title("In-game death count (save file)"))
+        save_layout.addWidget(section_title("In-game death count (save file) · Experimental"))
         intro = QLabel(
+            "<b>Experimental:</b> it works for many games, but some save formats can't be "
+            "read yet; keep counting with the keys or auto-detect too. "
             "Shows the death total the game itself keeps in your save: every death of "
             "that character, from before you used this app too, and from earlier NG+ "
             "cycles. Pick the save, then play: after your next 2 deaths it knows where "
@@ -3913,6 +3941,7 @@ class MainWindow(QMainWindow):
                 last = int(database.get_setting(SETTING_LAST_GAME_ID, "") or 0)
             finally:
                 database.close()
+            game_profiles.gather_saves(profiles.saves_dir)
             moved = game_profiles.split_all(profiles)
         except Exception:  # noqa: BLE001 - never stop the app from starting
             logger.exception("Couldn't give each game its own profile")
@@ -4302,7 +4331,7 @@ class MainWindow(QMainWindow):
             ("session", "Deaths this session"),
             ("boss", "Deaths on this boss"),
             ("run", "Deaths this speedrun run"),
-            ("save", "In-game deaths (from the save file)"),
+            ("save", "In-game deaths (from the save file, experimental)"),
         ):
             if value == "run" and not self._feature_on(SETTING_FEATURE_TIMER):
                 continue
@@ -4924,7 +4953,7 @@ class MainWindow(QMainWindow):
             (("total", "All-Time", True), ("session", "This Session", True),
              ("boss", "This Boss", True),
              ("run", "This Speedrun Run", self._feature_on(SETTING_FEATURE_TIMER)),
-             ("save", "In-Game (Save File)", True)),
+             ("save", "In-Game (Save File, Experimental)", True)),
             settings.get(SETTING_OVERLAY_COUNTER_SOURCE, DEFAULT_COUNTER_SOURCE),
         )
         has_image = bool(settings.get(SETTING_OVERLAY_BG_IMAGE, ""))

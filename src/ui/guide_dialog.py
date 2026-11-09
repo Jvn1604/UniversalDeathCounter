@@ -161,8 +161,8 @@ LESSONS: tuple[tuple[str, str, str, tuple[str, str, str] | None], ...] = (
         "<li>Souls games (Elden Ring, Dark Souls, Sekiro…) are recognized without any "
         "setup.</li>"
         "</ul>"
-        "<p><b>The game's own count:</b> on the Detection page, <i>In-game death count "
-        "(save file)</i> reads the total the game keeps in your save, even deaths from "
+        "<p><b>The game's own count (experimental):</b> on the Detection page, <i>In-game "
+        "death count (save file)</i> reads the total the game keeps in your save, even deaths from "
         "before you used this app and from earlier NG+ cycles. Pick the save and die "
         "twice; then choose <b>Show as the Big Number</b>.</p>",
         ("Set Up Detection", "wand-sparkles", "detection"),

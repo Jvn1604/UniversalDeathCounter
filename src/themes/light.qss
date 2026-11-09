@@ -459,6 +459,34 @@ QPushButton#IconButton:hover {
 
 /* ---------------------------------------------------------------- inputs */
 
+QLabel#ProfileCaption {
+    color: #6b7080;
+    font-size: 10px;
+    font-weight: 800;
+    letter-spacing: 2px;
+}
+
+/* The game being played (top right): its own profile. */
+QComboBox#ProfileCombo {
+    background-color: #ffffff;
+    border: 1px solid #cc1734;
+    border-radius: 10px;
+    padding: 7px 12px;
+    color: #1b1c21;
+    font-weight: 700;
+}
+
+QComboBox#ProfileCombo QAbstractItemView {
+    background-color: #ffffff;
+    color: #1b1c21;
+    selection-background-color: #cc1734;
+    selection-color: #ffffff;
+    border: 1px solid #d9dce4;
+    border-radius: 8px;
+    outline: none;
+    padding: 4px;
+}
+
 QComboBox {
     background-color: #eef0f4;
     border: 1px solid #d9dce4;

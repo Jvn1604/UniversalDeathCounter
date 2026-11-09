@@ -167,10 +167,10 @@ def test_counter_labels_name_each_count(window) -> None:
 
 
 def test_profile_box_lists_profiles(window) -> None:
-    assert window._profile_combo.currentText() == window._profile_manager.active_profile
+    assert window._profile_combo.currentData() == window._profile_manager.active_profile
     window._profile_manager.create_profile("Streaming")
     window._rebuild_profile_menu()
-    items = [window._profile_combo.itemText(i) for i in range(window._profile_combo.count())]
+    items = [window._profile_combo.itemData(i) for i in range(window._profile_combo.count())]
     assert "Streaming" in items
 
 
