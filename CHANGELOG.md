@@ -21,6 +21,10 @@ newest first. Downloads are on the
   are moved there (never over a file of the same name).
 - Clear All Data saves a copy in Saved Progress first, so Load Progress can
   bring it back.
+- **Notification bell** (top bar): what the app wanted to tell you, kept even
+  when you were in the game. A red badge counts the new ones; each comes with
+  a button that goes where it can be fixed (an update, a key another program
+  took, auto-detect pausing, a failed save, a death key with no game...).
 - **What's New** inside the app (menu, top right, or About): every version's
   changes. It opens by itself once after an update, showing what it brought.
 

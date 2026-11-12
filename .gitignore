@@ -21,6 +21,8 @@ saves/logs/
 saves/backgrounds/
 saves/Saved Progress/
 saves/themes/
+saves/profiles/
+saves/profiles.json
 
 # --- Testing / tooling ---
 .pytest_cache/

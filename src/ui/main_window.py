@@ -159,6 +159,7 @@ from src.ui.guide_dialog import (
 )
 from src.ui.library_window import Fetcher, LibraryDialog
 from src.ui.mini_window import MiniWindow
+from src.ui.notifications import NotificationBell
 from src.ui.obs_guide_window import ObsGuideWindow
 from src.ui.report_window import ErrorLogWindow, ProblemCounter, ReportBugDialog
 from src.ui.session_history_window import SessionHistoryWindow
@@ -593,6 +594,10 @@ class MainWindow(QMainWindow):
         self._recovery_timer.timeout.connect(self._offer_run_recovery)
         QTimer.singleShot(2500, self._whats_new_after_update)
         if self._moved_on_start:
+            self._note(
+                "Each game has its own profile now (top right). A copy of your data from "
+                "before is in Saved Progress.", "users", "Open Folder", self._open_saves_folder,
+            )
             QTimer.singleShot(1500, lambda: self._toast.show_message(
                 "Each game has its own profile now: pick a game top right. A copy of your "
                 "data from before is in Saved Progress.", "OK", lambda: None,
@@ -794,6 +799,9 @@ class MainWindow(QMainWindow):
         )
         profile_button = self._top_button("users", "Profiles: switch, add or delete")
         profile_button.setMenu(self._profile_menu)
+        self._bell = NotificationBell()
+        for text, icon, label, action in getattr(self, "_early_notes", []):
+            self._bell.add(text, icon, label, action)  # from before the bar existed
         self._bug_button = self._top_button("bug", "Report a bug or glitch")
         self._bug_button.clicked.connect(self._open_report_bug)
         help_button = self._top_button("circle-help", "Guide: how everything works")
@@ -805,6 +813,7 @@ class MainWindow(QMainWindow):
         layout.addWidget(self._profile_combo)
         layout.addWidget(profile_button)
         layout.addSpacing(4)
+        layout.addWidget(self._bell)
         layout.addWidget(self._bug_button)
         layout.addWidget(help_button)
         layout.addWidget(more_button)
@@ -2651,6 +2660,12 @@ class MainWindow(QMainWindow):
     def _on_hotkeys_recovered(self, freed: list) -> None:
         keys = ", ".join(key.upper() for _action, key in freed)
         self._toast.say(f"{keys} works now: the other program let go of it", icon="keyboard")
+        self._note(f"{keys} works again: the other program let go of it.", "keyboard")
+
+    def _note_detection_trouble(self, status: str) -> None:
+        """Auto-detect statuses worth keeping in the bell (the rest only show on the page)."""
+        if status.startswith(("Auto-detect stopped", "Screen capture blocked", "Capture of ")):
+            self._note(status, "scan-eye", "Detection", lambda: self._go_to(_PAGE_DETECTION))
 
     def _on_hotkeys_failed(self, failures: list) -> None:
         labels = {action: label for action, label, _key, _default in CONTROL_ACTIONS}
@@ -2662,6 +2677,9 @@ class MainWindow(QMainWindow):
             f"launcher) is using it. {APP_SHORT_NAME} keeps trying and tells you when it "
             "works, or pick a different key in Settings → Controls."
         )
+        self._note(f"Taken by another program: {keys}. {APP_SHORT_NAME} keeps trying.",
+                   "keyboard", "Change Keys",
+                   lambda: self._open_settings_window(SettingsWindow.TAB_CONTROLS))
         if self._tray is not None:
             self._tray.showMessage(
                 APP_NAME, message, QSystemTrayIcon.MessageIcon.Warning, 10000
@@ -2674,6 +2692,7 @@ class MainWindow(QMainWindow):
     # ----------------------------------------------------------------
     def _setup_death_watcher(self) -> None:
         self._death_watcher.status_changed.connect(self._detect_status_label.setText)
+        self._death_watcher.status_changed.connect(self._note_detection_trouble)
         self._death_watcher.death_detected.connect(self._on_death_detected)
         self._death_watcher.activity_changed.connect(self._on_game_activity)
         self._death_watcher.boss_defeated.connect(self._on_boss_victory_detected)
@@ -3389,6 +3408,9 @@ class MainWindow(QMainWindow):
         announced = latest == self._update_version
         self._update_version, self._update_page_url = latest, url
         self._update_card.set_state("available", latest)
+        if not announced:
+            self._note(f"Version {latest} is out.", "circle-arrow-up", "Update",
+                       self._start_update)
         if self._tray is not None and not announced:
             self._tray.showMessage(
                 APP_BRAND,
@@ -4269,6 +4291,8 @@ class MainWindow(QMainWindow):
             "There's no game yet, so that death wasn't counted. Add your game first "
             "(Home → Add Your First Game)."
         )
+        self._note(message, "gamepad-2", "Pick a Game" if has_games else "Add a Game",
+                   lambda: self._go_to(_PAGE_COUNTER if has_games else _PAGE_HOME))
         if self.isActiveWindow():
             self._toast.say(message, icon="gamepad-2")
         elif self._tray is not None:
@@ -4621,11 +4645,17 @@ class MainWindow(QMainWindow):
         except OSError as exc:
             logger.warning("Auto-save failed: %s", exc)
             self._saved_label.setText("Auto-save failed: trying again soon")
+            self._note(f"Auto-save failed ({exc}). Trying again soon.", "save")
             self._progress_soon.start()
             return None
         self._last_progress_save = stamp
         self._saved_label.setText(f"Auto-saved {datetime.now():%H:%M}")
         return path
+
+    def _open_saves_folder(self) -> None:
+        folder = save_files.saves_folder(self._database.path)
+        folder.mkdir(parents=True, exist_ok=True)
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(folder)))
 
     def _save_progress(self) -> None:
         """Save Progress (Ctrl+S): a save file to load later and carry on."""
@@ -4766,6 +4796,9 @@ class MainWindow(QMainWindow):
                 backup = None
         self._database.clear_all_data()
         self._reload_games()
+        if backup:
+            self._note("All data cleared. A copy is in Saved Progress (Load Save brings it "
+                       "back).", "trash-2", "Open Folder", self._open_saves_folder)
         self._toast.say(
             "All games, bosses and deaths of this profile deleted"
             + (". A copy is in Saved Progress (Load Progress brings it back)" if backup else ""),
@@ -4876,7 +4909,10 @@ class MainWindow(QMainWindow):
                 return
             seen = "0"
         if changelog.newer_than(changelog.load(), seen, APP_VERSION):
-            self._open_whats_new(since="" if seen == "0" else seen)
+            since = "" if seen == "0" else seen
+            self._note(f"Updated to v{APP_VERSION}.", "sparkles", "What's New",
+                       lambda: self._open_whats_new(since=since))
+            self._open_whats_new(since=since)
 
     def _open_obs_guide(self) -> None:
         key = self._hotkey_bindings()["toggle_overlay_key"]
@@ -5158,6 +5194,21 @@ class MainWindow(QMainWindow):
             controller.set_game_paused(reason if enabled else "")
         self._autosave()
         self._timer_window.refresh()
+
+    def _note(self, text: str, icon: str = "info", label: str = "", action=None) -> None:
+        """Keep a message in the notification bell (top bar)."""
+        bell = getattr(self, "_bell", None)
+        if bell is None:
+            self.__dict__.setdefault("_early_notes", []).append((text, icon, label, action))
+            return
+        bell.add(text, icon, label, action)
+
+    def _go_to(self, page: int) -> None:
+        self._show_page(page)
+        if not self.isVisible() or self.isMinimized():
+            self.showNormal()
+        self.raise_()
+        self.activateWindow()
 
     def _notify(self, message: str, msecs: int = 5000) -> None:
         """In the window when it's showing; otherwise as a tray message."""

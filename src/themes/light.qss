@@ -66,6 +66,31 @@ QLabel#PageBadge {
     border-left: 1px solid #e2e4ea;
 }
 
+/* The notification bell's list (top bar). */
+QFrame#NotificationPanel {
+    background-color: #ffffff;
+    border: 1px solid #d9dce4;
+    border-radius: 12px;
+}
+
+QFrame#NotificationPanel QLabel {
+    color: #1b1c21;
+    background: transparent;
+}
+
+QFrame#NotificationPanel QLabel#Muted {
+    color: #6b7080;
+}
+
+QFrame#NotificationRow {
+    background-color: #f4f5f8;
+    border-radius: 10px;
+}
+
+QFrame#NotificationRow[unread="true"] {
+    background-color: rgba(204, 23, 52, 0.08);
+}
+
 QPushButton#TopIconButton {
     background-color: transparent;
     border: 1px solid transparent;
