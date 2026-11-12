@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import QDialog, QLabel, QPushButton, QVBoxLayout
 
@@ -33,6 +33,8 @@ def _this_system() -> str:
 class AboutWindow(QDialog):
     """Simple modal dialog presenting application information."""
 
+    whats_new_requested = Signal()  # "What's new": the in-app changelog
+
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
         self.setWindowTitle(f"About {APP_NAME}")
@@ -60,9 +62,8 @@ class AboutWindow(QDialog):
         def link(url: str, text: str) -> str:  # in the theme's accent, readable on any theme
             return f'<a href="{url}" style="color: {dashboard.color("accent")};">{text}</a>'
 
-        releases = f"https://github.com/{GITHUB_REPO}/releases/tag/v{APP_VERSION}"
-        version = QLabel(f"Version {APP_VERSION}  ·  {link(releases, 'What&#39;s new')}")
-        version.setOpenExternalLinks(True)
+        version = QLabel(f"Version {APP_VERSION}  ·  {link('whats-new', 'What&#39;s new')}")
+        version.linkActivated.connect(lambda _link: self.whats_new_requested.emit())
         version.setAlignment(Qt.AlignmentFlag.AlignCenter)
         version.setObjectName("Muted")
 

@@ -95,6 +95,7 @@ a = Analysis(
         (str(PROJECT_ROOT / "src" / "themes" / "dark.qss"), "src/themes"),
         (str(PROJECT_ROOT / "src" / "themes" / "light.qss"), "src/themes"),
         (str(PROJECT_ROOT / "assets" / "icons"), "assets/icons"),
+        (str(PROJECT_ROOT / "CHANGELOG.md"), "."),  # the What's New window
     ],
     hiddenimports=SRC_MODULES,
     hookspath=[],

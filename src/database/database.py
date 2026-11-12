@@ -1110,9 +1110,11 @@ class Database:
 
         Args:
             data: A dict previously produced by :meth:`export_data`.
-            mode: ``"merge"`` adds imported games alongside existing ones
-                (renaming on name collision). ``"replace"`` wipes all
-                existing game data first.
+            mode: ``"merge"`` adds imported games alongside existing ones; a
+                game of the same name is combined with the existing one, and
+                anything it already has (sessions, deaths, bosses, screens,
+                runs) is skipped, so loading the same save twice adds nothing.
+                ``"replace"`` wipes all existing game data first.
 
         Returns:
             ``{"games": {old_id: new_id}, "sessions": {...}, "bosses": {...}}``,
@@ -1128,7 +1130,7 @@ class Database:
         if mode == "replace":
             self.clear_all_data()
 
-        existing_names = {g["name"] for g in self.get_games()}
+        existing_games = {g["name"]: g["id"] for g in self.get_games()}
 
         # Map old ids -> new ids so relationships survive re-insertion.
         game_id_map: dict[int, int] = {}
@@ -1137,15 +1139,23 @@ class Database:
 
         for game in data["games"]:
             name = game["name"]
-            while name in existing_names:
-                name = f"{name} (Imported)"
+            if name in existing_games:  # the same game: combine, don't double it
+                game_id_map[game["id"]] = existing_games[name]
+                continue
             new_id = self.create_game(name)
-            existing_names.add(name)
+            existing_games[name] = new_id
             game_id_map[game["id"]] = new_id
+
+        # What the combined games already have (skipped when the save has it too).
+        known = self._known_rows(set(game_id_map.values()))
 
         for boss in data["bosses"]:
             new_game_id = game_id_map.get(boss["game_id"])
             if new_game_id is None:
+                continue
+            existing_boss = known["bosses"].get((new_game_id, boss["name"]))
+            if existing_boss is not None:
+                boss_id_map[boss["id"]] = existing_boss
                 continue
             new_id = self.create_boss(new_game_id, boss["name"])
             boss_id_map[boss["id"]] = new_id
@@ -1161,9 +1171,14 @@ class Database:
                         (boss.get("defeated_at"), boss.get("deaths_at_defeat"), new_id),
                     )
 
-        for session in data["sessions"]:
+        for session in sorted(data["sessions"], key=lambda s: s["id"]):
             new_game_id = game_id_map.get(session["game_id"])
             if new_game_id is None:
+                continue
+            # Sessions started in the same second pair up in order, not all onto one.
+            same_start = known["sessions"].get((new_game_id, session.get("started_at")))
+            if same_start:
+                session_id_map[session["id"]] = same_start.pop(0)
                 continue
             with self._cursor() as cursor:  # keep the original dates
                 cursor.execute(
@@ -1182,6 +1197,11 @@ class Database:
             if new_game_id is None or new_session_id is None:
                 continue
             new_boss_id = boss_id_map.get(event["boss_id"]) if event.get("boss_id") else None
+            key = (new_game_id, new_session_id, event.get("timestamp"), event["delta"],
+                   event.get("kind") or EVENT_DEATH)
+            if known["events"].get(key, 0) > 0:  # already counted (two in a second: twice)
+                known["events"][key] -= 1
+                continue
             self.add_death_event(
                 new_game_id,
                 new_boss_id,
@@ -1192,18 +1212,62 @@ class Database:
                 timestamp=event.get("timestamp"),
             )
 
-        self._import_extras(data, game_id_map)
+        self._import_extras(data, game_id_map, known)
         logger.info(
             "Imported %d game(s) in '%s' mode", len(data["games"]), mode
         )
         return {"games": game_id_map, "sessions": session_id_map, "bosses": boss_id_map}
 
-    def _import_extras(self, data: dict[str, Any], game_id_map: dict[int, int]) -> None:
+    def _known_rows(self, game_ids: set[int]) -> dict[str, Any]:
+        """What these games already have, keyed the way a merge compares them."""
+        known: dict[str, Any] = {"bosses": {}, "sessions": {}, "events": {}, "screens": set(),
+                                 "runs": set(), "detection": set(), "splits": set()}
+        if not game_ids:
+            return known
+        marks = ",".join("?" * len(game_ids))
+        ids = tuple(game_ids)
+        with self._cursor() as cursor:
+            cursor.execute(f"SELECT id, game_id, name FROM bosses WHERE game_id IN ({marks})", ids)
+            known["bosses"] = {(r["game_id"], r["name"]): r["id"] for r in cursor.fetchall()}
+            cursor.execute(
+                f"SELECT id, game_id, started_at FROM sessions WHERE game_id IN ({marks}) "
+                "ORDER BY id", ids,
+            )
+            for r in cursor.fetchall():
+                known["sessions"].setdefault((r["game_id"], r["started_at"]), []).append(r["id"])
+            cursor.execute(
+                "SELECT game_id, session_id, timestamp, delta, kind FROM death_events "
+                f"WHERE game_id IN ({marks})", ids,
+            )
+            for r in cursor.fetchall():
+                key = (r["game_id"], r["session_id"], r["timestamp"], r["delta"], r["kind"])
+                known["events"][key] = known["events"].get(key, 0) + 1
+            cursor.execute(
+                f"SELECT game_id, region, template, kind FROM death_templates "
+                f"WHERE game_id IN ({marks})", ids,
+            )
+            known["screens"] = {(r["game_id"], r["region"], bytes(r["template"]), r["kind"])
+                                for r in cursor.fetchall()}
+            cursor.execute(
+                f"SELECT game_id, started_at FROM speedrun_runs WHERE game_id IN ({marks})", ids
+            )
+            known["runs"] = {(r["game_id"], r["started_at"]) for r in cursor.fetchall()}
+            cursor.execute(f"SELECT game_id FROM game_detection WHERE game_id IN ({marks})", ids)
+            known["detection"] = {r["game_id"] for r in cursor.fetchall()}
+            cursor.execute(
+                f"SELECT DISTINCT game_id FROM speedrun_splits WHERE game_id IN ({marks})", ids
+            )
+            known["splits"] = {r["game_id"] for r in cursor.fetchall()}
+        return known
+
+    def _import_extras(
+        self, data: dict[str, Any], game_id_map: dict[int, int], known: dict[str, Any]
+    ) -> None:
         """Format-2 parts of a backup: detection setup, screens, splits and runs."""
         with self._cursor() as cursor:
             for row in data.get("game_detection", []):
                 game_id = game_id_map.get(row["game_id"])
-                if game_id is not None:
+                if game_id is not None and game_id not in known["detection"]:
                     cursor.execute(
                         "INSERT OR REPLACE INTO game_detection (game_id, exe_path, mode, options) "
                         "VALUES (?, ?, ?, ?)",
@@ -1216,21 +1280,24 @@ class Database:
                     )
             for row in data.get("screens", []):
                 game_id = game_id_map.get(row["game_id"])
-                if game_id is not None:
+                template = base64.b64decode(row["template"])
+                key = (game_id, row["region"], template, row.get("kind") or SCREEN_DEATH)
+                if game_id is not None and key not in known["screens"]:
+                    known["screens"].add(key)
                     cursor.execute(
                         "INSERT INTO death_templates (game_id, region, template, created_at, kind) "
                         "VALUES (?, ?, ?, ?, ?)",
                         (
                             game_id,
                             row["region"],
-                            sqlite3.Binary(base64.b64decode(row["template"])),
+                            sqlite3.Binary(template),
                             row.get("created_at") or _utc_now_iso(),
                             row.get("kind") or SCREEN_DEATH,
                         ),
                     )
             for row in data.get("speedrun_splits", []):
                 game_id = game_id_map.get(row["game_id"])
-                if game_id is not None:
+                if game_id is not None and game_id not in known["splits"]:
                     cursor.execute(
                         "INSERT OR REPLACE INTO speedrun_splits (game_id, position, name) "
                         "VALUES (?, ?, ?)",
@@ -1238,7 +1305,7 @@ class Database:
                     )
             for row in data.get("speedrun_runs", []):
                 game_id = game_id_map.get(row["game_id"])
-                if game_id is not None:
+                if game_id is not None and (game_id, row["started_at"]) not in known["runs"]:
                     cursor.execute(
                         "INSERT INTO speedrun_runs (game_id, started_at, ended_at, finished, "
                         "deaths, split_names, split_times, game_times, real_ms, game_ms) "

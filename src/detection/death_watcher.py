@@ -47,10 +47,24 @@ from src.utils.platform_info import IS_WINDOWS
 
 try:
     import mss
+    import mss.exception
 except ImportError:  # pragma: no cover - environment dependent
     mss = None
 
 logger = get_logger(__name__)
+
+# Windows refuses screen captures for a moment on the lock screen, an admin
+# (UAC) prompt or a display change ("BitBlt failed"). Detection then waits
+# this long and starts capturing again instead of stopping for good.
+_CAPTURE_RETRY_SECONDS: float = 2.0
+
+
+def _is_capture_error(exc: BaseException) -> bool:
+    """A failed screen grab (passing), not a bug in the detection code."""
+    if mss is not None and isinstance(exc, mss.exception.ScreenShotError):
+        return True
+    return isinstance(exc, OSError)
+
 
 FRAMES_PER_SECOND: float = 5.0
 _WINDOW_LOOKUP_INTERVAL: float = 3.0
@@ -219,14 +233,35 @@ class DeathWatcher(QObject):
             self.activity_changed.emit(config.game_id, activity)
 
     def _run(self) -> None:
+        failures = 0
         try:
-            with open_screen_capture() as sct:
-                capture = FallbackCapture(sct) if IS_WINDOWS else sct
+            while not self._stop_event.is_set():
+                started = time.monotonic()
                 try:
-                    self._watch_loop(capture)
-                finally:
-                    if IS_WINDOWS:
-                        capture.close()
+                    with open_screen_capture() as sct:
+                        capture = FallbackCapture(sct) if IS_WINDOWS else sct
+                        try:
+                            self._watch_loop(capture)
+                        finally:
+                            if IS_WINDOWS:
+                                capture.close()
+                    return  # stopped
+                except Exception as exc:  # noqa: BLE001 - sorted out below
+                    if not _is_capture_error(exc):
+                        raise
+                    if time.monotonic() - started > 60:
+                        failures = 0  # it worked for a while: a new hiccup
+                    failures += 1
+                    if failures <= 3 or failures % 100 == 0:
+                        logger.warning(
+                            "Screen capture failed (%s); trying again in %.0f s",
+                            exc, _CAPTURE_RETRY_SECONDS,
+                        )
+                    self._set_status(
+                        "Screen capture blocked for a moment (lock screen, admin prompt "
+                        "or display change): trying again…"
+                    )
+                    self._stop_event.wait(_CAPTURE_RETRY_SECONDS)
         except Exception:  # noqa: BLE001 - detection must never crash the app
             logger.exception("Death watcher stopped unexpectedly")
             self._set_status("Auto-detect stopped (error, see log)")

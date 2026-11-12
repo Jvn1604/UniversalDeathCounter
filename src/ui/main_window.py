@@ -73,6 +73,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from src.core import game_profiles
 from src.core.counter_manager import CounterManager, CounterSnapshot
 from src.core.session_manager import SessionManager
 from src.core.speedrun import (
@@ -158,6 +159,7 @@ from src.ui.guide_dialog import (
 )
 from src.ui.library_window import Fetcher, LibraryDialog
 from src.ui.mini_window import MiniWindow
+from src.ui.notifications import NotificationBell
 from src.ui.obs_guide_window import ObsGuideWindow
 from src.ui.report_window import ErrorLogWindow, ProblemCounter, ReportBugDialog
 from src.ui.session_history_window import SessionHistoryWindow
@@ -166,6 +168,7 @@ from src.ui.skulls import skull_pixmap, tier_index
 from src.ui.statistics_window import StatisticsWindow
 from src.ui.theme_picker import ThemeDownload
 from src.ui.timer_window import RunHistoryDialog, SplitsDialog, TimerWindow
+from src.ui.whats_new_window import WhatsNewWindow
 from src.ui.widgets import (
     ActionButton,
     AutoHideLabel,
@@ -188,7 +191,7 @@ from src.ui.widgets import (
     row,
     section_title,
 )
-from src.utils import artwork, presets, save_files
+from src.utils import artwork, changelog, presets, save_files
 from src.utils.backgrounds import cover, load_background
 from src.utils.constants import (
     ACCENT_COLOR,
@@ -235,6 +238,7 @@ from src.utils.constants import (
     SETTING_LAST_BOSS_ID,
     SETTING_LAST_GAME_ID,
     SETTING_LAST_PAGE,
+    SETTING_LAST_SEEN_VERSION,
     SETTING_MAIN_WINDOW_GEOMETRY,
     SETTING_MINI_GEOMETRY,
     SETTING_MINIMIZE_TO_TRAY,
@@ -485,6 +489,7 @@ class MainWindow(QMainWindow):
 
         # --- Profile + core wiring ---
         self._profile_manager = ProfileManager()
+        self._moved_on_start = self._games_into_own_profiles()
         self._database = Database(self._profile_manager.active_db_path())
         self._session_manager = SessionManager(self._database)
         self._counter_manager = CounterManager(self._database, self._session_manager)
@@ -578,11 +583,26 @@ class MainWindow(QMainWindow):
         self._progress_timer.setInterval(_PROGRESS_SAVE_MS)
         self._progress_timer.timeout.connect(self._write_progress_autosave)
         self._progress_timer.start()
+        # Windows shutting down or logging off (the app in the tray): save first.
+        QGuiApplication.instance().commitDataRequest.connect(
+            lambda _manager: self._write_progress_autosave()
+        )
         QShortcut(QKeySequence.StandardKey.Save, self, self._save_progress)
         # Once the window is up; a QTimer (not singleShot) so closing can cancel it.
         self._recovery_timer = QTimer(self)
         self._recovery_timer.setSingleShot(True)
         self._recovery_timer.timeout.connect(self._offer_run_recovery)
+        QTimer.singleShot(2500, self._whats_new_after_update)
+        if self._moved_on_start:
+            self._note(
+                "Each game has its own profile now (top right). A copy of your data from "
+                "before is in Saved Progress.", "users", "Open Folder", self._open_saves_folder,
+            )
+            QTimer.singleShot(1500, lambda: self._toast.show_message(
+                "Each game has its own profile now: pick a game top right. A copy of your "
+                "data from before is in Saved Progress.", "OK", lambda: None,
+                seconds=10, icon="users",
+            ))
         self._recovery_timer.start(0)
         self._maybe_check_updates()
         self._refresh_downloaded_themes()
@@ -594,8 +614,20 @@ class MainWindow(QMainWindow):
 
     def _update_window_title(self) -> None:
         profile = self._profile_manager.active_profile
-        suffix = "" if profile == DEFAULT_PROFILE_NAME else f"  [{profile}]"
+        suffix = "" if profile == DEFAULT_PROFILE_NAME else f"  —  {profile}"
         self.setWindowTitle(f"{APP_NAME}{suffix}")
+
+    def _profile_has_games(self, name: str) -> bool:
+        if name == self._profile_manager.active_profile and hasattr(self, "_database"):
+            return bool(self._database.get_games())
+        try:
+            database = Database(self._profile_manager.db_path(name))
+            try:
+                return bool(database.get_games())
+            finally:
+                database.close()
+        except Exception:  # noqa: BLE001 - a broken profile file: call it empty
+            return False
 
     # ----------------------------------------------------------------
     # Menu
@@ -621,6 +653,7 @@ class MainWindow(QMainWindow):
             lambda: QDesktopServices.openUrl(QUrl(BUG_SHEET_URL)),
         )
         menu.addSeparator()
+        self._menu_action(menu, "sparkles", "What's New", self._open_whats_new)
         self._menu_action(menu, "info", "About", self._open_about_window)
         self._menu_action(menu, "rotate-ccw", "Roll Back to an Earlier Version…", self._roll_back)
         menu.addSeparator()
@@ -643,8 +676,13 @@ class MainWindow(QMainWindow):
         if combo is not None:
             combo.blockSignals(True)
             combo.clear()
-            combo.addItems(self._profile_manager.list_profiles())
-            combo.setCurrentText(active)
+            game_icon = icons.icon("gamepad-2", icons.color(icons.NORMAL), size=16)
+            for name in self._profile_manager.list_profiles():
+                label = name
+                if name == DEFAULT_PROFILE_NAME and not self._profile_has_games(name):
+                    label = f"{name} (no game)"
+                combo.addItem(game_icon, label, userData=name)
+            combo.setCurrentIndex(max(combo.findData(active), 0))
             combo.blockSignals(False)
         for name in self._profile_manager.list_profiles():
             action = self._profile_menu.addAction(name)
@@ -746,23 +784,36 @@ class MainWindow(QMainWindow):
         layout.addWidget(self._saved_label)
         layout.addStretch(1)
 
+        # The game being played: each game has a profile of its own.
+        game_caption = QLabel("GAME")
+        game_caption.setObjectName("ProfileCaption")
         self._profile_combo = QComboBox()
-        self._profile_combo.setToolTip("Profile: each one keeps its own games and counts.")
-        self._profile_combo.setMinimumWidth(150)
+        self._profile_combo.setObjectName("ProfileCombo")
+        self._profile_combo.setToolTip(
+            "The game you're playing. Each game has its own profile: its deaths, bosses "
+            "and detection setup. Your keys and look are the same in all of them."
+        )
+        self._profile_combo.setMinimumWidth(210)
         self._profile_combo.activated.connect(
-            lambda index: self._switch_profile(self._profile_combo.itemText(index))
+            lambda index: self._switch_profile(self._profile_combo.itemData(index))
         )
         profile_button = self._top_button("users", "Profiles: switch, add or delete")
         profile_button.setMenu(self._profile_menu)
+        self._bell = NotificationBell()
+        for text, icon, label, action in getattr(self, "_early_notes", []):
+            self._bell.add(text, icon, label, action)  # from before the bar existed
         self._bug_button = self._top_button("bug", "Report a bug or glitch")
         self._bug_button.clicked.connect(self._open_report_bug)
         help_button = self._top_button("circle-help", "Guide: how everything works")
         help_button.clicked.connect(lambda: self.maybe_show_welcome(force=True))
         more_button = self._top_button("ellipsis-vertical", "Backups, About, Quit")
         more_button.setMenu(self._more_menu)
+        layout.addWidget(game_caption)
+        layout.addSpacing(6)
         layout.addWidget(self._profile_combo)
         layout.addWidget(profile_button)
         layout.addSpacing(4)
+        layout.addWidget(self._bell)
         layout.addWidget(self._bug_button)
         layout.addWidget(help_button)
         layout.addWidget(more_button)
@@ -1525,8 +1576,10 @@ class MainWindow(QMainWindow):
     def _build_save_card(self) -> QWidget:
         """The game's own death count, read from its save file."""
         save, save_layout = card(margins=18)
-        save_layout.addWidget(section_title("In-game death count (save file)"))
+        save_layout.addWidget(section_title("In-game death count (save file) · Experimental"))
         intro = QLabel(
+            "<b>Experimental:</b> it works for many games, but some save formats can't be "
+            "read yet; keep counting with the keys or auto-detect too. "
             "Shows the death total the game itself keeps in your save: every death of "
             "that character, from before you used this app too, and from earlier NG+ "
             "cycles. Pick the save, then play: after your next 2 deaths it knows where "
@@ -2607,6 +2660,12 @@ class MainWindow(QMainWindow):
     def _on_hotkeys_recovered(self, freed: list) -> None:
         keys = ", ".join(key.upper() for _action, key in freed)
         self._toast.say(f"{keys} works now: the other program let go of it", icon="keyboard")
+        self._note(f"{keys} works again: the other program let go of it.", "keyboard")
+
+    def _note_detection_trouble(self, status: str) -> None:
+        """Auto-detect statuses worth keeping in the bell (the rest only show on the page)."""
+        if status.startswith(("Auto-detect stopped", "Screen capture blocked", "Capture of ")):
+            self._note(status, "scan-eye", "Detection", lambda: self._go_to(_PAGE_DETECTION))
 
     def _on_hotkeys_failed(self, failures: list) -> None:
         labels = {action: label for action, label, _key, _default in CONTROL_ACTIONS}
@@ -2618,6 +2677,9 @@ class MainWindow(QMainWindow):
             f"launcher) is using it. {APP_SHORT_NAME} keeps trying and tells you when it "
             "works, or pick a different key in Settings → Controls."
         )
+        self._note(f"Taken by another program: {keys}. {APP_SHORT_NAME} keeps trying.",
+                   "keyboard", "Change Keys",
+                   lambda: self._open_settings_window(SettingsWindow.TAB_CONTROLS))
         if self._tray is not None:
             self._tray.showMessage(
                 APP_NAME, message, QSystemTrayIcon.MessageIcon.Warning, 10000
@@ -2630,6 +2692,7 @@ class MainWindow(QMainWindow):
     # ----------------------------------------------------------------
     def _setup_death_watcher(self) -> None:
         self._death_watcher.status_changed.connect(self._detect_status_label.setText)
+        self._death_watcher.status_changed.connect(self._note_detection_trouble)
         self._death_watcher.death_detected.connect(self._on_death_detected)
         self._death_watcher.activity_changed.connect(self._on_game_activity)
         self._death_watcher.boss_defeated.connect(self._on_boss_victory_detected)
@@ -2861,7 +2924,22 @@ class MainWindow(QMainWindow):
         configs = {
             row["exe_path"]: row["game_id"] for row in self._database.get_all_game_detections()
         }
-        running = {configs[path] for path in running_exe_paths(list(configs))}
+        others = self._exes_of_other_profiles()
+        running_paths = set(running_exe_paths(list(configs) + list(others)))
+        if self._counter_manager.current_game_id not in {
+            configs[path] for path in running_paths if path in configs
+        }:
+            started = [others[path] for path in running_paths if path in others]
+            if started and started[0] != self._profile_manager.active_profile:
+                profile = started[0]
+                self._switch_profile(profile)
+                if self._tray is not None:
+                    self._tray.showMessage(
+                        APP_BRAND, f"{profile} started: switched to its profile.",
+                        QSystemTrayIcon.MessageIcon.Information, 4000,
+                    )
+                return  # the next look follows it in its own profile
+        running = {configs[path] for path in running_paths if path in configs}
         newly_started = running - self._running_game_ids
         stopped = self._running_game_ids - running
         self._running_game_ids = running
@@ -2886,6 +2964,28 @@ class MainWindow(QMainWindow):
             current = self._counter_manager.current_game_id
         if current in newly_started:
             self._start_play_session(current)
+
+    def _exes_of_other_profiles(self) -> dict[str, str]:
+        """``{game .exe: profile}`` for the other profiles (read once, then cached)."""
+        cached = getattr(self, "_other_profile_exes", None)
+        if cached is not None and cached[0] == self._profile_manager.active_profile:
+            return cached[1]
+        found: dict[str, str] = {}
+        for profile in self._profile_manager.list_profiles():
+            if profile == self._profile_manager.active_profile:
+                continue
+            try:
+                database = Database(self._profile_manager.db_path(profile))
+                try:
+                    for row in database.get_all_game_detections():
+                        if row["exe_path"]:
+                            found.setdefault(row["exe_path"], profile)
+                finally:
+                    database.close()
+            except Exception:  # noqa: BLE001 - a broken profile file: skip it
+                logger.exception("Couldn't read profile %r", profile)
+        self._other_profile_exes = (self._profile_manager.active_profile, found)
+        return found
 
     def _start_play_session(self, game_id: int) -> None:
         """
@@ -3008,6 +3108,7 @@ class MainWindow(QMainWindow):
         self._database.set_game_detection(
             game_id, path, DETECTION_MODE_SOULS if preset else DETECTION_MODE_TEMPLATE
         )
+        game_id = self._own_profile(game_id)
         self._reload_games(select_game_id=game_id)
         if not preset and not has_templates:
             self._suggest_library_setup(game_id, Path(path).name)
@@ -3078,6 +3179,7 @@ class MainWindow(QMainWindow):
         if game_id is None:
             game_id = self._database.create_game(name.strip())
         self._watch_display(game_id, self._main_display())
+        game_id = self._own_profile(game_id)
         self._reload_games(select_game_id=game_id)
         self._show_page(_PAGE_DETECTION)
         if not self._database.get_death_templates(game_id):
@@ -3306,6 +3408,9 @@ class MainWindow(QMainWindow):
         announced = latest == self._update_version
         self._update_version, self._update_page_url = latest, url
         self._update_card.set_state("available", latest)
+        if not announced:
+            self._note(f"Version {latest} is out.", "circle-arrow-up", "Update",
+                       self._start_update)
         if self._tray is not None and not announced:
             self._tray.showMessage(
                 APP_BRAND,
@@ -3848,9 +3953,100 @@ class MainWindow(QMainWindow):
     # ----------------------------------------------------------------
     # Profiles
     # ----------------------------------------------------------------
+    def _games_into_own_profiles(self) -> int:
+        """
+        At start: every game in a profile of its own (moving any that share one,
+        after a backup). Opens the profile of the game played last. Returns how
+        many games moved.
+        """
+        profiles = self._profile_manager
+        active = profiles.active_profile
+        try:
+            database = Database(profiles.db_path(active))
+            try:
+                last = int(database.get_setting(SETTING_LAST_GAME_ID, "") or 0)
+            finally:
+                database.close()
+            game_profiles.gather_saves(profiles.saves_dir)
+            moved = game_profiles.split_all(profiles)
+        except Exception:  # noqa: BLE001 - never stop the app from starting
+            logger.exception("Couldn't give each game its own profile")
+            return 0
+        if (active, last) in moved:
+            profiles.set_active(moved[(active, last)])
+        elif any(profile == active for profile, _game in moved):
+            profiles.set_active(next(v for (k, _g), v in moved.items() if k == active))
+        return len(moved)
+
+    def _own_profile(self, game_id: int) -> int:
+        """
+        A game just added here: it gets a profile of its own (unless this one is
+        already its own) and the app switches to it. Returns the game's id in
+        the profile now open.
+        """
+        try:
+            moved = game_profiles.split_profile(
+                self._profile_manager, self._profile_manager.active_profile, self._database
+            )
+        except Exception:  # noqa: BLE001 - the game stays here
+            logger.exception("Couldn't give the game its own profile")
+            return game_id
+        if not moved:
+            return game_id
+        self._rebuild_profile_menu()
+        self._other_profile_exes = None  # look them up again
+        target = moved.get(game_id)
+        if target is None:
+            self._reload_games()
+            return game_id
+        session_start, run = self._in_progress(game_id)
+        self._switch_profile(target)
+        new_id = int(self._database.get_setting(SETTING_LAST_GAME_ID, "") or game_id)
+        self._database.set_setting(SETTING_TIMER_AUTOSAVE, "")  # carried on right here
+        self._carry_on(new_id, session_start, run)
+        self._toast.say(f"{target} has its own profile now (top right)", icon="users")
+        return new_id
+
+    def _in_progress(self, game_id: int) -> tuple[str | None, dict | None]:
+        """The session start and speedrun run in progress for this game, to carry on."""
+        session_start = None
+        session_id = self._session_manager.current_session_id
+        if self._counter_manager.current_game_id == game_id and session_id is not None:
+            session_start = next(
+                (s["started_at"] for s in self._database.get_sessions_with_counts(game_id)
+                 if s["id"] == session_id), None,
+            )
+        controller = self._speedrun
+        run = (
+            controller.timer.snapshot()
+            if controller is not None and controller.game_id == game_id
+            and controller.timer.state not in (IDLE, FINISHED)
+            else None
+        )
+        return session_start, run
+
+    def _carry_on(self, game_id: int, session_start: str | None, run: dict | None) -> None:
+        """In the game's new profile: the same session and run as before the move."""
+        if session_start is not None:
+            session_id = next(
+                (s["id"] for s in self._database.get_sessions_with_counts(game_id)
+                 if s["started_at"] == session_start), None,
+            )
+            if session_id is not None:
+                self._session_manager.continue_session(game_id, session_id)
+                self._refresh_counters()
+        if run is not None:
+            try:
+                self._resume_recovered_run(game_id, SpeedrunTimer.restore(run))
+                self._autosave()
+            except (ValueError, KeyError, TypeError):
+                logger.warning("The run in progress couldn't be carried over")
+
     def _switch_profile(self, name: str) -> None:
         if name == self._profile_manager.active_profile:
             return
+        # The player's settings (keys, look...) come along to the other profile.
+        carried = game_profiles.shared_settings(self._database)
         # Persist current state, tear down, and rebuild on the new database.
         self._write_progress_autosave()
         self._end_speedrun()
@@ -3860,6 +4056,9 @@ class MainWindow(QMainWindow):
 
         self._profile_manager.set_active(name)
         self._database = Database(self._profile_manager.active_db_path())
+        game_profiles.apply_settings(self._database, carried)
+        self._running_game_ids = set()  # this profile's games: seen afresh
+        self._last_progress_save = ""
         self._session_manager = SessionManager(self._database)
         self._counter_manager = CounterManager(self._database, self._session_manager)
         self._statistics_service = StatisticsService(self._database)
@@ -4063,6 +4262,9 @@ class MainWindow(QMainWindow):
 
     def _apply_counted(self, action: Callable[[], CounterSnapshot]) -> None:
         """Run a +1/-1/undo and pass the change on to a speedrun in progress."""
+        if self._counter_manager.current_game_id is None:
+            self._say_no_game()
+            return
         # Only a speedrun needs the count from before (a full snapshot is 3 queries).
         before = self._session_manager.get_session_deaths() if self._speedrun is not None else 0
         snapshot = action()
@@ -4074,6 +4276,29 @@ class MainWindow(QMainWindow):
                 self._autosave()
             self._timer_window.refresh()
         self._apply_snapshot(snapshot)
+
+    def _say_no_game(self) -> None:
+        """A death key with no game picked: say so, where the player will see it."""
+        now = time.monotonic()
+        if now - getattr(self, "_no_game_said_at", -1e9) < 20:
+            return  # once in a while, not on every press
+        self._no_game_said_at = now
+        logger.info("Death key pressed with no game picked")
+        has_games = bool(self._database.get_games())
+        message = (
+            "No game is picked, so that death wasn't counted. Pick your game on the "
+            "Death Counter page." if has_games else
+            "There's no game yet, so that death wasn't counted. Add your game first "
+            "(Home → Add Your First Game)."
+        )
+        self._note(message, "gamepad-2", "Pick a Game" if has_games else "Add a Game",
+                   lambda: self._go_to(_PAGE_COUNTER if has_games else _PAGE_HOME))
+        if self.isActiveWindow():
+            self._toast.say(message, icon="gamepad-2")
+        elif self._tray is not None:
+            self._tray.showMessage(APP_NAME, message, QSystemTrayIcon.MessageIcon.Warning, 6000)
+        else:
+            self._toast.say(message, icon="gamepad-2")
 
     def _on_reset_session(self) -> None:
         confirm = QMessageBox.question(
@@ -4134,7 +4359,7 @@ class MainWindow(QMainWindow):
             ("session", "Deaths this session"),
             ("boss", "Deaths on this boss"),
             ("run", "Deaths this speedrun run"),
-            ("save", "In-game deaths (from the save file)"),
+            ("save", "In-game deaths (from the save file, experimental)"),
         ):
             if value == "run" and not self._feature_on(SETTING_FEATURE_TIMER):
                 continue
@@ -4221,7 +4446,9 @@ class MainWindow(QMainWindow):
         self._write_deaths_txt(snapshot)
         self._last_snapshot = snapshot
         self._push_stream_state()
-        if hasattr(self, "_progress_soon"):
+        if hasattr(self, "_progress_soon") and not self._progress_soon.isActive():
+            # 15 s after the first change; restarting it on every death meant it
+            # never fired while deaths kept coming.
             self._progress_soon.start()
 
     # Stream overlay (OBS Browser Source) ----------------------------------
@@ -4411,15 +4638,24 @@ class MainWindow(QMainWindow):
         stamp = json.dumps({**data, save_files.RESUME_KEY: {**resume, "saved_at": ""}}
                            if resume else data, sort_keys=True)
         if stamp == self._last_progress_save and path.exists():
+            self._saved_label.setText(f"Saved, up to date ({datetime.now():%H:%M})")
             return path
         try:
             save_files.write_save(path, data)
         except OSError as exc:
             logger.warning("Auto-save failed: %s", exc)
+            self._saved_label.setText("Auto-save failed: trying again soon")
+            self._note(f"Auto-save failed ({exc}). Trying again soon.", "save")
+            self._progress_soon.start()
             return None
         self._last_progress_save = stamp
         self._saved_label.setText(f"Auto-saved {datetime.now():%H:%M}")
         return path
+
+    def _open_saves_folder(self) -> None:
+        folder = save_files.saves_folder(self._database.path)
+        folder.mkdir(parents=True, exist_ok=True)
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(folder)))
 
     def _save_progress(self) -> None:
         """Save Progress (Ctrl+S): a save file to load later and carry on."""
@@ -4500,6 +4736,9 @@ class MainWindow(QMainWindow):
         game_id = ids["games"].get(resume.get("game_id"))
         self._reload_games(select_game_id=game_id)
         if game_id is None:
+            first = min(ids["games"].values(), default=None)
+            if first is not None:
+                self._own_profile(first)
             self._notify("Save loaded.")
             return
         session_id = ids["sessions"].get(resume.get("session_id"))
@@ -4514,6 +4753,7 @@ class MainWindow(QMainWindow):
             except (ValueError, KeyError, TypeError):
                 logger.warning("The save's speedrun run couldn't be restored")
         self._write_progress_autosave()
+        self._own_profile(game_id)
         self._notify(f"Save loaded: carrying on with {resume.get('game_name', 'the game')}.")
 
     def _export_csv(self) -> None:
@@ -4536,16 +4776,34 @@ class MainWindow(QMainWindow):
             "Clear All Data",
             "This will permanently delete every game, boss, session, and death event\n"
             "in the CURRENT profile.\n\n"
-            "This cannot be undone. Consider Save Progress (Ctrl+S) first.\n\n"
-            "Are you absolutely sure?",
+            "A copy is saved first in the Saved Progress folder (Load Progress\n"
+            "brings it back).\n\n"
+            "Are you sure?",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
         )
         if confirm != QMessageBox.StandardButton.Yes:
             return
+        # A copy first, in Saved Progress: Load Progress brings it all back.
+        backup = None
+        if self._database.get_games():
+            folder = save_files.saves_folder(self._database.path)
+            backup = folder / f"Before clearing {datetime.now():%Y-%m-%d %H%M%S}.json"
+            try:
+                save_files.write_save(backup, self._save_data())
+            except OSError as exc:
+                logger.warning("Couldn't back up before clearing: %s", exc)
+                backup = None
         self._database.clear_all_data()
         self._reload_games()
-        self._toast.say("All games, bosses and deaths of this profile deleted", icon="trash-2")
+        if backup:
+            self._note("All data cleared. A copy is in Saved Progress (Load Save brings it "
+                       "back).", "trash-2", "Open Folder", self._open_saves_folder)
+        self._toast.say(
+            "All games, bosses and deaths of this profile deleted"
+            + (". A copy is in Saved Progress (Load Progress brings it back)" if backup else ""),
+            icon="trash-2",
+        )
 
     # ----------------------------------------------------------------
     # Window / dialog actions
@@ -4553,6 +4811,10 @@ class MainWindow(QMainWindow):
     def _open_boss_window(self) -> None:
         dialog = BossWindow(self._database, parent=self)
         dialog.exec()
+        current = self._counter_manager.current_game_id
+        newest = max((int(g["id"]) for g in self._database.get_games()), default=None)
+        if newest is not None and newest != current:
+            self._own_profile(newest)  # a game added there: its own profile
         self._reload_games(select_game_id=self._counter_manager.current_game_id)
 
     def _open_auto_detect_window(self) -> None:
@@ -4625,7 +4887,32 @@ class MainWindow(QMainWindow):
         dialog.exec()
 
     def _open_about_window(self) -> None:
-        AboutWindow(parent=self).exec()
+        about = AboutWindow(parent=self)
+        about.whats_new_requested.connect(lambda: (about.accept(), self._open_whats_new()))
+        about.exec()
+
+    def _open_whats_new(self, since: str = "") -> None:
+        window = WhatsNewWindow(since=since, parent=self)
+        window.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+        window.show()  # not modal: the app keeps working beside it
+
+    def _whats_new_after_update(self) -> None:
+        """Once after an update: what it brought (a fresh install just remembers the version)."""
+        seen = self._database.get_setting(SETTING_LAST_SEEN_VERSION, "")
+        self._database.set_setting(SETTING_LAST_SEEN_VERSION, APP_VERSION)
+        if seen == APP_VERSION:
+            return
+        if not seen:
+            # Before this window existed nothing was remembered: a player with
+            # games has updated, a fresh install hasn't.
+            if not self._database.get_games():
+                return
+            seen = "0"
+        if changelog.newer_than(changelog.load(), seen, APP_VERSION):
+            since = "" if seen == "0" else seen
+            self._note(f"Updated to v{APP_VERSION}.", "sparkles", "What's New",
+                       lambda: self._open_whats_new(since=since))
+            self._open_whats_new(since=since)
 
     def _open_obs_guide(self) -> None:
         key = self._hotkey_bindings()["toggle_overlay_key"]
@@ -4728,7 +5015,7 @@ class MainWindow(QMainWindow):
             (("total", "All-Time", True), ("session", "This Session", True),
              ("boss", "This Boss", True),
              ("run", "This Speedrun Run", self._feature_on(SETTING_FEATURE_TIMER)),
-             ("save", "In-Game (Save File)", True)),
+             ("save", "In-Game (Save File, Experimental)", True)),
             settings.get(SETTING_OVERLAY_COUNTER_SOURCE, DEFAULT_COUNTER_SOURCE),
         )
         has_image = bool(settings.get(SETTING_OVERLAY_BG_IMAGE, ""))
@@ -4907,6 +5194,21 @@ class MainWindow(QMainWindow):
             controller.set_game_paused(reason if enabled else "")
         self._autosave()
         self._timer_window.refresh()
+
+    def _note(self, text: str, icon: str = "info", label: str = "", action=None) -> None:
+        """Keep a message in the notification bell (top bar)."""
+        bell = getattr(self, "_bell", None)
+        if bell is None:
+            self.__dict__.setdefault("_early_notes", []).append((text, icon, label, action))
+            return
+        bell.add(text, icon, label, action)
+
+    def _go_to(self, page: int) -> None:
+        self._show_page(page)
+        if not self.isVisible() or self.isMinimized():
+            self.showNormal()
+        self.raise_()
+        self.activateWindow()
 
     def _notify(self, message: str, msecs: int = 5000) -> None:
         """In the window when it's showing; otherwise as a tray message."""

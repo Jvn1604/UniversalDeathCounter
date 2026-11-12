@@ -154,3 +154,44 @@ def test_speedrun_auto_pause_still_reads_whole_frames(fake_game) -> None:
     )
     _run(watcher, capture, 0.3)
     assert set(capture.sizes) == {(WINDOW[2], WINDOW[3])}
+
+
+def test_a_refused_capture_pauses_detection_instead_of_stopping_it(fake_game, monkeypatch):
+    """Windows refuses BitBlt on the lock screen / an admin prompt: carry on after."""
+    import contextlib
+
+    import mss.exception
+    from PySide6.QtCore import Qt
+
+    capture = fake_game
+    refusals = {"left": 3}
+    real_grab = capture.grab
+
+    def grab(area):
+        if refusals["left"] > 0:
+            refusals["left"] -= 1
+            raise mss.exception.ScreenShotError("Windows graphics function failed: BitBlt")
+        return real_grab(area)
+
+    capture.grab = grab
+    monkeypatch.setattr(dw, "open_screen_capture", lambda: contextlib.nullcontext(capture))
+    monkeypatch.setattr(dw, "IS_WINDOWS", False)  # the fake stands in for the capture
+    monkeypatch.setattr(dw, "_CAPTURE_RETRY_SECONDS", 0.05)
+    x, y, w, h = WINDOW
+    death_frame = np.ascontiguousarray(_screen(death=True)[y : y + h, x : x + w, 2::-1])
+    watcher = dw.DeathWatcher(cooldown_seconds=0.0)
+    deaths: list[int] = []
+    watcher.death_detected.connect(deaths.append, Qt.ConnectionType.DirectConnection)
+    watcher.configure(dw.WatchConfig(
+        game_id=7, exe_path="game.exe",
+        matcher=TemplateMatcher(DeathTemplate.from_frame(death_frame, REGION)),
+    ))
+    capture.screen = _screen(death=True)
+    thread = threading.Thread(target=watcher._run, daemon=True)
+    thread.start()
+    deadline = time.monotonic() + 10
+    while not deaths and time.monotonic() < deadline:
+        time.sleep(0.05)
+    watcher._stop_event.set()
+    thread.join(2)
+    assert refusals["left"] == 0 and deaths == [7]

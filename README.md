@@ -18,7 +18,7 @@
 
 ## Download
 
-**[⬇ Download the latest release](https://github.com/Jvn1604/UniversalDeathCounter/releases/latest)**
+**[⬇ Download the latest release](https://github.com/Jvn1604/UniversalDeathCounter/releases/latest)** · [What's new (changelog)](CHANGELOG.md)
 
 | File | What it is |
 |---|---|
@@ -77,7 +77,7 @@ No Python or anything else needed. Windows 10 or 11, macOS 11 or newer, or a 64-
 - **Or the game's log file.** For games that log deaths, such as Minecraft, it counts every new line that matches your text. This mode doesn't capture the screen at all.
 - **Setups Library:** ready-made auto-detect setups shared by other players (Detection → **Setups Library**). Pick your game and deaths count with no calibrating; when you add a game from its `.exe` and the library has it, the app offers it. **Share My Setup…** saves yours as a small file to give a friend or add to the library (`presets/` in this repository; see its README). Setups hold only the captured screens and detection settings, nothing personal.
 - **Missed a death?** Add another death screen in two clicks. Any saved one counts.
-- **The game's own death count, from your save file** (Detection page): every death the game has recorded for that character, including deaths from before you installed DUDC and from earlier NG+ cycles, with an optional *this cycle only* count. Elden Ring, Sekiro and Dark Souls II/III saves are found by themselves; for other games, pick the save. It learns where the count is from your next two deaths (counted as usual), then shows it as the big number if you like (*In-Game (Save File)*). Works with any save that isn't encrypted (Dark Souls II/III's are decrypted on Windows). Only the file is read.
+- **The game's own death count, from your save file (experimental)** (Detection page): every death the game has recorded for that character, including deaths from before you installed DUDC and from earlier NG+ cycles, with an optional *this cycle only* count. Elden Ring, Sekiro and Dark Souls II/III saves are found by themselves; for other games, pick the save. It learns where the count is from your next two deaths (counted as usual), then shows it as the big number if you like (*In-Game (Save File, Experimental)*). Works with any save that isn't encrypted (Dark Souls II/III's are decrypted on Windows). Only the file is read.
 - **Switches to the right game** when you launch it. A new session starts after a break of 16 hours or more; a restart, crash or update in between continues the same session, and the **Sessions** button next to Undo brings back any earlier one.
 - **Works in exclusive fullscreen on Windows:** if the normal capture comes out black, the app switches by itself to Desktop Duplication (what OBS's Display Capture uses), which sees fullscreen games too.
 - **Screen capture only:** no memory reading and no injection, so it's safe with anti-cheat.
@@ -126,7 +126,7 @@ Every 10 deaths your skull earns something new: horns, a nose ring, blades, a cr
 - **Boss kills are detected too.** After your first boss of a game, use **Capture Screen** (Detection page) to teach it that game's victory banner (e.g. *GREAT ENEMY FELLED*). Every later kill of the selected boss then marks it **Defeated ✓**, keeps your "deaths until victory", selects the next boss, and can split the speedrun timer. There's also a **Boss Defeated** key (`Ctrl+F11`) for doing it by hand.
 - Notes on individual deaths, session history, and graphs: per boss, over time, and per session.
 - Ready-made boss lists for Elden Ring, Dark Souls III, Sekiro, Bloodborne, Hollow Knight and Cuphead.
-- **Multiple profiles** (switch from the box at the top), JSON backup and restore, and CSV export.
+- **Every game has its own profile** (pick it from the box at the top): adding a game makes one, and launching a game switches to it. Your keys and look are the same in all of them. JSON backup and restore (loading a save of a game you have combines it, never doubles it), auto-saves, and CSV export.
 - **Make the main window yours** in **Settings → Appearance**: any installed font (each shown in its own style), text and death-number colors, a background image with adjustable dimming, and **game artwork**: a faded banner of the selected game behind the counter cards (off by default; found on Steam, or right-click the game → *Choose Artwork…*). **Changes preview live** as you edit, on the main window and the overlay; Discard Changes puts everything back.
 
 ### 🎮 PlayStation & Xbox
@@ -160,6 +160,8 @@ The **Console** page (sidebar) makes DUDC work when the game runs on a console:
 - **One place for everything:** pages and tools in the sidebar (Settings is a page too, not a separate window), profiles and saves at the top right. No duplicated menus.
 - **Keeps counting in the background:** closing asks whether to keep counting in the tray, so F9 / F10, the overlay and auto-detect keep working. Settings → Controls shows a key check: press a key anywhere (even in a game) and it shows when the app gets it.
 - **Death screens from screenshots match anyway:** a death screen taught from an uploaded screenshot framed a little differently from the game (whole monitor, title bar, another resolution) is still found. The Detection page names the next setup step.
+- **Notification bell:** the bell at the top keeps the messages that matter (an update, a key another program took, auto-detect pausing, a failed save), even if you were in the game when they came; a red badge counts the new ones and each has a button to fix it.
+- **What's New:** the changelog inside the app (⋮ → *What's New*, or About). It opens once after an update with what changed.
 - **Roll back:** ⋮ → *Roll Back to an Earlier Version…* installs an older release if an update gave you trouble (your data stays).
 - **One-click updates:** the card at the bottom of the sidebar shows whether you are up to date (checked at startup, every 6 hours, or with its refresh button). When a new version is out, click **Update**: the installed app downloads it, updates itself and reopens. (Portable copies, Mac and Linux open the download page.)
 - Deleting a game tells you exactly what goes with it (deaths, bosses, sessions, runs).

@@ -67,6 +67,31 @@ QLabel#PageBadge {
     border-left: 1px solid #262833;
 }
 
+/* The notification bell's list (top bar). */
+QFrame#NotificationPanel {
+    background-color: #16171e;
+    border: 1px solid #2c2f3a;
+    border-radius: 12px;
+}
+
+QFrame#NotificationPanel QLabel {
+    color: #ececf1;
+    background: transparent;
+}
+
+QFrame#NotificationPanel QLabel#Muted {
+    color: #8a8f9c;
+}
+
+QFrame#NotificationRow {
+    background-color: #1e2028;
+    border-radius: 10px;
+}
+
+QFrame#NotificationRow[unread="true"] {
+    background-color: rgba(255, 61, 85, 0.10);
+}
+
 QPushButton#TopIconButton {
     background-color: transparent;
     border: 1px solid transparent;
@@ -462,6 +487,34 @@ QPushButton#IconButton:hover {
 }
 
 /* ---------------------------------------------------------------- inputs */
+
+QLabel#ProfileCaption {
+    color: #8a8f9c;
+    font-size: 10px;
+    font-weight: 800;
+    letter-spacing: 2px;
+}
+
+/* The game being played (top right): its own profile. */
+QComboBox#ProfileCombo {
+    background-color: #1e2028;
+    border: 1px solid #ff3d55;
+    border-radius: 10px;
+    padding: 7px 12px;
+    color: #ececf1;
+    font-weight: 700;
+}
+
+QComboBox#ProfileCombo QAbstractItemView {
+    background-color: #16171e;
+    color: #ececf1;
+    selection-background-color: #ff3d55;
+    selection-color: #ffffff;
+    border: 1px solid #2c2f3a;
+    border-radius: 8px;
+    outline: none;
+    padding: 4px;
+}
 
 QComboBox {
     background-color: #1e2028;
