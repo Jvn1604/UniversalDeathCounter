@@ -6,6 +6,8 @@ newest first. Downloads are on the
 
 ## [Unreleased]
 
+## [2.20.0] - 2026-11-12
+
 ### New
 - **Every game has its own profile.** The box at the top right is now the game
   you're playing (*GAME · Elden Ring*). Adding a game creates its profile and
@@ -196,7 +198,8 @@ newest first. Downloads are on the
 - **Automatic death detection** from the screen, controller support, and the
   DUDC name.
 
-[Unreleased]: https://github.com/Jvn1604/UniversalDeathCounter/compare/v2.19.0...HEAD
+[Unreleased]: https://github.com/Jvn1604/UniversalDeathCounter/compare/v2.20.0...HEAD
+[2.20.0]: https://github.com/Jvn1604/UniversalDeathCounter/compare/v2.19.0...v2.20.0
 [2.19.0]: https://github.com/Jvn1604/UniversalDeathCounter/compare/v2.17.0...v2.19.0
 [2.17.0]: https://github.com/Jvn1604/UniversalDeathCounter/compare/v2.16.0...v2.17.0
 [2.16.0]: https://github.com/Jvn1604/UniversalDeathCounter/compare/v2.15.0...v2.16.0
